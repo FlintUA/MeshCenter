@@ -14,7 +14,16 @@ import threading
 import time
 from datetime import datetime
 from PIL import Image
+from meshsrv import error_reporting
 from storage.json_store import safe_read_json, safe_write_json
+
+
+def _unexpected(exc, where):
+    """Generic error dict (+ error_id) for an unexpected exception; the real
+    cause goes to the logs under that id, never to the client."""
+    error_id = error_reporting.report_unexpected_error(exc, where)
+    return error_reporting.internal_error_payload(error_id)
+
 
 # libcamera is only present on real CSI-camera hardware (Picamera2's own
 # dependency) - devices running the USB driver instead (camera/usb_driver.py,
@@ -762,7 +771,9 @@ def capture_screenshot():
         }
 
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        body = _unexpected(e, "camera_screenshot")
+        body["success"] = False
+        return body
 
 
 def list_screenshots():
@@ -788,7 +799,7 @@ def list_screenshots():
         }, 200
 
     except Exception as e:
-        return {"ok": False, "error": str(e)}, 500
+        return _unexpected(e, "camera_list_screenshots"), 500
 
 
 def delete_screenshot(filename):
@@ -840,7 +851,8 @@ def get_gallery_storage_info():
             "used_mb": 0,
             "free_gb": 0,
             "total_gb": 0,
-            "error": str(e),
+            "error": error_reporting.GENERIC_MESSAGE,
+            "error_id": error_reporting.report_unexpected_error(e, "camera_gallery_storage"),
         }
 
 # ============================================================
@@ -1249,6 +1261,6 @@ def capture_photo_preview():
             stop_camera()
         except Exception:
             pass
-        return {"ok": False, "error": str(e)}, 500
+        return _unexpected(e, "camera_photo_capture"), 500
 
 

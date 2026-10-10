@@ -107,6 +107,8 @@ from api.api_auth import register_auth_routes, load_auth_state
 from api.security_headers import register_security_headers
 from meshsrv.initial_password_check import warn_if_initial_password_file
 from system_log import log_system_event
+from meshsrv import error_reporting
+from werkzeug.exceptions import HTTPException
 from storage.waypoint_store import WaypointStore
 from storage.profile_manager import ProfileManager
 from storage.device_manager import DeviceManager
@@ -954,21 +956,42 @@ RUNTIME_LOCK_FILE = os.path.join(DATA_DIR, "runtime.lock")
 # of depending on DATA_DIR/server.py itself.
 CPU_HISTORY_FILE = os.path.join(DATA_DIR, "cpu_history.json")
 
+def internal_error_response(exc, where):
+    """500 for an UNEXPECTED exception: a generic body plus an error_id, never
+    str(exc) or a traceback (debug mode included). The full exception and
+    traceback are logged under the same id (process log + System Log), so a
+    user can quote the id. See meshsrv/error_reporting.py."""
+    error_id = error_reporting.report_unexpected_error(exc, where, log_event=log_system_event)
+    return jsonify(error_reporting.internal_error_payload(error_id)), 500
+
+
 def handle_errors(f):
-    """Декоратор для обработки ошибок в API"""
+    """Decorator for API routes. Domain errors keep their specific message and
+    code (UserFacingError, RadioBusyError, TransportError, HTTP errors such as
+    a malformed JSON body); anything else is an unexpected error and is
+    answered generically with an error_id (see internal_error_response)."""
     @wraps(f)
     def decorated_function(*args, **kwargs):
         try:
             return f(*args, **kwargs)
-        except Exception as e:
-            print(f"[ERROR] {f.__name__}: {e}", flush=True)
-            import traceback
-            traceback.print_exc()
+        except error_reporting.UserFacingError as e:
+            body = {"ok": False, "error": e.message}
+            if e.error_code:
+                body["error_code"] = e.error_code
+            return jsonify(body), e.status
+        except HTTPException as e:
+            # e.g. a malformed JSON body: the client's mistake, not a 500.
             return jsonify({
                 "ok": False,
-                "error": str(e),
-                "traceback": traceback.format_exc() if app.debug else None
-            }), 500
+                "error": e.description or e.name,
+                "error_code": "http_error",
+            }), e.code or 500
+        except RadioBusyError as e:
+            return jsonify({"ok": False, "error": str(e), "error_code": "radio_busy"}), 503
+        except TransportError as e:
+            return jsonify({"ok": False, "error": e.message, "error_code": e.code.value}), 503
+        except Exception as e:
+            return internal_error_response(e, f.__name__)
     return decorated_function
 
 # Returns whether the camera is persisted enabled - read later in the
@@ -7414,7 +7437,7 @@ def api_activate_radio_profile(profile_id):
     except FileNotFoundError as error:
         return jsonify({"ok": False, "error": str(error)}), 404
     except Exception as error:
-        return jsonify({"ok": False, "error": f"Could not read radio profile: {error}"}), 500
+        return internal_error_response(error, "read_radio_profile")
 
     identity = instance_manager.get()
     current_profile_id = str(identity.get("active_profile_id") or "").strip().lower()
@@ -7509,7 +7532,7 @@ def api_activate_radio_profile(profile_id):
         try:
             INSTANCE_IDENTITY = instance_manager.save(updated)
         except Exception as error:
-            return jsonify({"ok": False, "error": f"Could not save active radio profile: {error}"}), 500
+            return internal_error_response(error, "save_active_radio_profile")
 
         log_system_event(
             "Radio profile activated",
@@ -7611,7 +7634,7 @@ def api_activate_radio_profile(profile_id):
     try:
         INSTANCE_IDENTITY = instance_manager.save(updated)
     except Exception as error:
-        return jsonify({"ok": False, "error": f"Could not save active radio profile: {error}"}), 500
+        return internal_error_response(error, "save_active_radio_profile")
 
     log_system_event(
         "Radio profile activated",
@@ -7646,7 +7669,12 @@ def api_profile_devices():
     try:
         camera_status = camera.get_camera_status()
     except Exception as error:
-        camera_status = {"ok": False, "started": False, "error": str(error)}
+        camera_status = {
+            "ok": False,
+            "started": False,
+            "error": error_reporting.GENERIC_MESSAGE,
+            "error_id": error_reporting.report_unexpected_error(error, "devices_camera_status", log_event=log_system_event),
+        }
 
     env_fields = ("temperature", "humidity", "pressure")
     power_fields = ("voltage", "current", "power")
@@ -7887,10 +7915,7 @@ def api_restart_listener():
         })
 
     except Exception as e:
-        return jsonify({
-            "ok": False,
-            "error": str(e)
-        }), 500
+        return internal_error_response(e, "restart_listener")
 
 @app.route("/api/rescan_nodes", methods=["POST"])
 @handle_errors
@@ -7943,10 +7968,7 @@ def api_rescan_nodes():
         }), 503
 
     except Exception as e:
-        return jsonify({
-            "ok": False,
-            "error": str(e)
-        }), 500
+        return internal_error_response(e, "rescan_nodes")
 
 @app.route("/api/clear_chat", methods=["POST"])
 @handle_errors
@@ -8506,8 +8528,7 @@ def api_delete_all_dm():
                 })
         return jsonify({"ok": True, "deleted_count": deleted_count, "message": f"Deleted {deleted_count} DM chats"})
     except Exception as e:
-        print(f"[ERROR] Delete all DM: {e}")
-        return jsonify({"ok": False, "error": str(e), "error_code": "generic"}), 500
+        return internal_error_response(e, "delete_all_dm")
 
 @app.route("/api/restore_deleted_dm", methods=["POST"])
 @handle_errors

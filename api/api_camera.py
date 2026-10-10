@@ -6,6 +6,7 @@ import os
 import threading
 
 from camera.camera_manager import build_camera_manager
+from meshsrv import error_reporting
 from storage.json_store import safe_read_json, safe_write_json
 
 
@@ -54,6 +55,12 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
             return
         power_state["enabled"] = bool(saved.get("enabled", True))
 
+    def _power_error_text(error):
+        """What /api/camera/power may show: a generic text + error id, never
+        the exception itself (that goes to the logs under the same id)."""
+        error_id = error_reporting.report_unexpected_error(error, "camera_power")
+        return f"{error_reporting.GENERIC_MESSAGE} (ID: {error_id})"
+
     def close_camera_device():
         driver = _active_driver()
         if driver is not None:
@@ -88,7 +95,7 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
             power_state["status"] = "off"
         except Exception as error:
             power_state["status"] = "error"
-            power_state["error"] = str(error)
+            power_state["error"] = _power_error_text(error)
             print(
                 f"[CAMERA POWER] Startup shutdown failed: {error}",
                 flush=True
@@ -153,7 +160,7 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
 
             except Exception as error:
                 power_state["status"] = "error"
-                power_state["error"] = str(error)
+                power_state["error"] = _power_error_text(error)
 
                 print(
                     f"[CAMERA POWER] Error: {error}",

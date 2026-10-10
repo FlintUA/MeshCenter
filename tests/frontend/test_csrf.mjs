@@ -78,6 +78,7 @@ function loadCSRF({ token = 'tok123', origin = 'http://localhost:5000', fetchImp
         document,
         URL,
         Headers,
+        Response,
         Object,
         Array,
         String,
@@ -535,6 +536,52 @@ async function test_safe_and_cross_origin_requests_never_refresh() {
 }
 
 
+// ---- internal_error localization -----------------------------------------
+
+async function test_internal_error_body_is_localized_with_error_id() {
+    const { window } = loadCSRF({
+        token: 'tok123',
+        fetchImpl: async () => fakeResponse(500, {
+            ok: false, error: 'Internal server error', error_code: 'internal_error',
+            error_id: 'a1b2c3d4', networks: [],
+        }),
+    });
+    window.I18N.tOrFallback = (key, params) => `T[${key}]#${params.error_id}`;
+    for (const method of ['POST', 'GET']) {
+        const response = await window.fetch('/api/x', { method });
+        assert.equal(response.status, 500, 'status preserved');
+        const body = await response.json();
+        assert.equal(body.error, 'T[errors.internal_error]#a1b2c3d4');
+        assert.equal(body.error_id, 'a1b2c3d4');
+        assert.equal(body.error_params.error_id, 'a1b2c3d4');
+        assert.deepEqual(Array.from(body.networks), [], 'other fields preserved');
+        assert.equal(body.ok, false);
+    }
+    console.log('PASS: test_internal_error_body_is_localized_with_error_id');
+}
+
+async function test_other_errors_and_cross_origin_are_untouched() {
+    const bodies = [
+        [500, { ok: false, error: 'Radio busy', error_code: 'radio_busy' }],
+        [400, { ok: false, error: 'Bad value', error_code: 'bad' }],
+        [500, { ok: false, error: 'plain 500 without a code' }],
+    ];
+    for (const [status, body] of bodies) {
+        const { window } = loadCSRF({ token: 'tok123', fetchImpl: async () => fakeResponse(status, body) });
+        window.I18N.tOrFallback = () => 'SHOULD NOT BE USED';
+        const response = await window.fetch('/api/x', { method: 'POST' });
+        assert.equal((await response.json()).error, body.error);
+    }
+    const { window } = loadCSRF({
+        token: 'tok123',
+        fetchImpl: async () => fakeResponse(500, { ok: false, error: 'x', error_code: 'internal_error', error_id: 'zz' }),
+    });
+    window.I18N.tOrFallback = () => 'SHOULD NOT BE USED';
+    const cross = await window.fetch('http://other.example/api/x', { method: 'POST' });
+    assert.equal((await cross.json()).error, 'x', 'cross-origin responses are never rewritten');
+    console.log('PASS: test_other_errors_and_cross_origin_are_untouched');
+}
+
 async function main() {
     await test_needsToken_classification();
     await test_addTokenHeader_preserves_and_does_not_mutate();
@@ -558,6 +605,8 @@ async function main() {
     await test_parallel_failures_share_one_refresh();
     await test_same_token_from_refresh_means_no_pointless_retry();
     await test_safe_and_cross_origin_requests_never_refresh();
+    await test_internal_error_body_is_localized_with_error_id();
+    await test_other_errors_and_cross_origin_are_untouched();
     console.log('All CSRF frontend tests passed.');
 }
 

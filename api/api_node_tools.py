@@ -7,6 +7,7 @@ import subprocess
 import threading
 import time
 
+from meshsrv import error_reporting
 from meshsrv.action_engine import (
     ActionContext,
     ActionDefinition,
@@ -617,16 +618,21 @@ def register_node_tools_routes(
             error_code, user_message = _friendly_command_error(
                 action_title, str(error), configured_port, resolved_port,
             )
+            # The raw exception (CLI output, paths) stays in the logs; the
+            # client gets the friendly text and an id to quote.
+            error_id = error_reporting.new_error_id()
+            if error_code == "command_failed":
+                user_message = f"{user_message} (ID: {error_id})"
             log_system_event(
                 title=action_failed_event,
                 level="ERROR",
-                details=f"Target: {node_name} ({node_id}); Job: {context.job_id}; {error}",
+                details=f"[{error_id}] Target: {node_name} ({node_id}); Job: {context.job_id}; {error}",
                 source="node_tools",
             )
             return ActionResult.failure(
                 user_message,
                 error_code=error_code,
-                data={"technical_error": str(error)},
+                data={"error_id": error_id},
                 http_status=500,
             )
 

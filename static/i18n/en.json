@@ -1529,7 +1529,8 @@
     "unknown_error": "Unknown error",
     "network_error": "Network error",
     "listener_not_applicable": "This action is not applicable to TCP/Bluetooth connections",
-    "csrf_invalid": "Your session security check expired. Reload the page and try again."
+    "csrf_invalid": "Your session security check expired. Reload the page and try again.",
+    "internal_error": "Something went wrong on the server. Reference: {error_id}"
   },
   "time": {
     "card_title": "Time & Timers",

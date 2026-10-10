@@ -4,7 +4,7 @@ import time
 
 from flask import jsonify, request
 
-from meshsrv import network_config
+from meshsrv import error_reporting, network_config
 from system_log import get_system_events, log_system_event
 from utils.helpers import get_device_model
 
@@ -255,8 +255,8 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
 
             return jsonify({"ok": True, "processes": results[:5]})
         except Exception as exc:
-            log_system_event("Top processes failed", "ERROR", str(exc), source="system")
-            return jsonify({"ok": False, "error": "Failed to retrieve top processes"}), 500
+            error_id = error_reporting.report_unexpected_error(exc, "top_processes", log_event=log_system_event)
+            return jsonify(error_reporting.internal_error_payload(error_id)), 500
 
     def get_saved_wifi_names():
         result = network_config.list_wifi_connections()
@@ -340,8 +340,10 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
                 net["saved"] = net.get("ssid") in saved_wifi
             result["networks"].sort(key=lambda n: (not n.get("connected", False), -(n.get("signal") or 0)))
         except Exception as e:
-            log_system_event("Wi-Fi scan failed", "ERROR", str(e), source="wifi")
-            return jsonify({"ok": False, "error": str(e), "networks": []}), 500
+            error_id = error_reporting.report_unexpected_error(e, "wifi_scan", log_event=log_system_event, source="wifi")
+            body = error_reporting.internal_error_payload(error_id)
+            body["networks"] = []
+            return jsonify(body), 500
         return jsonify(result)
 
     @app.route("/api/system/wifi/connect", methods=["POST"])

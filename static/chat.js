@@ -3533,8 +3533,8 @@ async function setMapProvider(provider) {
         const data = await response.json();
 
         if (!response.ok || !data.ok) {
-            if (data.technical_error) {
-                console.error('[NODE TOOLS] Technical details:', data.technical_error);
+            if (data.technical_error || data.error_id) {
+                console.error('[NODE TOOLS] Technical details:', data.technical_error || `error ID ${data.error_id} (see the System Log)`);
             }
 
             const requestError = new Error(
@@ -3599,8 +3599,8 @@ async function setWeatherProvider(provider) {
         const data = await response.json();
 
         if (!response.ok || !data.ok) {
-            if (data.technical_error) {
-                console.error('[NODE TOOLS] Technical details:', data.technical_error);
+            if (data.technical_error || data.error_id) {
+                console.error('[NODE TOOLS] Technical details:', data.technical_error || `error ID ${data.error_id} (see the System Log)`);
             }
 
             const requestError = new Error(
@@ -9159,8 +9159,8 @@ async function runNodeTool(action, nodeId, nodeName, button) {
                 );
             }
 
-            if (data.technical_error) {
-                console.error('[NODE TOOLS] Technical details:', data.technical_error);
+            if (data.technical_error || data.error_id) {
+                console.error('[NODE TOOLS] Technical details:', data.technical_error || `error ID ${data.error_id} (see the System Log)`);
             }
 
             const requestError = new Error(

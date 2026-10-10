@@ -5215,24 +5215,3 @@ html[data-theme="dark"] .message.me .message-reply-quote {
 .mesh-map-node-menu-info strong { font-weight: 600; overflow-wrap: anywhere; }
 .mesh-map-node-menu-actions { display: flex; flex-direction: column; }
 .mesh-map-node-menu-title { flex: 0 0 auto; border-bottom: 0; margin-bottom: 0; }
-
-/* ===== U3.2: reference point pushpin (map marker, node badge, legend) ===== */
-.meshcenter-map-marker.reference { background: transparent; border: 0; }
-.meshcenter-map-pin { width: 24px; height: 32px; pointer-events: auto; }
-.meshcenter-map-pin svg { display: block; overflow: visible; filter: drop-shadow(0 2px 2px rgba(0, 0, 0, .45)); }
-.meshcenter-map-pin-head { fill: var(--mc-success, #27b96f); stroke: white; stroke-width: 1.6; }
-.meshcenter-map-pin-needle { fill: var(--mc-text-secondary, #58708f); stroke: white; stroke-width: .8; }
-.meshcenter-map-pin-shine { fill: white; opacity: .55; }
-/* A node that is the reference point: its own dot stays, the pin sits on its top-right. */
-.meshcenter-map-marker.has-reference-pin { overflow: visible; }
-.meshcenter-map-pin-badge {
-    position: absolute;
-    left: 9px;
-    top: -22px;
-    width: 18px;
-    height: 24px;
-    pointer-events: none;
-}
-.meshcenter-map-pin-badge svg { width: 18px; height: 24px; }
-.map-legend-pin { display: inline-flex; align-items: center; }
-.map-legend-pin svg { display: block; filter: none; }

@@ -5466,8 +5466,13 @@ const NODE_FILTER_LABEL_KEYS = {
 function refreshNodeListAfterFilterChange() {
     saveNodeFilterState();
     renderNodeFilterControls();
-    // The header count and the cards both derive from the filtered list.
-    loadMessages();
+    // Re-render from the already-loaded node cache (no refetch): the cards and
+    // the header count both derive from the filtered list.
+    const nodeCountEl = document.getElementById('nodeCount');
+    if (nodeCountEl) {
+        nodeCountEl.innerHTML = '🖥️ ' + escapeHtml(window.I18N.t('nodes.nodes_count', { count: computeDisplayNodes().length }));
+    }
+    renderSidebarNodeCards();
 }
 
 function renderNodeFilterControls() {

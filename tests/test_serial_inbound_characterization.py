@@ -51,7 +51,7 @@ def _waypoint_line(*, waypoint_id, name="Cafe", description="meet here", lat_i=5
 
 def _messages(server):
     return [
-        {k: v for k, v in m.items() if k not in ("id", "time")} for m in server.messages
+        {k: v for k, v in m.items() if k not in ("id", "time", "ts")} for m in server.messages
     ]
 
 

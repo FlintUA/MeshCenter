@@ -49,7 +49,7 @@ INDEX_HTML = REPO_ROOT / 'templates' / 'index.html'
 I18N_JS = REPO_ROOT / 'static' / 'i18n.js'
 
 # The single canonical cache-busting token for the current frontend release.
-CURRENT_VERSION = '20261011-dark-outgoing-bubble'
+CURRENT_VERSION = '20261011-u3-map-list-interaction'
 
 # Browser assets changed in the current release. Every entry must be referenced
 # in index.html with CURRENT_VERSION (and, for i18n.js, its CATALOG_VERSION must
@@ -60,6 +60,8 @@ CURRENT_ASSETS = {
     'static/chat.js',
     'static/chat-views.js',
     'static/csrf.js',
+    'static/chat-map.js',
+    'static/files.js',
     'static/style-part4.css',
 }
 

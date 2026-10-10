@@ -1451,7 +1451,12 @@
     "no_nodes_match_filters": "Немає вузлів, що відповідають активним фільтрам",
     "sender_not_found": "Цього відправника немає у списку вузлів",
     "sender_hidden_by_filter": "Вузол приховано фільтром",
-    "sender_show_action": "Показати"
+    "sender_show_action": "Показати",
+    "role_label": "Роль",
+    "last_heard_label": "Остання активність",
+    "waypoint_here": "Шляхова точка тут",
+    "center_on_map": "Центрувати на карті",
+    "details_action": "Деталі"
   },
   "activity": {
     "card_title": "Активність",

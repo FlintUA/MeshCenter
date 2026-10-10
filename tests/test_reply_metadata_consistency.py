@@ -256,7 +256,7 @@ def test_6_tcp_parity_reply_id_persists(srv):
 
 
 def _strip_volatile(message):
-    stripped = {k: v for k, v in message.items() if k not in ("id", "time")}
+    stripped = {k: v for k, v in message.items() if k not in ("id", "time", "ts")}
     if isinstance(stripped.get("reply_to"), dict):
         stripped["reply_to"] = {k: v for k, v in stripped["reply_to"].items() if k != "id"}
     return stripped

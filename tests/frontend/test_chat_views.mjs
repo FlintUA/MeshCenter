@@ -460,18 +460,13 @@ test('menu placement: never leaves the viewport, and a too-tall menu gets a max 
     assert.ok(tiny.left >= 6 && tiny.left + 288 <= 294 + 0.001);
 });
 
-test('list scroll: visible item -> no scroll; near item -> nearest edge; far item -> centered', () => {
-    // view is 0..400
-    assert.equal(V.scrollDeltaForItem(100, 160, 0, 400), 0);
-    assert.equal(V.scrollDeltaForItem(420, 480, 0, 400), 480 - 400 + 8);   // just below: nearest bottom edge
-    assert.equal(V.scrollDeltaForItem(-60, -10, 0, 400), -60 - 0 - 8);      // just above: nearest top edge
-    assert.equal(V.scrollDeltaForItem(2000, 2060, 0, 400), 2030 - 200);     // far: centered
-    assert.equal(V.scrollDeltaForItem(-3000, -2940, 0, 400), -2970 - 200);
-});
-
-test('list scroll: an item partly outside counts as needing a scroll', () => {
-    assert.notEqual(V.scrollDeltaForItem(380, 440, 0, 400), 0);
-    assert.notEqual(V.scrollDeltaForItem(-30, 30, 0, 400), 0);
+test('follow scroll: a smooth scroll that is moving is left alone; a stalled or old one may be reissued', () => {
+    const f = { scrolled: true, scrolledAt: 1000, startTop: 0 };
+    assert.equal(V.followScrollInProgress(f, 1300, 400), true, 'moving');
+    assert.equal(V.followScrollInProgress(f, 1300, 0), false, 'stalled (animation died)');
+    assert.equal(V.followScrollInProgress(f, 1000 + 1501, 400), false, 'too old');
+    assert.equal(V.followScrollInProgress({ scrolled: false }, 1300, 400), false);
+    assert.equal(V.followScrollInProgress(null, 1300, 400), false);
 });
 
 console.log(`test_chat_views.mjs: ${passed} tests passed`);

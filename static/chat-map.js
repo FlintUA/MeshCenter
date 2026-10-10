@@ -1267,12 +1267,18 @@ document.addEventListener('keydown', event => {
     if (target && target.closest && target.closest('input, textarea, select, [contenteditable]')) return;
     const container = meshMap.getContainer();
     if (!container || container.clientWidth === 0 || container.clientHeight === 0) return;
+    // When the map consumes Esc, chat.js's own Esc handler (which closes the
+    // open conversation) must not also act on the same key press.
     if (meshMapNodeMenuEl || meshMapPopupOpen) {
         closeMeshMapNodeMenu();
         meshMap.closePopup();
+        event.stopImmediatePropagation();
         return;
     }
-    if (meshMapTargetNodeId) clearMeshMapSelection();
+    if (meshMapTargetNodeId) {
+        clearMeshMapSelection();
+        event.stopImmediatePropagation();
+    }
 });
 
 function meshMapNodeFromElement(element) {

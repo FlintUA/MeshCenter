@@ -275,12 +275,53 @@
         items.push({ id: 'request_telemetry' });
         items.push({ id: 'request_position' });
         items.push({ id: 'traceroute' });
-        if (c.hasPosition) {
+        if (c.isReference) {
+            // The node IS the reference point: offer to clear it instead.
+            items.push({ id: 'clear_reference' });
+        } else if (c.hasPosition) {
             items.push({ id: 'set_reference' });
-            items.push({ id: 'copy_coordinates' });
         }
+        if (c.hasPosition) items.push({ id: 'copy_coordinates' });
         items.push({ id: 'details' });
         return items;
+    }
+
+    // A reference point that is a plain location (not a node) has no node
+    // actions - just these three.
+    function referenceLocationItems() {
+        return [{ id: 'copy_coordinates' }, { id: 'change_reference' }, { id: 'waypoint_here' }];
+    }
+
+    // Where to put a context menu so it stays inside the map: prefer the
+    // bottom-right of the pointer, flip to the other side when it would
+    // overflow, then clamp; a menu taller than the space gets maxHeight and
+    // scrolls. point/size/bounds are in container pixels.
+    function placeContextMenu(point, size, bounds, margin) {
+        const m = margin === undefined ? 6 : margin;
+        const availW = Math.max(0, bounds.width - 2 * m);
+        const availH = Math.max(0, bounds.height - 2 * m);
+        const width = Math.min(size.width, availW);
+        const height = Math.min(size.height, availH);
+        let left = point.x;
+        let top = point.y;
+        if (left + width > bounds.width - m) left = point.x - width;   // flip left of the pointer
+        if (top + height > bounds.height - m) top = point.y - height;  // flip above the pointer
+        left = Math.max(m, Math.min(left, bounds.width - m - width));
+        top = Math.max(m, Math.min(top, bounds.height - m - height));
+        return { left: left, top: top, maxHeight: availH };
+    }
+
+    // How far to scroll a list so an item becomes visible: 0 when it already is,
+    // 'nearest' edge (with a small margin) when it is close, centered when it is
+    // more than a viewport away. All values are in the same coordinate space.
+    function scrollDeltaForItem(itemTop, itemBottom, viewTop, viewBottom) {
+        if (itemTop >= viewTop && itemBottom <= viewBottom) return 0;
+        const viewHeight = viewBottom - viewTop;
+        const gap = itemTop >= viewBottom ? itemTop - viewBottom
+            : (itemBottom <= viewTop ? viewTop - itemBottom : 0);
+        if (gap > viewHeight) return (itemTop + itemBottom) / 2 - (viewTop + viewBottom) / 2;
+        if (itemTop < viewTop) return itemTop - viewTop - 8;
+        return itemBottom - viewBottom + 8;
     }
 
     // Single vs double click from successive click events. Markers get rebuilt
@@ -361,6 +402,9 @@
 
     const api = {
         nodeActionItems: nodeActionItems,
+        referenceLocationItems: referenceLocationItems,
+        placeContextMenu: placeContextMenu,
+        scrollDeltaForItem: scrollDeltaForItem,
         classifyNodeClick: classifyNodeClick,
         createLongPressDetector: createLongPressDetector,
         chatListFollowAction: chatListFollowAction,

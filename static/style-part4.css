@@ -5200,3 +5200,18 @@ html[data-theme="dark"] .message.me .message-reply-quote {
 .mesh-map-node-menu-item.is-on { font-weight: 700; }
 .map-popup-actions { display: flex; flex-wrap: wrap; gap: 4px; }
 .map-popup-action-btn.is-on { font-weight: 700; }
+
+/* ===== U3.1: node context menu with info header ===== */
+.mesh-map-node-menu-info {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 2px 12px;
+    padding: 4px 8px 6px;
+    margin-bottom: 2px;
+    border-bottom: 1px solid var(--mc-popover-divider, var(--mc-border-soft, #e4eaf1));
+    font-size: 12px;
+}
+.mesh-map-node-menu-info span { color: var(--mc-popover-muted, var(--mc-text-secondary, #58708f)); }
+.mesh-map-node-menu-info strong { font-weight: 600; overflow-wrap: anywhere; }
+.mesh-map-node-menu-actions { display: flex; flex-direction: column; }
+.mesh-map-node-menu-title { flex: 0 0 auto; border-bottom: 0; margin-bottom: 0; }

@@ -149,6 +149,7 @@ function ensureStoreSelectionSubscription() {
         if (dataChanged) {
             renderChannelTargets();
         }
+        syncListScrollToSelection();
     });
 }
 
@@ -4300,7 +4301,11 @@ const CHAT_ACTIONS = {
         const container = document.getElementById('messagesContainer');
         if (container) container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
     },
+    'ref-act': (target) => {
+        runReferenceAction(target.getAttribute('data-act'), Number(target.getAttribute('data-lat')), Number(target.getAttribute('data-lon')));
+    },
     'node-act': (target) => {
+
         runNodeAction(target.getAttribute('data-act'), target.getAttribute('data-node-id'), target);
     },
     'node-card-message': (target) => {
@@ -4644,7 +4649,7 @@ async function loadChatList() {
             : `<div class="loading">💬 ${escapeHtml(window.I18N.t('chat.no_direct_messages_yet'))}</div>`;
 
         flushPendingSynchronizedScroll();
-        ensureChatListFollow();
+        ensureChatListFollow(true);
     } catch (error) {
         console.error('[CHAT] Error:', error);
         const message = error.name === 'AbortError' ? window.I18N.t('errors.request_timeout') : error.message;
@@ -5075,28 +5080,70 @@ function flushPendingSynchronizedScroll() {
     });
 }
 
-// U3 bug fix: opening a DM immediately re-renders the chat list (loadChatList
-// at the end of openChat), which could swallow the scroll that was just
-// started, or run before the entry existed. The request is remembered and
-// re-checked after every chat-list render (see ensureChatListFollow).
+// A node/channel selected ANYWHERE (node list, map, chat list, the card's 💬)
+// must be visible in BOTH lists. Selection from the node list goes through the
+// shared target store only (PR 5) - nothing in that path ever asked the chat
+// list to scroll (the old selectNode(...,'nodes') call that did is gone), so
+// the entry got highlighted (syncSelectedChatItems) but stayed off-screen.
+// Every selection change now registers a one-shot "follow" request: the entry
+// is scrolled into view now (nearest edge, or centered when far) and once more
+// after the next chat-list render (a re-render or a not-yet-rendered entry
+// must not lose it); after that, or after 2.5 s, polls leave the list alone.
+// An entry that does not exist (a node without a DM) is simply never scrolled to.
 let chatListFollow = null;
+let lastSelectionScrollSig = '';
+const CHAT_LIST_FOLLOW_TTL_MS = 2500;
+const CHAT_LIST_CONTAINER_IDS = ['dmChatList', 'channelList'];
 
-function ensureChatListFollow() {
+function findChatListEntry(chatId) {
+    for (const containerId of CHAT_LIST_CONTAINER_IDS) {
+        const container = document.getElementById(containerId);
+        if (!container) continue;
+        const item = findElementByDataValue(`#${containerId} .chat-item`, 'chatId', chatId);
+        if (item) return { item, container };
+    }
+    return null;
+}
+
+function scrollContainerToShowItem(container, item) {
+    const c = container.getBoundingClientRect();
+    if (c.height <= 0) return false;   // list not laid out / hidden: nothing to scroll
+    const r = item.getBoundingClientRect();
+    const delta = window.MCViews.scrollDeltaForItem(r.top, r.bottom, c.top, c.bottom);
+    if (!delta) return false;
+    // Instant, never smooth: an in-flight smooth scroll is what re-renders cancel.
+    container.scrollTo({ top: Math.max(0, container.scrollTop + delta), behavior: 'instant' });
+    return true;
+}
+
+function ensureChatListFollow(afterRender = false) {
     if (!chatListFollow) return;
-    const container = document.getElementById('dmChatList');
-    const item = findElementByDataValue('#dmChatList .chat-item', 'chatId', chatListFollow.id);
-    const visible = Boolean(item && container && isElementFullyVisibleInContainer(item, container));
-    const action = window.MCViews.chatListFollowAction(chatListFollow, Date.now(), Boolean(item), visible);
+    const found = findChatListEntry(chatListFollow.id);
+    const visible = Boolean(found && isElementFullyVisibleInContainer(found.item, found.container));
+    const action = window.MCViews.chatListFollowAction(
+        chatListFollow, Date.now(), Boolean(found), visible, CHAT_LIST_FOLLOW_TTL_MS
+    );
     if (action === 'scroll') {
-        // Instant, not smooth: a smooth scroll is exactly what the re-render kills.
-        const containerRect = container.getBoundingClientRect();
-        const itemRect = item.getBoundingClientRect();
-        container.scrollTop = Math.max(0, container.scrollTop + (itemRect.top - containerRect.top) - (container.clientHeight - itemRect.height) / 2);
-        chatListFollow = null;
-    } else if (action === 'done' || action === 'expire') {
+        scrollContainerToShowItem(found.container, found.item);
+        chatListFollow.scrolled = true;
+        if (afterRender) chatListFollow = null;
+    } else if (action === 'done') {
+        if (afterRender || chatListFollow.scrolled) chatListFollow = null;
+    } else if (action === 'expire') {
         chatListFollow = null;
     }
     // 'wait': the entry is not rendered yet - checked again after the next render.
+}
+
+function syncListScrollToSelection() {
+    const selected = effectiveSelectedTarget();
+    const signature = selected ? `${selected.kind}:${selected.id}` : '';
+    if (signature === lastSelectionScrollSig) return;   // only on a real selection change
+    lastSelectionScrollSig = signature;
+    if (!selected) return;
+    chatListFollow = { id: String(selected.id), at: Date.now(), scrolled: false };
+    ensureChatListFollow(false);
+    if (selected.kind === 'node') scrollNodeCardIntoView(selected.id, false);
 }
 
 function requestSynchronizedListScroll(nodeId, source, options = {}) {
@@ -6169,10 +6216,17 @@ function handleSidebarNodeDoubleClick(event) {
     openNodeDirectMessage(card.dataset.nodeId);
 }
 
+function isReferenceNode(nodeId) {
+    const reference = appSettings && appSettings.reference_location;
+    return Boolean(reference && reference.mode === 'node'
+        && String(reference.node_id || '').toLowerCase() === String(nodeId || '').toLowerCase());
+}
+
 function nodeActionContext(node) {
     const store = targetStore();
     const target = store && typeof store.getNode === 'function' ? store.getNode(node.node_id) : null;
     return {
+        isReference: isReferenceNode(node.node_id),
         hasPosition: Boolean(getNodePosition(node)),
         keyUnknown: Boolean(target && !target.is_local && target.trust_state === 'unknown'),
         canRequestKey: Boolean(target && target.can_request_key),
@@ -6193,6 +6247,8 @@ function nodeActionPresentation(item) {
         case 'request_position': return { icon: '📡', label: t('nodes.request_position') };
         case 'traceroute': return { icon: '🔍', label: t('nodes.traceroute') };
         case 'set_reference': return { icon: '📌', label: t('nodes.set_as_reference') };
+        case 'clear_reference': return { icon: '📌', label: t('nodes.clear_reference') };
+        case 'change_reference': return { icon: '⚙️', label: t('nodes.change_reference_point') };
         case 'copy_coordinates': return { icon: '📋', label: t('waypoints.coordinates') };
         case 'details': return { icon: 'ℹ️', label: t('nodes.details_action') };
         default: return { icon: '', label: item.id };
@@ -6235,6 +6291,7 @@ function runNodeAction(act, nodeId, element) {
         case 'request_position': runNodeTool('request_position', node.node_id, name, element); break;
         case 'traceroute': runNodeTool('traceroute', node.node_id, name, element); break;
         case 'set_reference': setNodeAsReference(node.node_id); break;
+        case 'clear_reference': clearReferenceLocation(); break;
         case 'copy_coordinates':
             if (pos) copyCoordinates(pos.latitude, pos.longitude);
             break;
@@ -7495,12 +7552,22 @@ async function toggleIgnore(nodeId) {
 
             loadMessages();
             loadChatList();
+            // The map follows the list's ignore rule; in split mode nothing else
+            // re-renders it, so the marker would stay until the next interaction.
+            refreshMapAfterReferenceChange();
             
             updateNodeDetails(nodeId);
-            showToast(
-                data.ignored ? window.I18N.t('chat.node_ignored') : window.I18N.t('chat.node_restored'),
-                data.ignored ? 'warning' : 'success'
-            );
+            if (data.ignored) {
+                // Since U1 an ignored node leaves the node list (and the map) by
+                // default, so say so and offer the way back right away.
+                showToast(window.I18N.t('chat.node_ignored_hidden'), 'warning', {
+                    actionLabel: window.I18N.t('common.undo'),
+                    action: () => toggleIgnore(nodeId),
+                    duration: 8000,
+                });
+            } else {
+                showToast(window.I18N.t('chat.node_restored'), 'success');
+            }
 
             if (currentChatId === nodeId) {
                 // Avoid duplicating the bottom notification with a chat banner.
@@ -8554,6 +8621,35 @@ function closeWaypointPopup() {
     }
 }
 
+// Mirrors a changed reference point onto the map (marker style, dashed line).
+function refreshMapAfterReferenceChange() {
+    if (isMeshMapOpen() && typeof renderMeshMap === 'function') {
+        renderMeshMap(meshMapTargetNodeId, { preserveViewport: true, openPopup: false });
+    }
+}
+
+function clearReferenceLocation() {
+    fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reference_location: { mode: 'disabled' } })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.ok) {
+            appSettings = data.settings;
+            updateSettingsUi();
+            notifySettingsUpdated();
+            updateReferenceLocationSummary();
+            refreshMapAfterReferenceChange();
+            showToast(`✅ ${window.I18N.t('nodes.reference_cleared')}`, 'success');
+        } else {
+            showToast(`❌ ${window.I18N.t('nodes.set_reference_failed')}`, 'error');
+        }
+    })
+    .catch(() => showToast(`❌ ${window.I18N.t('errors.network_error')}`, 'error'));
+}
+
 function setNodeAsReference(nodeId) {
     // Устанавливаем текущую ноду как референс
     // Сохраняем в настройках
@@ -8572,6 +8668,8 @@ function setNodeAsReference(nodeId) {
             appSettings = data.settings;
             updateSettingsUi();
             notifySettingsUpdated();
+            updateReferenceLocationSummary();
+            refreshMapAfterReferenceChange();
             showToast(`✅ ${window.I18N.t('nodes.reference_node_set')}`, 'success');
             // Перерисовать карточку
             const node = nodeCache.find(n => n.node_id === nodeId);

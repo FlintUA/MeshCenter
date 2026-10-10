@@ -21,7 +21,8 @@
     "disabled": "Disabled",
     "please_wait": "Please wait",
     "error_prefix": "Error: {reason}",
-    "reloading": "Reloading…"
+    "reloading": "Reloading…",
+    "undo": "Undo"
   },
   "nav": {
     "chats": "Chats",
@@ -534,7 +535,8 @@
     "yes_delete_everything": "Yes, Delete Everything!",
     "date_yesterday": "yesterday",
     "unread_divider": "Unread messages ({count})",
-    "jump_to_latest": "Jump to latest message"
+    "jump_to_latest": "Jump to latest message",
+    "node_ignored_hidden": "Node ignored — hidden from the list"
   },
   "camera": {
     "live_camera": "Live Camera",
@@ -1456,7 +1458,11 @@
     "last_heard_label": "Last heard",
     "waypoint_here": "Waypoint here",
     "center_on_map": "Center on map",
-    "details_action": "Details"
+    "details_action": "Details",
+    "clear_reference": "Clear reference point",
+    "change_reference_point": "Change reference point",
+    "reference_cleared": "Reference point cleared",
+    "coordinates_label": "Coordinates"
   },
   "activity": {
     "card_title": "Activity",

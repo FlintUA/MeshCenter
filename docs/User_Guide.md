@@ -549,14 +549,16 @@ To calculate distance and bearing, open `Workspace > Settings > Reference locati
 
 ### Working with nodes on the map
 
-Clicking or tapping only *looks*; actions are explicit buttons or menu items.
+Clicking or tapping only *looks*; actions live in one context menu.
 
-- **Click a node:** selects it (highlighted marker, dashed line from the reference location, distance and bearing in the map header), opens its info popup and scrolls the right-hand node list to its card, which flashes briefly. It does **not** open a conversation and does not change the chat you have open.
-- **Double-click a node:** opens the direct message with it. (On a touch screen use the `💬 Message` button instead; double-tap zooms the map.)
-- **Right-click a node** (touch: long-press it for about half a second): a compact action menu at the pointer. The same actions are buttons in the popup: Message, Favorite / Unfavorite, Ignore / Unignore, Waypoint here, Center on map, Request key (only while the node's key is unknown), Request telemetry, Request position, Traceroute, Set as reference, Copy coordinates and Details. Actions that need a position are hidden for nodes without one.
+- **Click a node:** selects it - highlighted marker, dashed line from the reference location, distance and bearing in the map header - and scrolls the right-hand node list to its card, which flashes briefly. No popup opens, no conversation opens, and the chat you have open does not change.
+- **Double-click a node:** opens the direct message with it. (On a touch screen use the `💬 Message` item in the menu; double-tap zooms the map.)
+- **Right-click a node** (touch: long-press it for about half a second): one context menu. Its header shows the node's name, ID, role, last activity, hops, SNR, battery, distance and azimuth; below it are the actions: Message, Favorite / Unfavorite, Ignore / Unignore, Waypoint here, Center on map, Request key (only while the node's key is unknown), Request telemetry, Request position, Traceroute, Set as reference (or Clear reference point when this node is the reference), Copy coordinates and Details. Actions that need a position are hidden for nodes without one. The menu stays inside the map and scrolls if it is taller than the space.
+- **Ignore:** an ignored node disappears from the node list and from the map (as in the list, it only shows while `Ignored only` is on). A notice with an `Undo` button appears; to restore a node later, turn on `Ignored only`, or right-click its marker while that filter is on.
+- **Reference point:** if the reference point is a node, its marker is green and behaves exactly like any node (select, menu, double-click), with `Clear reference point` replacing `Set as reference`. If it is a plain location, right-click (or long-press) it for a menu with its label and coordinates and the items Copy coordinates, Change reference point and Waypoint here; a left click shows its info popup.
 - **Right-click empty map** (touch: long-press empty map): creates a waypoint there.
-- **Click empty map:** closes the popup or menu; the selection and its line stay.
-- **Esc:** closes the menu and popup; a second press clears the selection.
+- **Click empty map:** closes the menu; the selection and its line stay.
+- **Esc:** closes the menu or popup; a second press clears the selection.
 
 Waypoint markers keep their own popup.
 

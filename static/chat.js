@@ -6066,8 +6066,12 @@ function openMessageActions(messageId, anchorElement, pointerEvent = null) {
 function isNodePanelVisible() {
     const panel = document.getElementById('sidebar');
     if (!panel || typeof panel.getBoundingClientRect !== 'function') return false;
+    // Desktop layout only (the CSS turns panels into drawers at <= 900px; the
+    // mobile interaction comes later) and the panel must really be on screen.
+    if (window.innerWidth < 901) return false;
     const rect = panel.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return false;
+    if (rect.right <= 0 || rect.left >= window.innerWidth || rect.bottom <= 0 || rect.top >= window.innerHeight) return false;
     const style = window.getComputedStyle ? window.getComputedStyle(panel) : null;
     return !style || (style.display !== 'none' && style.visibility !== 'hidden');
 }

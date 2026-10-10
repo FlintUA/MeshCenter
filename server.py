@@ -7435,7 +7435,10 @@ def api_activate_radio_profile(profile_id):
     except ValueError as error:
         return jsonify({"ok": False, "error": str(error)}), 400
     except FileNotFoundError as error:
-        return jsonify({"ok": False, "error": str(error)}), 404
+        # The exception text carries a server-side path: log it, don't return it.
+        print(f"[PROFILE] {error}", flush=True)
+        log_system_event("Radio profile not found", "WARNING", str(error)[:300], source="profiles")
+        return jsonify({"ok": False, "error": "Profile not found", "error_code": "profile_not_found"}), 404
     except Exception as error:
         return internal_error_response(error, "read_radio_profile")
 

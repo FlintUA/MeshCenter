@@ -158,3 +158,23 @@ def test_profile_save_error_is_generic(server_module, monkeypatch):
         resp = server_module.internal_error_response(OSError(SECRET), "save_active_radio_profile")
     body, status = resp[0].get_json(), resp[1]
     assert status == 500 and body["error_code"] == "internal_error" and "secret" not in str(body)
+
+
+def test_activate_unknown_profile_is_404_without_the_server_path(server_module, monkeypatch):
+    path = "/home/meshcenter/meshcenter/data/profiles/deadbeef"
+    events = []
+    monkeypatch.setattr(server_module, "log_system_event",
+                        lambda title, level="INFO", details="", source="system": events.append((title, level, details)))
+
+    def missing(profile_id):
+        raise FileNotFoundError(f"Radio profile not found: {path}")
+
+    monkeypatch.setattr(server_module.profile_manager, "get_profile", missing)
+    with server_module.app.test_request_context("/api/node-manager/profiles/deadbeef/activate", method="POST"):
+        resp = server_module.api_activate_radio_profile("deadbeef")
+    body, status = resp[0].get_json(), resp[1]
+    assert status == 404
+    assert body == {"ok": False, "error": "Profile not found", "error_code": "profile_not_found"}
+    assert path not in str(body)
+    # the path is kept server-side
+    assert any(path in details for _, _, details in events)

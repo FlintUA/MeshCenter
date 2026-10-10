@@ -104,12 +104,15 @@ used and cleaned up in Stage 7).
 
 ## KI-007: Chat-list timestamps don't follow the 12h/24h toggle
 Status: planned
-Symptom: message timestamps shown in the chat list are formatted
-server-side and don't react to the `Settings > Units` 12h/24h display
-toggle the rest of the interface respects (`TimeFormatter`).
-Next step: route chat-list timestamp formatting through the same
-client-side `TimeFormatter` the Time card and other timestamps already use,
-instead of a server-formatted string.
+Symptom: message and chat-list times don't react to the `Settings >
+Units` 12h/24h display toggle the rest of the interface respects
+(`TimeFormatter`). As of v1.10.0 (#338) new messages carry an epoch `ts`
+and the browser formats it (`static/chat-views.js`, `formatMessageTime`:
+today `18:36`, yesterday, `08.10 18:36`, `08.10.2025 18:36`, in the UI
+locale), but the clock part is always 24-hour; messages stored before
+that still show the old server-formatted `HH:MM:SS`.
+Next step: have `formatMessageTime` take the 12h/24h preference from
+`appSettings.units.time_format` like `TimeFormatter` does.
 
 ## KI-008: Serial hot-reconnect (H2-C) - RESOLVED
 Status: resolved 2026-10-04, live-verified on dev (192.168.2.104), PR #331

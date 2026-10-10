@@ -19,7 +19,7 @@
     var FALLBACK_LOCALE = 'en';
     // Bumped manually alongside catalog content changes, same convention as
     // the ?v= query strings on <script>/<link> tags in index.html.
-    var CATALOG_VERSION = '20261010-u2-csrf-click-msg';
+    var CATALOG_VERSION = '20261011-u2-flash-style';
 
     var catalogs = {};      // locale -> flattened {dottedKey: value}
     var loadPromises = {};  // locale -> in-flight/completed fetch promise

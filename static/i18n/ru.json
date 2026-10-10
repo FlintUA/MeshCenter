@@ -1451,7 +1451,12 @@
     "no_nodes_match_filters": "Нет узлов, подходящих под активные фильтры",
     "sender_not_found": "Этого отправителя нет в списке узлов",
     "sender_hidden_by_filter": "Узел скрыт фильтром",
-    "sender_show_action": "Показать"
+    "sender_show_action": "Показать",
+    "role_label": "Роль",
+    "last_heard_label": "Последняя активность",
+    "waypoint_here": "Путевая точка здесь",
+    "center_on_map": "Центрировать на карте",
+    "details_action": "Подробности"
   },
   "activity": {
     "card_title": "Активность",

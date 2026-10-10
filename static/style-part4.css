@@ -5139,3 +5139,64 @@ html[data-theme="dark"] .message.me .message-reply-quote {
     border-left-color: var(--mc-text-inverse);
     background: color-mix(in srgb, var(--mc-text-inverse) 12%, transparent);
 }
+
+/* ===== U3: node card message button, map node action menu ===== */
+.node-card-message-btn {
+    margin-left: auto;
+    padding: 0 6px;
+    min-width: 26px;
+    height: 22px;
+    border: 1px solid var(--mc-border, #d7e0ea);
+    border-radius: 6px;
+    background: var(--mc-surface-control, #f7f9fc);
+    color: var(--mc-text-primary, #10233f);
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+}
+.node-card-message-btn:hover { background: var(--mc-primary-soft, #eaf3ff); }
+
+.mesh-map-node-menu {
+    position: absolute;
+    z-index: 1200;
+    display: flex;
+    flex-direction: column;
+    min-width: 190px;
+    max-width: 260px;
+    max-height: calc(100% - 12px);
+    overflow-y: auto;
+    padding: 4px;
+    border: 1px solid var(--mc-popover-border, var(--mc-border, #d7e0ea));
+    border-radius: 8px;
+    background: var(--mc-popover-bg, var(--mc-surface, #fff));
+    color: var(--mc-popover-text, var(--mc-text-primary, #10233f));
+    box-shadow: var(--mc-popover-shadow, 0 8px 24px rgba(0, 0, 0, .3));
+    font-size: 13px;
+}
+.mesh-map-node-menu-title {
+    padding: 4px 8px 6px;
+    font-weight: 700;
+    border-bottom: 1px solid var(--mc-popover-divider, var(--mc-border-soft, #e4eaf1));
+    margin-bottom: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.mesh-map-node-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 8px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+.mesh-map-node-menu-item:hover,
+.mesh-map-node-menu-item:focus-visible { background: var(--mc-popover-item-hover, var(--mc-primary-soft, #eaf3ff)); }
+.mesh-map-node-menu-item.is-on { font-weight: 700; }
+.map-popup-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.map-popup-action-btn.is-on { font-weight: 700; }

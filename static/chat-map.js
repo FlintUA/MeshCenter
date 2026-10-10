@@ -1034,9 +1034,38 @@ function ensureMeshMap() {
         attribution: '&copy; OpenStreetMap contributors'
     }).addTo(meshMap);
 
+    // Right-click / long-press on EMPTY map = Create Waypoint. A node marker's
+    // own contextmenu handler (the action menu) marks the DOM event so it never
+    // also reaches this one.
     meshMap.on('contextmenu', event => {
+        const original = event.originalEvent;
+        if (original && original._mcNodeMenu) return;
+        if (!acceptMeshMapContextAction()) return;
         openCreateWaypointDialog(event.latlng.lat, event.latlng.lng);
     });
+
+    // Click on empty map: close the node menu (the popup closes by itself);
+    // the selection and its dashed line stay.
+    meshMap.on('click', event => {
+        if (Date.now() < meshMapSuppressClickUntil) return;
+        const original = event.originalEvent;
+        if (original && original.target && typeof original.target.closest === 'function'
+            && original.target.closest('.mesh-map-node-menu')) return;
+        closeMeshMapNodeMenu();
+    });
+    meshMap.on('movestart zoomstart', closeMeshMapNodeMenu);
+    meshMap.on('popupopen', event => {
+        meshMapPopupOpen = true;
+        // Leaflet stops clicks at the popup's own container, so the document-
+        // level data-chat-action dispatcher never sees them: route them to it.
+        const el = event.popup && event.popup.getElement && event.popup.getElement();
+        if (el && el.dataset.chatActionBound !== '1') {
+            el.dataset.chatActionBound = '1';
+            el.addEventListener('click', onChatActionClick);
+        }
+    });
+    meshMap.on('popupclose', () => { meshMapPopupOpen = false; });
+    installMeshMapLongPress(container);
 
     // Reveal node labels progressively as the operator zooms in.
     // Updating a data attribute is intentionally lightweight and avoids
@@ -1061,28 +1090,184 @@ function ensureMeshMap() {
 function buildMapPopup(node) {
     const pos = getNodePosition(node);
     const navigation = pos ? getNodeDistanceAndBearing(pos.latitude, pos.longitude) : { distanceText:'--', bearingText:'--' };
-    const source = node?.position?.source || window.I18N.t('nodes.source_radio');
-    const updated = formatNodePositionUpdated(node?.position);
-    const age = node?.age || node?.last_seen || '--';
-    const nodeId = escapeJsString(node?.node_id || '');
-    const nodeName = escapeJsString(getNodeDisplayName(node));
+    const age = node?.age || '--';
+    const battery = formatBatteryPercent(node?.battery_level);
+    const snr = node?.snr;
+    const row = (label, value) => `<span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value))}</strong>`;
 
     return `
         <div class="map-popup-name">${escapeHtml(getNodeDisplayName(node))}</div>
         <div class="map-popup-grid">
-            <span>${escapeHtml(window.I18N.t('nodes.distance'))}</span><strong>${escapeHtml(navigation.distanceText)}</strong>
-            <span>${escapeHtml(window.I18N.t('nodes.bearing'))}</span><strong>${escapeHtml(navigation.bearingText)}</strong>
-            <span>${escapeHtml(window.I18N.t('nodes.source'))}</span><strong>${escapeHtml(source)}</strong>
-            <span>${escapeHtml(window.I18N.t('nodes.last_update'))}</span><strong>${escapeHtml(updated || age)}</strong>
+            ${row('ID', node?.node_id || '--')}
+            ${row(window.I18N.t('nodes.role_label'), node?.role || 'CLIENT')}
+            ${row(window.I18N.t('nodes.last_heard_label'), age)}
+            ${row(window.I18N.t('nodes.hops_label'), formatNodeHops(node))}
+            ${row('SNR', snr === null || snr === undefined || snr === '' ? '--' : `${snr} dB`)}
+            ${battery !== '--' ? row(window.I18N.t('node_panel.battery'), `${battery}%`) : ''}
+            ${row(window.I18N.t('nodes.distance'), navigation.distanceText)}
+            ${row(window.I18N.t('nodes.bearing'), navigation.bearingText)}
         </div>
-        <div class="map-popup-actions">
-            <button class="map-popup-primary-btn" onclick="openChat('${nodeId}', '${nodeName}', 'dm')">💬 ${escapeHtml(window.I18N.t('nodes.message_button'))}</button>
-            <button class="map-popup-action-btn" onclick="runNodeTool('request_telemetry', '${nodeId}', '${nodeName}', this)">📊 ${escapeHtml(window.I18N.t('nodes.telemetry_short'))}</button>
-            <button class="map-popup-action-btn" onclick="runNodeTool('request_position', '${nodeId}', '${nodeName}', this)">📍 ${escapeHtml(window.I18N.t('nodes.position_short'))}</button>
-            <button class="map-popup-action-btn" onclick="setNodeAsReference('${nodeId}')">📌 ${escapeHtml(window.I18N.t('nodes.reference_short'))}</button>
-            <button class="map-popup-action-btn" onclick="copyCoordinates('${pos ? pos.latitude : ''}', '${pos ? pos.longitude : ''}')">📋 ${escapeHtml(window.I18N.t('waypoints.coordinates'))}</button>
-        </div>
+        <div class="map-popup-actions">${renderNodeActionButtons(node, 'map-popup-action-btn')}</div>
     `;
+}
+
+// ---- U3: node action menu, selection and touch on the map ----
+
+let meshMapNodeMenuEl = null;
+let meshMapPopupOpen = false;
+let meshMapLastNodeClick = null;
+let meshMapSuppressClickUntil = 0;
+let meshMapLastContextAt = 0;
+
+// Native contextmenu and the touch long-press detector can both fire for one
+// gesture: only the first one counts.
+function acceptMeshMapContextAction() {
+    const now = Date.now();
+    if (now - meshMapLastContextAt < 1200) return false;
+    meshMapLastContextAt = now;
+    return true;
+}
+
+function closeMeshMapNodeMenu() {
+    if (meshMapNodeMenuEl) {
+        meshMapNodeMenuEl.remove();
+        meshMapNodeMenuEl = null;
+    }
+}
+
+function openMeshMapNodeMenu(node, containerPoint) {
+    if (!meshMap || !node) return;
+    closeMeshMapNodeMenu();
+    meshMap.closePopup();
+
+    const container = meshMap.getContainer();
+    const menu = document.createElement('div');
+    menu.className = 'mesh-map-node-menu';
+    menu.setAttribute('role', 'menu');
+    menu.innerHTML =
+        `<div class="mesh-map-node-menu-title">${escapeHtml(getNodeDisplayName(node))}</div>` +
+        renderNodeActionButtons(node, 'mesh-map-node-menu-item');
+    // The menu is not a map layer: keep drags/double clicks/right clicks on it
+    // from reaching Leaflet. (Click is left alone so the data-chat-action
+    // dispatcher still sees it.)
+    ['mousedown', 'dblclick', 'pointerdown', 'touchstart'].forEach(type => {
+        menu.addEventListener(type, event => event.stopPropagation());
+    });
+    menu.addEventListener('contextmenu', event => { event.preventDefault(); event.stopPropagation(); });
+    container.appendChild(menu);
+
+    const margin = 6;
+    const left = Math.max(margin, Math.min(containerPoint.x, container.clientWidth - menu.offsetWidth - margin));
+    const top = Math.max(margin, Math.min(containerPoint.y, container.clientHeight - menu.offsetHeight - margin));
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+    meshMapNodeMenuEl = menu;
+}
+
+// Left click / tap: LOOK. Select the node (marker, dashed line, popup, card
+// scrolled into view and flashed) without opening a DM or touching the current
+// chat. Two clicks on the same node = open the DM.
+function handleMeshMapNodeClick(node, event) {
+    if (Date.now() < meshMapSuppressClickUntil) return;
+    closeMeshMapNodeMenu();
+    const nodeId = String(node.node_id);
+    const verdict = window.MCViews.classifyNodeClick(meshMapLastNodeClick, nodeId, Date.now());
+    meshMapLastNodeClick = verdict.next;
+
+    if (verdict.kind === 'double') {
+        openChat(nodeId, getNodeDisplayName(node), 'dm', 'external');
+        return;
+    }
+
+    meshMapTargetNodeId = nodeId;
+    storeSyncSelection('node', nodeId);
+    // Update the orange marker and reference line immediately instead of
+    // waiting for the next node refresh.
+    renderMeshMap(nodeId, { preserveViewport: true, openPopup: true });
+    focusNodeInList(nodeId);
+}
+
+function centerMeshMapOnNode(nodeId) {
+    meshMapTargetNodeId = String(nodeId);
+    storeSyncSelection('node', String(nodeId));
+    renderMeshMap(String(nodeId), { preserveViewport: false, openPopup: true });
+}
+
+function clearMeshMapSelection() {
+    meshMapTargetNodeId = null;
+    storeSyncSelection(null, null);
+    renderMeshMap(null, { clearSelection: true, preserveViewport: true, openPopup: false });
+}
+
+// Esc: first press closes the menu/popup, the second clears the selection.
+document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || !meshMap) return;
+    const target = event.target;
+    if (target && target.closest && target.closest('input, textarea, select, [contenteditable]')) return;
+    const container = meshMap.getContainer();
+    if (!container || container.clientWidth === 0 || container.clientHeight === 0) return;
+    if (meshMapNodeMenuEl || meshMapPopupOpen) {
+        closeMeshMapNodeMenu();
+        meshMap.closePopup();
+        return;
+    }
+    if (meshMapTargetNodeId) clearMeshMapSelection();
+});
+
+function meshMapNodeFromElement(element) {
+    const icon = element && element.closest ? element.closest('.leaflet-marker-icon') : null;
+    if (!icon) return null;
+    for (const [nodeId, marker] of meshMapMarkers) {
+        if (marker.getElement && marker.getElement() === icon) return findNodeById(nodeId);
+    }
+    return null;
+}
+
+// Touch has no right button. Chrome Android normally synthesizes a
+// contextmenu on long-press (handled above via acceptMeshMapContextAction),
+// but not every browser does, so a small detector backs it up: one finger held
+// ~500 ms without moving. Panning or a second finger (pinch) cancels it.
+function installMeshMapLongPress(container) {
+    const touches = new Set();
+    let downTarget = null;
+    const detector = window.MCViews.createLongPressDetector({
+        delayMs: 500,
+        tolerancePx: 10,
+        setTimer: (fn, ms) => window.setTimeout(fn, ms),
+        clearTimer: id => window.clearTimeout(id),
+        onLongPress: point => {
+            if (!meshMap) return;
+            if (downTarget && downTarget.closest && downTarget.closest('.leaflet-control, .leaflet-popup, .mesh-map-node-menu')) return;
+            if (!acceptMeshMapContextAction()) return;
+            meshMapSuppressClickUntil = Date.now() + 700;
+            const rect = container.getBoundingClientRect();
+            const containerPoint = L.point(point.x - rect.left, point.y - rect.top);
+            const node = meshMapNodeFromElement(downTarget);
+            if (node) {
+                openMeshMapNodeMenu(node, containerPoint);
+            } else if (!(downTarget && downTarget.closest && downTarget.closest('.leaflet-marker-icon'))) {
+                const latlng = meshMap.containerPointToLatLng(containerPoint);
+                openCreateWaypointDialog(latlng.lat, latlng.lng);
+            }
+        },
+    });
+    container.addEventListener('pointerdown', event => {
+        if (event.pointerType !== 'touch') return;
+        touches.add(event.pointerId);
+        downTarget = event.target;
+        detector.start({ x: event.clientX, y: event.clientY }, touches.size);
+    }, { passive: true });
+    container.addEventListener('pointermove', event => {
+        if (event.pointerType !== 'touch') return;
+        detector.move({ x: event.clientX, y: event.clientY }, touches.size);
+    }, { passive: true });
+    const release = event => {
+        if (event.pointerType !== 'touch') return;
+        touches.delete(event.pointerId);
+        detector.end();
+    };
+    container.addEventListener('pointerup', release, { passive: true });
+    container.addEventListener('pointercancel', release, { passive: true });
 }
 
 function renderMeshMap(targetNodeId = null, options = {}) {
@@ -1102,6 +1287,12 @@ function renderMeshMap(targetNodeId = null, options = {}) {
     } else if (targetNodeId) {
         meshMapTargetNodeId = String(targetNodeId);
     }
+    // A popup that is open now (periodic refresh, re-render after a click)
+    // must survive the rebuild below.
+    let reopenPopupNodeId = null;
+    meshMapMarkers.forEach((marker, nodeId) => {
+        if (marker.isPopupOpen && marker.isPopupOpen()) reopenPopupNodeId = nodeId;
+    });
     meshMapMarkers.forEach(marker => marker.remove());
     meshMapMarkers.clear();
     meshMapWaypointMarkers.forEach(marker => marker.remove());
@@ -1175,17 +1366,22 @@ function renderMeshMap(targetNodeId = null, options = {}) {
             });
         }
 
-        marker.on('click', () => {
-            const selectedId = String(node.node_id);
-            meshMapTargetNodeId = selectedId;
-
-            // Update the orange marker and reference line immediately instead
-            // of waiting for the next 6-second node refresh.
-            renderMeshMap(selectedId, {
-                preserveViewport: true,
-                openPopup: true
-            });
-            selectNode(node.node_id, getNodeDisplayName(node), 'map');
+        marker.on('click', event => handleMeshMapNodeClick(node, event));
+        marker.on('dblclick', event => {
+            // Never let a double click on a node zoom the map.
+            if (event.originalEvent) L.DomEvent.stop(event.originalEvent);
+        });
+        marker.on('contextmenu', event => {
+            // Right-click on a node = its action menu, never the waypoint dialog.
+            const original = event.originalEvent;
+            if (original) {
+                original._mcNodeMenu = true;
+                L.DomEvent.stop(original);
+            }
+            if (!acceptMeshMapContextAction()) return;
+            meshMapSuppressClickUntil = Date.now() + 400;
+            const current = findNodeById(node.node_id) || node;
+            openMeshMapNodeMenu(current, event.containerPoint);
         });
         meshMapMarkers.set(String(node.node_id), marker);
         bounds.push([pos.latitude, pos.longitude]);
@@ -1259,7 +1455,19 @@ function renderMeshMap(targetNodeId = null, options = {}) {
 
     updateMeshMapNodeLabelLevel();
 
+    if (reopenPopupNodeId && !openTargetPopup) {
+        const marker = meshMapMarkers.get(reopenPopupNodeId);
+        const popup = marker && marker.getPopup && marker.getPopup();
+        if (popup) {
+            const previousAutoPan = popup.options.autoPan;
+            popup.options.autoPan = false;
+            marker.openPopup();
+            popup.options.autoPan = previousAutoPan;
+        }
+    }
+
     const countEl = document.getElementById('mapNodeCount');
+
     if (countEl) {
         const visibleWaypoints = meshMapWaypointsVisible
             ? meshMapWaypoints.filter(item => !item?.is_hidden)

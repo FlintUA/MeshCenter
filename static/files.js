@@ -3421,6 +3421,9 @@
         isContactBusy: function (contactId) {
             return Boolean(state.busy['contact:' + contactId]);
         },
+        // U3: the map's node menu / popup "Request key" - the same function
+        // the node card's Request key button runs (data-files-action).
+        requestKey: function (contactId) { contactRequestKey(contactId); },
     };
 
     // Static compatibility entry points referenced by the existing template

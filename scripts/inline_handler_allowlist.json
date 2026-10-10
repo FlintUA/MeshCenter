@@ -13,31 +13,11 @@
   },
   {
     "file": "static/chat-map.js",
-    "snippet": "onclick=\"copyCoordinates('${pos ? pos.latitude : ''}', '${pos ? pos.longitude : ''}')\""
-  },
-  {
-    "file": "static/chat-map.js",
     "snippet": "onclick=\"deleteWaypoint('${escapeJsString(id)}')\""
   },
   {
     "file": "static/chat-map.js",
-    "snippet": "onclick=\"openChat('${nodeId}', '${nodeName}', 'dm')\""
-  },
-  {
-    "file": "static/chat-map.js",
     "snippet": "onclick=\"openExternalNodeMap('${Number.isFinite(lat) ? lat : ''}', '${Number.isFinite(lon) ? lon : ''}')\""
-  },
-  {
-    "file": "static/chat-map.js",
-    "snippet": "onclick=\"runNodeTool('request_position', '${nodeId}', '${nodeName}', this)\""
-  },
-  {
-    "file": "static/chat-map.js",
-    "snippet": "onclick=\"runNodeTool('request_telemetry', '${nodeId}', '${nodeName}', this)\""
-  },
-  {
-    "file": "static/chat-map.js",
-    "snippet": "onclick=\"setNodeAsReference('${nodeId}')\""
   },
   {
     "file": "static/chat-map.js",

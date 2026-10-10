@@ -1451,7 +1451,12 @@
     "no_nodes_match_filters": "No nodes match the active filters",
     "sender_not_found": "This sender is not in the node list",
     "sender_hidden_by_filter": "Node is hidden by a filter",
-    "sender_show_action": "Show"
+    "sender_show_action": "Show",
+    "role_label": "Role",
+    "last_heard_label": "Last heard",
+    "waypoint_here": "Waypoint here",
+    "center_on_map": "Center on map",
+    "details_action": "Details"
   },
   "activity": {
     "card_title": "Activity",

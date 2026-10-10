@@ -296,4 +296,117 @@ test('hidden-by-filter end to end: the real filters hide an ignored sender; "Sho
     assert.ok(V.filterAndSortNodes(NODES, plain, ctx).some((n) => n.node_id === '!aaaa0002'));
 });
 
+// ------------------------------------------------ U3: map / node-list interaction
+const actionIds = (items) => Array.from(items.map((i) => i.id)); // main-realm array (vm arrays fail deepStrictEqual)
+const plain = (value) => JSON.parse(JSON.stringify(value));
+
+test('action menu: full set for a positioned node with an unknown, requestable key', () => {
+    const items = V.nodeActionItems({ favorite: false, ignored: false }, { hasPosition: true, keyUnknown: true, canRequestKey: true });
+    assert.deepEqual(actionIds(items), ['message', 'favorite', 'ignore', 'waypoint_here', 'center', 'request_key',
+        'request_telemetry', 'request_position', 'traceroute', 'set_reference', 'copy_coordinates', 'details']);
+});
+
+test('action menu: favorite / ignore carry their current state (drives Unfavorite / Unignore labels)', () => {
+    const items = V.nodeActionItems({ favorite: true, ignored: true }, { hasPosition: true });
+    assert.equal(items.find((i) => i.id === 'favorite').on, true);
+    assert.equal(items.find((i) => i.id === 'ignore').on, true);
+    const plain = V.nodeActionItems({}, { hasPosition: true });
+    assert.equal(plain.find((i) => i.id === 'favorite').on, false);
+    assert.equal(plain.find((i) => i.id === 'ignore').on, false);
+});
+
+test('action menu: Request key only while the key is unknown AND a request is allowed', () => {
+    const has = (ctx) => actionIds(V.nodeActionItems({}, ctx)).includes('request_key');
+    assert.equal(has({ keyUnknown: true, canRequestKey: true }), true);
+    assert.equal(has({ keyUnknown: true, canRequestKey: false }), false, 'request already queued / not allowed');
+    assert.equal(has({ keyUnknown: false, canRequestKey: true }), false, 'key already known');
+    assert.equal(has({}), false);
+});
+
+test('action menu: position-dependent items disappear for a node without a position', () => {
+    const out = actionIds(V.nodeActionItems({}, { hasPosition: false }));
+    for (const id of ['waypoint_here', 'center', 'set_reference', 'copy_coordinates']) assert.ok(!out.includes(id), id);
+    for (const id of ['message', 'favorite', 'ignore', 'details', 'request_telemetry', 'request_position', 'traceroute']) assert.ok(out.includes(id), id);
+});
+
+test('click vs double click: second click on the same node within the window is a double', () => {
+    let r = V.classifyNodeClick(null, '!a', 1000);
+    assert.equal(r.kind, 'single');
+    r = V.classifyNodeClick(r.next, '!a', 1200);
+    assert.equal(r.kind, 'double');
+    // a third quick click starts over instead of chaining doubles
+    r = V.classifyNodeClick(r.next, '!a', 1300);
+    assert.equal(r.kind, 'single');
+});
+
+test('click vs double click: other node, or too slow, stays a single click', () => {
+    const first = V.classifyNodeClick(null, '!a', 1000).next;
+    assert.equal(V.classifyNodeClick(first, '!b', 1100).kind, 'single');
+    assert.equal(V.classifyNodeClick(first, '!a', 1000 + 351).kind, 'single');
+    assert.equal(V.classifyNodeClick(first, '!a', 1000 + 350).kind, 'double');
+    assert.equal(V.classifyNodeClick(first, '!a', 1400, 500).kind, 'double', 'window is configurable');
+});
+
+function fakeClock() {
+    const timers = new Map(); let nextId = 1;
+    return {
+        setTimer: (fn, ms) => { const id = nextId++; timers.set(id, { fn, ms }); return id; },
+        clearTimer: (id) => timers.delete(id),
+        fire: () => { const all = [...timers.values()]; timers.clear(); all.forEach((t) => t.fn()); },
+        pending: () => timers.size,
+    };
+}
+function detector(clock, fired) {
+    return V.createLongPressDetector({ delayMs: 500, tolerancePx: 10, setTimer: clock.setTimer, clearTimer: clock.clearTimer, onLongPress: (p) => fired.push(p) });
+}
+
+test('long-press: a held single finger fires once with its start point', () => {
+    const clock = fakeClock(); const fired = []; const d = detector(clock, fired);
+    d.start({ x: 40, y: 50 }, 1);
+    d.move({ x: 43, y: 52 }, 1); // jitter inside tolerance
+    assert.equal(clock.pending(), 1);
+    clock.fire();
+    assert.deepEqual(plain(fired), [{ x: 40, y: 50 }]);
+    assert.equal(d.end(), true, 'the release after a long press must be swallowed');
+    assert.equal(d.end(), false);
+});
+
+test('long-press: panning beyond the tolerance cancels it', () => {
+    const clock = fakeClock(); const fired = []; const d = detector(clock, fired);
+    d.start({ x: 0, y: 0 }, 1);
+    d.move({ x: 30, y: 0 }, 1);
+    assert.equal(clock.pending(), 0);
+    clock.fire();
+    assert.deepEqual(fired, []);
+});
+
+test('long-press: a second finger (pinch) cancels it, and never starts with two fingers', () => {
+    const clock = fakeClock(); const fired = []; const d = detector(clock, fired);
+    d.start({ x: 0, y: 0 }, 1);
+    d.move({ x: 1, y: 1 }, 2);
+    assert.equal(clock.pending(), 0);
+    d.start({ x: 0, y: 0 }, 2);
+    assert.equal(clock.pending(), 0);
+    clock.fire();
+    assert.deepEqual(fired, []);
+});
+
+test('long-press: releasing early is a plain tap (nothing fires, release not swallowed)', () => {
+    const clock = fakeClock(); const fired = []; const d = detector(clock, fired);
+    d.start({ x: 5, y: 5 }, 1);
+    assert.equal(d.end(), false);
+    clock.fire();
+    assert.deepEqual(fired, []);
+    assert.equal(d.isPending(), false);
+});
+
+test('chat list follow: scroll when the entry exists but is not visible, wait while unrendered', () => {
+    const follow = { id: '!a', at: 1000 };
+    assert.equal(V.chatListFollowAction(follow, 1500, true, false), 'scroll');
+    assert.equal(V.chatListFollowAction(follow, 1500, true, true), 'done');
+    assert.equal(V.chatListFollowAction(follow, 1500, false, false), 'wait', 'entry rendered later');
+    assert.equal(V.chatListFollowAction(follow, 1000 + 8001, true, false), 'expire');
+    assert.equal(V.chatListFollowAction(null, 1500, true, false), 'none');
+});
+
 console.log(`test_chat_views.mjs: ${passed} tests passed`);

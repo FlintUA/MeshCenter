@@ -507,6 +507,10 @@ Use `Rescan Network` when recently heard nodes do not appear. The Tools tab also
 
 Remote node actions can request telemetry, position or traceroute information. A request may fail when the node is offline, sleeping, out of range or not supported by its firmware configuration.
 
+### Selecting and messaging nodes in the list
+
+A single click on a node card only selects it (and, if the map is open, centers the map on it with the dashed line); it never opens a conversation. Open the direct message with the `💬` button on the card or by double-clicking the card. The card's other buttons (Request key and so on) work independently of selection.
+
 ### Sorting and filtering the node list
 
 The `⚙` button next to the node search opens the sort and filter menu; a badge on the button shows how many filters are active, and each active filter also appears as a chip under the search box (click a chip to remove it). Your choices are remembered in this browser.
@@ -542,6 +546,19 @@ To calculate distance and bearing, open `Workspace > Settings > Reference locati
 
 - Manual coordinates
 - A Meshtastic node with a known position
+
+### Working with nodes on the map
+
+Clicking or tapping only *looks*; actions are explicit buttons or menu items.
+
+- **Click a node:** selects it (highlighted marker, dashed line from the reference location, distance and bearing in the map header), opens its info popup and scrolls the right-hand node list to its card, which flashes briefly. It does **not** open a conversation and does not change the chat you have open.
+- **Double-click a node:** opens the direct message with it. (On a touch screen use the `💬 Message` button instead; double-tap zooms the map.)
+- **Right-click a node** (touch: long-press it for about half a second): a compact action menu at the pointer. The same actions are buttons in the popup: Message, Favorite / Unfavorite, Ignore / Unignore, Waypoint here, Center on map, Request key (only while the node's key is unknown), Request telemetry, Request position, Traceroute, Set as reference, Copy coordinates and Details. Actions that need a position are hidden for nodes without one.
+- **Right-click empty map** (touch: long-press empty map): creates a waypoint there.
+- **Click empty map:** closes the popup or menu; the selection and its line stay.
+- **Esc:** closes the menu and popup; a second press clears the selection.
+
+Waypoint markers keep their own popup.
 
 The external map-provider option controls links that open a saved location. The integrated map uses its own Leaflet view. Internet access is normally required to load external map tiles.
 

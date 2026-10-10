@@ -163,6 +163,9 @@ function ensureStoreSelectionSubscription() {
 function handleSidebarTargetClick(event) {
     const store = targetStore();
     let el = event && event.target;
+    // The second click of a double click only opens the DM (handled by the
+    // dblclick listener); it must not toggle the selection back off.
+    const isDoubleClickSecondHalf = Boolean(event && event.detail > 1);
 
     // Manual ancestor walk (no .closest() dependency) from the clicked element
     // up toward the sidebar, so a click on a nested <span>/<div> still resolves
@@ -176,7 +179,11 @@ function handleSidebarTargetClick(event) {
         }
         if (el.classList && el.classList.contains('node-card-select')) {
             const id = el.getAttribute('data-target-id');
-            if (id && store) store.toggleSelect('node', id);
+            if (isDoubleClickSecondHalf) return;
+            if (id && store) {
+                const selection = store.toggleSelect('node', id);
+                syncMeshMapToListSelection(selection ? id : null);
+            }
             return;
         }
         if (el.classList && el.classList.contains('channel-card')) {
@@ -218,6 +225,8 @@ function installSidebarTargetDelegation() {
     if (sidebar.dataset.targetDelegationInstalled === 'true') return;
     sidebar.dataset.targetDelegationInstalled = 'true';
     sidebar.addEventListener('click', handleSidebarTargetClick);
+    sidebar.addEventListener('dblclick', handleSidebarNodeDoubleClick);
+
     sidebar.addEventListener('mousedown', handleSidebarTargetPointerDown);
     sidebar.addEventListener('touchstart', handleSidebarTargetPointerDown, { passive: true });
 }
@@ -4291,6 +4300,12 @@ const CHAT_ACTIONS = {
         const container = document.getElementById('messagesContainer');
         if (container) container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
     },
+    'node-act': (target) => {
+        runNodeAction(target.getAttribute('data-act'), target.getAttribute('data-node-id'), target);
+    },
+    'node-card-message': (target) => {
+        openNodeDirectMessage(target.getAttribute('data-node-id'));
+    },
     'node-filters-toggle': () => toggleNodeFiltersPopover(),
     'node-filter-chip-remove': (target) => removeNodeFilterChip(target.getAttribute('data-filter')),
     'node-filters-reset': () => resetNodeFilters(),
@@ -4629,6 +4644,7 @@ async function loadChatList() {
             : `<div class="loading">💬 ${escapeHtml(window.I18N.t('chat.no_direct_messages_yet'))}</div>`;
 
         flushPendingSynchronizedScroll();
+        ensureChatListFollow();
     } catch (error) {
         console.error('[CHAT] Error:', error);
         const message = error.name === 'AbortError' ? window.I18N.t('errors.request_timeout') : error.message;
@@ -5059,6 +5075,30 @@ function flushPendingSynchronizedScroll() {
     });
 }
 
+// U3 bug fix: opening a DM immediately re-renders the chat list (loadChatList
+// at the end of openChat), which could swallow the scroll that was just
+// started, or run before the entry existed. The request is remembered and
+// re-checked after every chat-list render (see ensureChatListFollow).
+let chatListFollow = null;
+
+function ensureChatListFollow() {
+    if (!chatListFollow) return;
+    const container = document.getElementById('dmChatList');
+    const item = findElementByDataValue('#dmChatList .chat-item', 'chatId', chatListFollow.id);
+    const visible = Boolean(item && container && isElementFullyVisibleInContainer(item, container));
+    const action = window.MCViews.chatListFollowAction(chatListFollow, Date.now(), Boolean(item), visible);
+    if (action === 'scroll') {
+        // Instant, not smooth: a smooth scroll is exactly what the re-render kills.
+        const containerRect = container.getBoundingClientRect();
+        const itemRect = item.getBoundingClientRect();
+        container.scrollTop = Math.max(0, container.scrollTop + (itemRect.top - containerRect.top) - (container.clientHeight - itemRect.height) / 2);
+        chatListFollow = null;
+    } else if (action === 'done' || action === 'expire') {
+        chatListFollow = null;
+    }
+    // 'wait': the entry is not rendered yet - checked again after the next render.
+}
+
 function requestSynchronizedListScroll(nodeId, source, options = {}) {
     if (!nodeId) return;
 
@@ -5069,8 +5109,10 @@ function requestSynchronizedListScroll(nodeId, source, options = {}) {
         pendingNodeScrollForceCenter = forceNodeCenter;
     } else if (source === 'nodes') {
         pendingChatScrollNodeId = String(nodeId);
+        chatListFollow = { id: String(nodeId), at: Date.now() };
     } else {
         pendingChatScrollNodeId = String(nodeId);
+        chatListFollow = { id: String(nodeId), at: Date.now() };
         pendingNodeScrollNodeId = String(nodeId);
         pendingNodeScrollForceCenter = forceNodeCenter;
     }
@@ -5389,7 +5431,9 @@ function renderNodeCard(node) {
                 <div class="node-card-signal-wrap">${signalSegments}</div>
                 <span class="node-last-seen">🕒 ${escapeHtml(seenText)}</span>
                 ${mapBadge}
+                <button type="button" class="node-card-message-btn" data-chat-action="node-card-message" data-node-id="${escapeHtml(node.node_id)}" title="${escapeHtml(window.I18N.t('nodes.message_button'))}" aria-label="${escapeHtml(window.I18N.t('nodes.message_button'))}">💬</button>
             </div>
+
 
             ${lastText}
             ${unignoreBtn}
@@ -6083,6 +6127,130 @@ function messageSenderNodeId(message) {
     });
 }
 
+// ---- U3: look vs act. A click only selects/looks; actions are explicit. ----
+
+function findNodeById(nodeId) {
+    return nodeCache.find(node => String(node.node_id) === String(nodeId)) || null;
+}
+
+function isMeshMapOpen() {
+    return typeof MapLayout !== 'undefined' && MapLayout.state.mode !== 'off';
+}
+
+// The right node list selected (or deselected) a node: mirror it on the map
+// when the map is open - centered, dashed reference line, popup - without
+// touching the open conversation.
+function syncMeshMapToListSelection(nodeId) {
+    if (!isMeshMapOpen() || typeof renderMeshMap !== 'function') return;
+    if (nodeId) {
+        meshMapTargetNodeId = String(nodeId);
+        renderMeshMap(String(nodeId), { preserveViewport: false, openPopup: true });
+    } else {
+        renderMeshMap(null, { clearSelection: true, preserveViewport: true, openPopup: false });
+    }
+}
+
+function openNodeDirectMessage(nodeId) {
+    const node = findNodeById(nodeId);
+    if (!node) return;
+    openChat(node.node_id, getNodeDisplayName(node), 'dm', 'external');
+}
+
+// Double click on a card (not on a nested button/link other than the card's
+// own select button) opens the DM.
+function handleSidebarNodeDoubleClick(event) {
+    const target = event.target;
+    if (!target || typeof target.closest !== 'function') return;
+    const card = target.closest('.node-card');
+    if (!card) return;
+    const interactive = target.closest('button, a, input, select, textarea');
+    if (interactive && !interactive.classList.contains('node-card-select')) return;
+    event.preventDefault();
+    openNodeDirectMessage(card.dataset.nodeId);
+}
+
+function nodeActionContext(node) {
+    const store = targetStore();
+    const target = store && typeof store.getNode === 'function' ? store.getNode(node.node_id) : null;
+    return {
+        hasPosition: Boolean(getNodePosition(node)),
+        keyUnknown: Boolean(target && !target.is_local && target.trust_state === 'unknown'),
+        canRequestKey: Boolean(target && target.can_request_key),
+    };
+}
+
+// Labels/icons for the shared item list (window.MCViews.nodeActionItems).
+function nodeActionPresentation(item) {
+    const t = (key) => window.I18N.t(key);
+    switch (item.id) {
+        case 'message': return { icon: '💬', label: t('nodes.message_button') };
+        case 'favorite': return { icon: '⭐', label: item.on ? t('nodes.remove_from_favorites') : t('nodes.add_to_favorites') };
+        case 'ignore': return { icon: '🔇', label: item.on ? t('nodes.stop_ignoring_node') : t('nodes.ignore_node') };
+        case 'waypoint_here': return { icon: '📍', label: t('nodes.waypoint_here') };
+        case 'center': return { icon: '🎯', label: t('nodes.center_on_map') };
+        case 'request_key': return { icon: '🔑', label: t('files.request_key') };
+        case 'request_telemetry': return { icon: '📊', label: t('nodes.request_telemetry') };
+        case 'request_position': return { icon: '📡', label: t('nodes.request_position') };
+        case 'traceroute': return { icon: '🔍', label: t('nodes.traceroute') };
+        case 'set_reference': return { icon: '📌', label: t('nodes.set_as_reference') };
+        case 'copy_coordinates': return { icon: '📋', label: t('waypoints.coordinates') };
+        case 'details': return { icon: 'ℹ️', label: t('nodes.details_action') };
+        default: return { icon: '', label: item.id };
+    }
+}
+
+// Buttons for the menu / popup: data-* only, routed by the delegated dispatcher.
+function renderNodeActionButtons(node, className) {
+    const items = window.MCViews.nodeActionItems(node, nodeActionContext(node));
+    return items.map(item => {
+        const view = nodeActionPresentation(item);
+        return `<button type="button" class="${className}${item.on ? ' is-on' : ''}" data-chat-action="node-act" data-act="${escapeHtml(item.id)}" data-node-id="${escapeHtml(node.node_id)}">` +
+            `<span aria-hidden="true">${view.icon}</span> ${escapeHtml(view.label)}</button>`;
+    }).join('');
+}
+
+function runNodeAction(act, nodeId, element) {
+    const node = findNodeById(nodeId);
+    if (!node) return;
+    const name = getNodeDisplayName(node);
+    const pos = getNodePosition(node);
+    if (typeof closeMeshMapNodeMenu === 'function') closeMeshMapNodeMenu();
+
+    switch (act) {
+        case 'message': openChat(node.node_id, name, 'dm', 'external'); break;
+        case 'favorite': toggleFavorite(node.node_id); break;
+        case 'ignore': toggleIgnore(node.node_id); break;
+        case 'waypoint_here':
+            if (pos) openCreateWaypointDialog(pos.latitude, pos.longitude);
+            break;
+        case 'center':
+            if (pos && typeof centerMeshMapOnNode === 'function') centerMeshMapOnNode(node.node_id);
+            break;
+        case 'request_key':
+            if (window.MeshCenterFiles && typeof window.MeshCenterFiles.requestKey === 'function') {
+                window.MeshCenterFiles.requestKey(node.node_id);
+            }
+            break;
+        case 'request_telemetry': runNodeTool('request_telemetry', node.node_id, name, element); break;
+        case 'request_position': runNodeTool('request_position', node.node_id, name, element); break;
+        case 'traceroute': runNodeTool('traceroute', node.node_id, name, element); break;
+        case 'set_reference': setNodeAsReference(node.node_id); break;
+        case 'copy_coordinates':
+            if (pos) copyCoordinates(pos.latitude, pos.longitude);
+            break;
+        case 'details':
+            // The existing node detail view: select the node and make sure its
+            // card body is expanded.
+            storeSyncSelection('node', node.node_id);
+            delete collapsedNodeDetails[node.node_id];
+            resetNodeRenderCache(node.node_id);
+            updateNodeDetails(node.node_id);
+            focusNodeInList(node.node_id);
+            break;
+        default: break;
+    }
+}
+
 function flashNodeCard(nodeId) {
     const card = document.querySelector(`#nodesList .node-card[data-node-id="${CSS.escape(nodeId)}"]`);
     if (!card) return false;
@@ -6096,6 +6264,14 @@ function focusMessageSenderNode(message) {
     if (!message || !isNodePanelVisible()) return;
     const nodeId = messageSenderNodeId(message);
     if (!nodeId) return;
+    focusNodeInList(nodeId);
+}
+
+// Scroll the node list to a node's card and flash it (shared by "click a
+// message" and the map). Switches Tools -> Network, and explains when a filter
+// or the search hides the node / when the node is unknown.
+function focusNodeInList(nodeId) {
+    if (!nodeId || !isNodePanelVisible()) return;
 
     // The Tools tab hides the list - bring the Network tab back first.
     if (!document.getElementById('tab-nodes')?.classList.contains('active')) {

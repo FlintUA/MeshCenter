@@ -252,7 +252,118 @@
         return next;
     }
 
+    // ---------------- Map / node-list interaction (U3) ----------------
+
+    // The one list of per-node actions, shared by the map's right-click menu,
+    // the map popup's buttons and (where it applies) the node card, so they can
+    // never drift apart. Items map 1:1 onto functions that already exist
+    // (openChat, toggleFavorite, toggleIgnore, openCreateWaypointDialog,
+    // runNodeTool, setNodeAsReference, copyCoordinates, ...). ctx:
+    //   hasPosition - the node has coordinates
+    //   canRequestKey - the target store says a key request may be sent
+    //   keyUnknown - trust_state is "unknown"
+    function nodeActionItems(node, ctx) {
+        const c = ctx || {};
+        const items = [{ id: 'message' }];
+        items.push({ id: 'favorite', on: Boolean(node && node.favorite) });
+        items.push({ id: 'ignore', on: Boolean(node && node.ignored) });
+        if (c.hasPosition) {
+            items.push({ id: 'waypoint_here' });
+            items.push({ id: 'center' });
+        }
+        if (c.keyUnknown && c.canRequestKey) items.push({ id: 'request_key' });
+        items.push({ id: 'request_telemetry' });
+        items.push({ id: 'request_position' });
+        items.push({ id: 'traceroute' });
+        if (c.hasPosition) {
+            items.push({ id: 'set_reference' });
+            items.push({ id: 'copy_coordinates' });
+        }
+        items.push({ id: 'details' });
+        return items;
+    }
+
+    // Single vs double click from successive click events. Markers get rebuilt
+    // on every selection, so the browser's own dblclick (which needs the same
+    // element twice) cannot be relied on - two clicks on the same node within
+    // `windowMs` are a double click. Returns {kind, next}; keep `next` as state.
+    function classifyNodeClick(previous, nodeId, nowMs, windowMs) {
+        const limit = windowMs === undefined ? 350 : windowMs;
+        if (previous && previous.nodeId === nodeId && nowMs - previous.at <= limit && !previous.consumed) {
+            return { kind: 'double', next: { nodeId: nodeId, at: nowMs, consumed: true } };
+        }
+        return { kind: 'single', next: { nodeId: nodeId, at: nowMs, consumed: false } };
+    }
+
+    // Long-press detector for touch (and anything else lacking a native
+    // contextmenu): fires once if a single pointer stays within `tolerancePx`
+    // of where it went down for `delayMs`. A second pointer (pinch), movement
+    // beyond the tolerance (pan) or an early release cancels it. Timers are
+    // injected so the logic is testable without a clock.
+    function createLongPressDetector(options) {
+        const o = options || {};
+        const delayMs = o.delayMs === undefined ? 500 : o.delayMs;
+        const tolerancePx = o.tolerancePx === undefined ? 10 : o.tolerancePx;
+        const setTimer = o.setTimer;
+        const clearTimer = o.clearTimer;
+        let timer = null;
+        let origin = null;
+        let fired = false;
+
+        function cancel() {
+            if (timer !== null) { clearTimer(timer); timer = null; }
+            origin = null;
+        }
+        return {
+            start: function (point, pointerCount) {
+                cancel();
+                fired = false;
+                if (pointerCount > 1) return;
+                origin = { x: point.x, y: point.y };
+                timer = setTimer(function () {
+                    timer = null;
+                    fired = true;
+                    const at = origin;
+                    origin = null;
+                    if (typeof o.onLongPress === 'function') o.onLongPress(at);
+                }, delayMs);
+            },
+            move: function (point, pointerCount) {
+                if (origin === null) return;
+                if (pointerCount > 1) { cancel(); return; }
+                const dx = point.x - origin.x;
+                const dy = point.y - origin.y;
+                if (Math.sqrt(dx * dx + dy * dy) > tolerancePx) cancel();
+            },
+            end: function () {
+                const wasFired = fired;
+                cancel();
+                fired = false;
+                return wasFired; // true: the release that follows a long press (swallow the click)
+            },
+            cancel: cancel,
+            isPending: function () { return timer !== null; },
+        };
+    }
+
+    // The chat list is re-rendered (innerHTML) right after a DM is opened, which
+    // can drop the scroll that was just started. After each render: scroll the
+    // active entry in if a recent open asked for it and it is still not fully
+    // visible; keep waiting while it has not been rendered yet; give up after
+    // `ttlMs`. follow = {id, at} | null.
+    function chatListFollowAction(follow, nowMs, entryExists, entryFullyVisible, ttlMs) {
+        const ttl = ttlMs === undefined ? 8000 : ttlMs;
+        if (!follow || !follow.id) return 'none';
+        if (nowMs - follow.at > ttl) return 'expire';
+        if (!entryExists) return 'wait';
+        return entryFullyVisible ? 'done' : 'scroll';
+    }
+
     const api = {
+        nodeActionItems: nodeActionItems,
+        classifyNodeClick: classifyNodeClick,
+        createLongPressDetector: createLongPressDetector,
+        chatListFollowAction: chatListFollowAction,
         isPlainMessageClick: isPlainMessageClick,
         resolveSenderNodeId: resolveSenderNodeId,
         planSenderFocus: planSenderFocus,

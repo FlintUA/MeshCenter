@@ -101,11 +101,11 @@ def _tcp_waypoint_event(srv, waypoint_id, **fields):
 
 def _snapshot(srv):
     """Everything an inbound text leaves behind, minus timestamps and uuids."""
-    messages = [{k: v for k, v in m.items() if k not in ("id", "time")} for m in srv.messages]
+    messages = [{k: v for k, v in m.items() if k not in ("id", "time", "ts")} for m in srv.messages]
     for message in messages:
         if isinstance(message.get("reply_to"), dict):
             message["reply_to"] = {k: v for k, v in message["reply_to"].items() if k not in ("id", "time")}
-    chats = {cid: {k: v for k, v in c.items() if k != "last_time"} for cid, c in srv.chats.items()}
+    chats = {cid: {k: v for k, v in c.items() if k not in ("last_time", "last_ts")} for cid, c in srv.chats.items()}
     nodes = {nid: {k: v for k, v in n.items() if k not in ("last_seen", "last_time")} for nid, n in srv.nodes.items()}
     return {
         "messages": messages, "chats": chats, "nodes": nodes,

@@ -120,7 +120,7 @@ Only `data/instance.json`, `data/settings.json`, and `data/screenshots/` are ins
 
 ### Frontend
 
-No build step: `templates/index.html` is a single server-rendered page pulling in `static/chat.js` (the largest file, chat/messaging/waypoints/node-manager core) plus six domain-split files extracted from it — `static/chat-camera.js`, `static/chat-emoji.js`, `static/chat-map.js`, `static/chat-photo.js`, `static/chat-telemetry.js`, `static/chat-updates-security.js` — along with `static/media.js`, `static/weather.js`, `static/i18n.js`, a vendored `static/chart.umd.min.js`, and Leaflet from a CDN (`unpkg.com/leaflet@1.9.4`). Cache-busting on the local scripts is done manually via `?v=` query strings in the `<script>` tags in `index.html` — bump those when shipping JS changes that must not be served stale from browser cache.
+No build step: `templates/index.html` is a single server-rendered page pulling in `static/chat.js` (the largest file, chat/messaging/waypoints/node-manager core) plus `static/chat-views.js` (DOM-free, unit-tested view logic: message-time formatter, first-unread index, node sort/filter predicates; exposes `window.MCViews`, must load before `chat.js`) plus six domain-split files extracted from it — `static/chat-camera.js`, `static/chat-emoji.js`, `static/chat-map.js`, `static/chat-photo.js`, `static/chat-telemetry.js`, `static/chat-updates-security.js` — along with `static/media.js`, `static/weather.js`, `static/i18n.js`, a vendored `static/chart.umd.min.js`, and Leaflet from a CDN (`unpkg.com/leaflet@1.9.4`). Cache-busting on the local scripts is done manually via `?v=` query strings in the `<script>` tags in `index.html` — bump those when shipping JS changes that must not be served stale from browser cache.
 
 ### Form preferences
 

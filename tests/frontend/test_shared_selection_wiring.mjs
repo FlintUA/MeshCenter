@@ -27,6 +27,7 @@ const staticDir = path.join(__dirname, '..', '..', 'static');
 
 const targetsSource = readFileSync(path.join(staticDir, 'targets.js'), 'utf8');
 const filesSource = readFileSync(path.join(staticDir, 'files.js'), 'utf8');
+const viewsSource = readFileSync(path.join(staticDir, 'chat-views.js'), 'utf8');
 const chatSourceRaw = readFileSync(path.join(staticDir, 'chat.js'), 'utf8');
 
 // chat.js self-invokes two bootstrap entry points at load time:
@@ -571,6 +572,7 @@ function buildSandbox({ fetchImpl, loadStore = true }) {
         vm.runInContext(targetsSource, sandbox, { filename: 'targets.js' });
         vm.runInContext(filesSource, sandbox, { filename: 'files.js' });
     }
+    vm.runInContext(viewsSource, sandbox, { filename: 'chat-views.js' });
     vm.runInContext(chatSource, sandbox, { filename: 'chat.js' });
     return sandbox;
 }

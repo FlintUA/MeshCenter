@@ -531,7 +531,10 @@
     "delete_all_dm_confirm": "ALLE Direktnachrichten-Chats löschen?\n\nDadurch werden alle Direktnachrichten-Chats und ihre Nachrichten gelöscht.\nDer LongFast-Kanal bleibt erhalten.\n\nDiese Aktion kann nicht rückgängig gemacht werden!",
     "delete_all_dm_confirm2": "Bist du sicher?\n\nAlle Direktnachrichten-Chats und Nachrichten werden dauerhaft gelöscht!\n\nDiese Aktion kann nicht rückgängig gemacht werden!",
     "deleted_dm_count": "{count} Direktnachrichten-Chats gelöscht",
-    "yes_delete_everything": "Ja, alles löschen!"
+    "yes_delete_everything": "Ja, alles löschen!",
+    "date_yesterday": "gestern",
+    "unread_divider": "Ungelesene Nachrichten ({count})",
+    "jump_to_latest": "Zur neuesten Nachricht springen"
   },
   "camera": {
     "live_camera": "Live-Kamera",
@@ -1427,7 +1430,24 @@
     "type_label": "Typ",
     "hide_map": "Karte ausblenden",
     "node_label": "Knoten",
-    "selected_label": "Ausgewählt"
+    "selected_label": "Ausgewählt",
+    "filters_button_title": "Sortierung und Filter",
+    "sort_heading": "Sortierung",
+    "sort_last_heard": "Zuletzt gehört",
+    "sort_name": "Name A–Z",
+    "sort_distance": "Entfernung",
+    "sort_hops": "Hops",
+    "sort_favorites_first": "Favoriten zuerst",
+    "filters_heading": "Filter",
+    "filter_favorites_only": "Nur Favoriten",
+    "filter_ignored_only": "Nur ignorierte",
+    "filter_hide_offline": "Offline ausblenden (seit 2 h nicht gehört)",
+    "filter_direct_only": "Nur direkt gehört (0 Hops)",
+    "filter_hide_infrastructure": "Infrastruktur ausblenden (Router, Repeater)",
+    "filter_known_key_only": "Nur bekannter Schlüssel",
+    "filters_reset": "Zurücksetzen",
+    "filter_chip_remove": "Diesen Filter entfernen",
+    "no_nodes_match_filters": "Keine Nodes passen zu den aktiven Filtern"
   },
   "activity": {
     "card_title": "Aktivität",

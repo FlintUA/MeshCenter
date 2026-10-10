@@ -10,7 +10,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='style-part1.css') }}?v=20260917-nodecard-optionc-followup">
     <link rel="stylesheet" href="{{ url_for('static', filename='style-part2.css') }}?v=20260917-nodecard-optionc-followup">
     <link rel="stylesheet" href="{{ url_for('static', filename='style-part3.css') }}?v=20260917-nodecard-optionc-followup">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part4.css') }}?v=20260928-reply-metadata">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part4.css') }}?v=20261010-u1-messages-filters">
     <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=20260917-nodecard-optionc-followup">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -1846,6 +1846,28 @@
                         <div class="search-container search-row">
                             <input type="text" id="nodeSearchInput" class="search-input-wide" placeholder="🔍 Search channels and nodes..." data-i18n-placeholder="nodes.search_placeholder">
                             <button type="button" id="clearSearchBtn" class="clear-search-btn" onclick="clearNodeSearch()">✕</button>
+                            <button type="button" id="nodeFiltersBtn" class="node-filters-btn" data-chat-action="node-filters-toggle" aria-haspopup="true" aria-expanded="false" title="Sort and filters" data-i18n-title="nodes.filters_button_title" aria-label="Sort and filters" data-i18n-aria-label="nodes.filters_button_title">⚙<span id="nodeFiltersBadge" class="node-filters-badge" hidden></span></button>
+                        </div>
+                        <div id="nodeFilterChips" class="node-filter-chips" hidden></div>
+                        <div id="nodeFiltersPopover" class="node-filters-popover" role="dialog" aria-label="Sort and filters" data-i18n-aria-label="nodes.filters_button_title" hidden>
+                            <fieldset class="node-filters-group">
+                                <legend data-i18n="nodes.sort_heading">Sort</legend>
+                                <label><input type="radio" name="nodeSort" value="last_heard"> <span data-i18n="nodes.sort_last_heard">Last heard</span></label>
+                                <label><input type="radio" name="nodeSort" value="name"> <span data-i18n="nodes.sort_name">Name A–Z</span></label>
+                                <label><input type="radio" name="nodeSort" value="distance"> <span data-i18n="nodes.sort_distance">Distance</span></label>
+                                <label><input type="radio" name="nodeSort" value="hops"> <span data-i18n="nodes.sort_hops">Hops</span></label>
+                                <label><input type="radio" name="nodeSort" value="favorites_first"> <span data-i18n="nodes.sort_favorites_first">Favorites first</span></label>
+                            </fieldset>
+                            <fieldset class="node-filters-group">
+                                <legend data-i18n="nodes.filters_heading">Filters</legend>
+                                <label><input type="checkbox" data-node-filter="favoritesOnly"> <span data-i18n="nodes.filter_favorites_only">Favorites only</span></label>
+                                <label><input type="checkbox" data-node-filter="ignoredOnly"> <span data-i18n="nodes.filter_ignored_only">Ignored only</span></label>
+                                <label><input type="checkbox" data-node-filter="hideOffline"> <span data-i18n="nodes.filter_hide_offline">Hide offline (not heard for 2 h)</span></label>
+                                <label><input type="checkbox" data-node-filter="directOnly"> <span data-i18n="nodes.filter_direct_only">Heard directly only (0 hops)</span></label>
+                                <label><input type="checkbox" data-node-filter="hideInfrastructure"> <span data-i18n="nodes.filter_hide_infrastructure">Hide infrastructure (routers, repeaters)</span></label>
+                                <label><input type="checkbox" data-node-filter="knownKeyOnly"> <span data-i18n="nodes.filter_known_key_only">Known key only</span></label>
+                            </fieldset>
+                            <button type="button" class="node-filters-reset" data-chat-action="node-filters-reset" data-i18n="nodes.filters_reset">Reset</button>
                         </div>
                         <div class="nodes-actions-row">
                             <button id="rescanNodesBtn" class="rescan-nodes-btn" onclick="rescanNodes()" style="flex:1;">📡 <span data-i18n="nodes.rescan_network">Rescan Network</span></button>
@@ -1906,23 +1928,11 @@
                     <input type="file" id="importFileCSV" accept=".csv" style="display:none;" onchange="importNodesCSV(event)">
                     <input type="file" id="importFileJSON" accept=".json" style="display:none;" onchange="importNodesJSON(event)">
                     
-                    <div class="nodes-filter-row" style="margin-top:8px; padding-top:8px; border-top:1px solid #f0f0f0;">
-                        <label class="toggle-label">
-                            <input type="checkbox" id="showFavoritesToggle" onchange="toggleShowFavorites()">
-                            <span class="toggle-slider favorite-slider"></span>
-                            <span class="toggle-text">⚑ Show favorites only</span>
-                        </label>
+                    <div class="nodes-filter-row nodes-filter-summary" style="margin-top:8px; padding-top:8px; border-top:1px solid #f0f0f0;">
                         <span class="favorites-count" id="favoritesCount">0 favorites</span>
-                    </div>
-                    <div class="nodes-filter-row">
-                        <label class="toggle-label">
-                            <input type="checkbox" id="showIgnoredToggle" onchange="toggleShowIgnored()">
-                            <span class="toggle-slider"></span>
-                            <span class="toggle-text">🚫 Show ignored only</span>
-                        </label>
                         <span class="ignored-count" id="ignoredCount">0 ignored</span>
                     </div>
-                    
+
                     <div class="nodes-stats" id="nodesStats">
                         Total: <span id="totalNodesCount">0</span> nodes
                     </div>
@@ -2390,7 +2400,7 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="/static/chart.umd.min.js"></script>
-<script src="/static/i18n.js?v=20261005-h2d-notif-delegation"></script>
+<script src="/static/i18n.js?v=20261010-u1-messages-filters"></script>
 <script>
     // Server already resolved "auto" (stored ui.language, or an
     // Accept-Language guess) to a concrete locale for <html lang> above —
@@ -2409,7 +2419,8 @@
 <script src="{{ url_for('static', filename='chat-updates-security.js') }}?v=20261001-h1a2-auth-version"></script>
 <script src="{{ url_for('static', filename='targets.js') }}?v=20260911-pr4-shared-target-model"></script>
 <script src="/static/files.js?v=20260917-nodecard-optionc-followup"></script>
-<script src="/static/chat.js?v=20261005-h2d-notif-delegation"></script>
+<script src="{{ url_for('static', filename='chat-views.js') }}?v=20261010-u1-messages-filters"></script>
+<script src="/static/chat.js?v=20261010-u1-messages-filters"></script>
 <script src="/static/media.js?v=20260818-xss-fix-delete-onclick"></script>
 <script src="/static/weather.js?v=20260815-weather-provider"></script>
 

@@ -112,7 +112,7 @@ def test_a_secondary_channel_gets_its_own_chat(srv):
     assert message["chat_id"] == "channel:2" and message["chat_type"] == "channel"
     assert srv.chats["channel:2"] == {
         "id": "channel:2", "name": "Channel 2", "type": "channel",
-        "last_message": "on ch2", "last_time": srv.chats["channel:2"]["last_time"], "unread": 1,
+        "last_message": "on ch2", "last_time": srv.chats["channel:2"]["last_time"], "last_ts": srv.chats["channel:2"]["last_ts"], "unread": 1,
     }
 
 

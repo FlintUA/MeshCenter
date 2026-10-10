@@ -238,4 +238,13 @@ test('bubbles use ts when present and the legacy time otherwise', () => {
     assert.doesNotMatch(c.innerHTML, /<div class="time">09:41:07<\/div>[\s\S]*<div class="time">10:00:00/);
 });
 
+test('message bubbles carry the delegated focus-sender action, never an inline handler', () => {
+    const sb = build(); const c = makeContainer();
+    open(sb, '!a', 0);
+    const list = msgs(2); list.push({ id: 'sys', kind: 'system', sender: 'SYSTEM', text: 'x', time: '10:00:00' });
+    sb.renderMessages(c, list, '!a'); flush(sb);
+    assert.equal((c.innerHTML.match(/class="bubble" data-chat-action="message-focus-sender"/g) || []).length, 2);
+    assert.doesNotMatch(c.innerHTML, /onclick=/);
+});
+
 console.log(`test_chat_unread_render.mjs: ${passed} tests passed`);

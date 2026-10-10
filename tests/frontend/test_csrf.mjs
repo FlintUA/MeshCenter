@@ -54,6 +54,7 @@ function loadCSRF({ token = 'tok123', origin = 'http://localhost:5000', fetchImp
 
     const meta = {
         getAttribute: (name) => (name === 'content' ? token : null),
+        setAttribute(name, value) { if (name === 'content') token = value; },
     };
     const document = {
         querySelector: (selector) => (selector === 'meta[name="csrf-token"]' ? meta : null),
@@ -323,7 +324,8 @@ async function test_csrf_invalid_403_shows_prompt_without_retry() {
     assert.equal(notified.opts.persistent, true, 'the prompt must be persistent');
     assert.equal(typeof notified.opts.action, 'function', 'the prompt must carry a reload action');
     assert.equal(response.status, 403);
-    assert.equal(fetchLog.length, 1, 'must never auto-retry');
+    // original + one refresh attempt (which also 403s here); never a replay.
+    assert.deepEqual(fetchLog.map((e) => e.url), ['/api/x', '/api/auth/csrf']);
     assert.equal((await response.json()).error_code, 'csrf_invalid', 'caller can still read the body');
     console.log('PASS: test_csrf_invalid_403_shows_prompt_without_retry');
 }
@@ -343,7 +345,7 @@ async function test_missing_token_403_still_shows_prompt() {
 
     assert.ok(notified, 'a same-origin unsafe /api/ 403 must prompt even without a page token');
     assert.equal(response.status, 403);
-    assert.equal(fetchLog.length, 1, 'must never auto-retry');
+    assert.equal(fetchLog.length, 2, 'original + one refresh attempt, no replay');
     console.log('PASS: test_missing_token_403_still_shows_prompt');
 }
 
@@ -379,7 +381,7 @@ async function test_concurrent_csrf_invalid_produce_exactly_one_prompt() {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     assert.equal(notifyCount, 1, 'several concurrent failures must produce exactly one prompt');
-    assert.equal(fetchLog.length, 3);
+    assert.equal(fetchLog.length, 4, '3 originals + ONE shared refresh');
     console.log('PASS: test_concurrent_csrf_invalid_produce_exactly_one_prompt');
 }
 
@@ -400,6 +402,139 @@ async function test_non_csrf_error_passes_through_without_prompt() {
     console.log('PASS: test_non_csrf_error_passes_through_without_prompt');
 }
 
+// ---- U2: stale-token auto-recovery ---------------------------------------
+
+// Server model: the session holds `serverToken`; a mutating request must carry it.
+function staleTokenServer(initial) {
+    const state = { serverToken: initial, refreshCalls: 0, posts: [], refreshStatus: 200 };
+    state.impl = async (url, options) => {
+        if (url === '/api/auth/csrf') {
+            state.refreshCalls += 1;
+            if (state.refreshStatus !== 200) return fakeResponse(state.refreshStatus, { ok: false, error_code: 'auth_required' });
+            return fakeResponse(200, { ok: true, csrf_token: state.serverToken });
+        }
+        const sent = new Headers(options && options.headers).get('x-csrf-token');
+        state.posts.push({ url, sent, body: options && options.body });
+        if (sent !== state.serverToken) return fakeResponse(403, { ok: false, error_code: 'csrf_invalid' });
+        return fakeResponse(200, { ok: true, url });
+    };
+    return state;
+}
+
+async function test_stale_token_is_refreshed_and_retried_once() {
+    const server = staleTokenServer('fresh');
+    const { window } = loadCSRF({ token: 'stale', fetchImpl: server.impl });
+    let notified = 0;
+    window.addNotification = () => { notified += 1; };
+
+    const response = await window.fetch('/api/send', { method: 'POST', body: '{"text":"hi"}' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(response.status, 200, 'caller sees the successful retry, not the 403');
+    assert.deepEqual(server.posts.map((p) => p.sent), ['stale', 'fresh']);
+    assert.equal(server.posts[1].body, '{"text":"hi"}', 'the retry replays the same body');
+    assert.equal(server.refreshCalls, 1);
+    assert.equal(window.MeshCenterCSRF.getToken(), 'fresh', 'meta tag updated');
+    assert.equal(notified, 0, 'no notification when recovery works');
+
+    // Later requests use the fresh token straight away - no further refresh.
+    await window.fetch('/api/other', { method: 'POST' });
+    assert.equal(server.refreshCalls, 1);
+    assert.equal(server.posts[2].sent, 'fresh');
+    console.log('PASS: test_stale_token_is_refreshed_and_retried_once');
+}
+
+async function test_refresh_401_shows_one_notification_and_no_retry() {
+    const server = staleTokenServer('fresh');
+    server.refreshStatus = 401;
+    const { window } = loadCSRF({ token: 'stale', fetchImpl: server.impl });
+    let notified = 0;
+    window.addNotification = () => { notified += 1; };
+
+    const response = await window.fetch('/api/send', { method: 'POST' });
+    await window.fetch('/api/send', { method: 'POST' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(response.status, 403, 'original failure is returned');
+    assert.equal(server.posts.length, 2, 'one send per call, never replayed');
+    assert.equal(notified, 1, 'exactly one reload notification');
+    console.log('PASS: test_refresh_401_shows_one_notification_and_no_retry');
+}
+
+async function test_retry_failing_again_does_not_loop() {
+    const log = [];
+    const { window } = loadCSRF({
+        token: 'stale',
+        fetchImpl: async (url) => {
+            log.push(url);
+            if (url === '/api/auth/csrf') return fakeResponse(200, { ok: true, csrf_token: 'fresh' });
+            return fakeResponse(403, { ok: false, error_code: 'csrf_invalid' });
+        },
+    });
+    let notified = 0;
+    window.addNotification = () => { notified += 1; };
+
+    const response = await window.fetch('/api/x', { method: 'POST' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(response.status, 403);
+    assert.deepEqual(log, ['/api/x', '/api/auth/csrf', '/api/x'], 'one refresh, one replay, then stop');
+    assert.equal(notified, 1);
+    console.log('PASS: test_retry_failing_again_does_not_loop');
+}
+
+async function test_parallel_failures_share_one_refresh() {
+    const server = staleTokenServer('fresh');
+    const { window } = loadCSRF({ token: 'stale', fetchImpl: server.impl });
+    let notified = 0;
+    window.addNotification = () => { notified += 1; };
+
+    const responses = await Promise.all([
+        window.fetch('/api/a', { method: 'POST' }),
+        window.fetch('/api/b', { method: 'POST' }),
+        window.fetch('/api/c', { method: 'POST' }),
+    ]);
+
+    assert.deepEqual(responses.map((r) => r.status), [200, 200, 200]);
+    assert.equal(server.refreshCalls, 1, 'one refresh for three parallel failures');
+    assert.equal(server.posts.length, 6, 'each request sent once stale, once fresh');
+    assert.equal(notified, 0);
+    console.log('PASS: test_parallel_failures_share_one_refresh');
+}
+
+async function test_same_token_from_refresh_means_no_pointless_retry() {
+    const log = [];
+    const { window } = loadCSRF({
+        token: 'same',
+        fetchImpl: async (url) => {
+            log.push(url);
+            if (url === '/api/auth/csrf') return fakeResponse(200, { ok: true, csrf_token: 'same' });
+            return fakeResponse(403, { ok: false, error_code: 'csrf_invalid' });
+        },
+    });
+    let notified = 0;
+    window.addNotification = () => { notified += 1; };
+    await window.fetch('/api/x', { method: 'POST' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.deepEqual(log, ['/api/x', '/api/auth/csrf']);
+    assert.equal(notified, 1);
+    console.log('PASS: test_same_token_from_refresh_means_no_pointless_retry');
+}
+
+async function test_safe_and_cross_origin_requests_never_refresh() {
+    const log = [];
+    const { window } = loadCSRF({
+        token: 'stale',
+        fetchImpl: async (url) => { log.push(url); return fakeResponse(403, { ok: false, error_code: 'csrf_invalid' }); },
+    });
+    window.addNotification = () => {};
+    await window.fetch('/api/x');
+    await window.fetch('http://evil.example/api/x', { method: 'POST' });
+    assert.deepEqual(log, ['/api/x', 'http://evil.example/api/x']);
+    console.log('PASS: test_safe_and_cross_origin_requests_never_refresh');
+}
+
+
 async function main() {
     await test_needsToken_classification();
     await test_addTokenHeader_preserves_and_does_not_mutate();
@@ -417,6 +552,12 @@ async function main() {
     await test_cross_origin_403_csrf_invalid_does_not_prompt();
     await test_concurrent_csrf_invalid_produce_exactly_one_prompt();
     await test_non_csrf_error_passes_through_without_prompt();
+    await test_stale_token_is_refreshed_and_retried_once();
+    await test_refresh_401_shows_one_notification_and_no_retry();
+    await test_retry_failing_again_does_not_loop();
+    await test_parallel_failures_share_one_refresh();
+    await test_same_token_from_refresh_means_no_pointless_retry();
+    await test_safe_and_cross_origin_requests_never_refresh();
     console.log('All CSRF frontend tests passed.');
 }
 

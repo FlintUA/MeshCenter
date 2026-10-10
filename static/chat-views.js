@@ -206,7 +206,57 @@
         return sortNodes(kept, s.sort, context);
     }
 
+    // ---------------- Message click -> sender's node card ----------------
+
+    // Elements inside a bubble that have their own click meaning; a click on
+    // (or inside) any of them must never also trigger "focus sender's node".
+    const INTERACTIVE_SELECTOR = [
+        '.message-actions-trigger', '.message-reply-quote', '.message-retry-btn',
+        'a', 'button', 'input', 'textarea', 'select', 'summary', '[contenteditable]',
+    ].join(',');
+
+    // target: the clicked element (anything with .closest). hasSelection: the
+    // user has text selected (they were selecting, not clicking).
+    function isPlainMessageClick(target, hasSelection) {
+        if (hasSelection) return false;
+        if (!target || typeof target.closest !== 'function') return false;
+        return !target.closest(INTERACTIVE_SELECTOR);
+    }
+
+    // Which node sent `message`? Own messages -> the local node; received ones
+    // -> their node_id; system notices and anything unresolvable -> null.
+    function resolveSenderNodeId(message, context) {
+        if (!message || message.kind === 'system') return null;
+        const ctx = context || {};
+        const isOwn = typeof ctx.isOwn === 'function' ? ctx.isOwn(message) : message.kind === 'me';
+        const id = String(isOwn ? (ctx.localNodeId || '') : (message.node_id || '')).trim();
+        return /^![0-9a-fA-F]{8}$/.test(id) ? id.toLowerCase() : null;
+    }
+
+    // What to do for a sender: scroll to the card, tell the user a filter hides
+    // it, or tell them the node is unknown. visibleIds = ids currently rendered
+    // in the list (filters + search applied); knownIds = every node we have.
+    function planSenderFocus(nodeId, visibleIds, knownIds) {
+        if (!nodeId) return 'not_found';
+        if (visibleIds && visibleIds.has(nodeId)) return 'focus';
+        if (knownIds && knownIds.has(nodeId)) return 'hidden_by_filter';
+        return 'not_found';
+    }
+
+    // Minimal filter state that lets `node` show up: keep the sort, drop every
+    // filter, and (since ignored nodes only appear through it) turn on
+    // "ignored only" for an ignored node.
+    function stateRevealingNode(state, node) {
+        const next = normalizeNodeFilters(Object.assign({}, DEFAULT_NODE_FILTERS, { sort: normalizeNodeFilters(state).sort }));
+        if (node && node.ignored) next.ignoredOnly = true;
+        return next;
+    }
+
     const api = {
+        isPlainMessageClick: isPlainMessageClick,
+        resolveSenderNodeId: resolveSenderNodeId,
+        planSenderFocus: planSenderFocus,
+        stateRevealingNode: stateRevealingNode,
         formatMessageTime: formatMessageTime,
         firstUnreadIndex: firstUnreadIndex,
         SORT_KEYS: SORT_KEYS,

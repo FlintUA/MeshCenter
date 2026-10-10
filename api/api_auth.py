@@ -505,6 +505,18 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
             ui_language=_ui_language(),
         )
 
+    @app.route("/api/auth/csrf", methods=["GET"])
+    @handle_errors
+    def api_auth_csrf():
+        """The current session's CSRF token, for a tab whose <meta> copy went
+        stale (a re-login elsewhere rotates the session token). GET, so it is
+        CSRF-exempt, but _enforce_auth still applies: an unauthenticated
+        caller gets 401, never a token. Same-origin only - no CORS headers
+        are ever added - and never cacheable."""
+        response = jsonify({"ok": True, "csrf_token": _ensure_csrf_token()})
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
     @app.route("/api/logout", methods=["POST"])
     @handle_errors
     def api_logout():

@@ -433,6 +433,10 @@ Every message shows when it was received or sent: just the time for today (`18:3
 
 When you open a chat that has unread messages, MeshCenter scrolls to the first unread one and shows an `Unread messages (N)` divider above it. The divider stays while the chat is open and disappears once you switch to another chat. A round `↓` button appears whenever you are not at the bottom and takes you back to the latest message. New incoming messages scroll the view only if you were already at the bottom; messages you send always scroll to the bottom.
 
+### Finding the sender's node
+
+On a desktop-width screen, click a message bubble to scroll the node list to the sender's card and highlight it for about two seconds (your own messages highlight your own node). Clicks on the `⋮` button, links, buttons, the quoted reply, or while you are selecting text do nothing. If a filter or the search box hides the sender, a notice with a `Show` button appears; if the sender is not in the node list at all, you are told so. The `⋮` menu has the same action as `Sender's node`. Clicking a quoted reply scrolls to the original message and highlights it, or tells you it is not loaded. On narrow screens, where the node list is not visible, none of this happens.
+
 ### Replies and message actions
 
 Use the action button on a message to:

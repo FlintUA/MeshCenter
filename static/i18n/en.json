@@ -1151,7 +1151,8 @@
     "paste_api_key": "Paste API key",
     "show_hide_api_key": "Show or hide API key",
     "reply": "Reply",
-    "copy": "Copy"
+    "copy": "Copy",
+    "sender_node": "Sender's node"
   },
   "waypoints": {
     "delete_selected_confirm": {
@@ -1447,7 +1448,10 @@
     "filter_known_key_only": "Known key only",
     "filters_reset": "Reset",
     "filter_chip_remove": "Remove this filter",
-    "no_nodes_match_filters": "No nodes match the active filters"
+    "no_nodes_match_filters": "No nodes match the active filters",
+    "sender_not_found": "This sender is not in the node list",
+    "sender_hidden_by_filter": "Node is hidden by a filter",
+    "sender_show_action": "Show"
   },
   "activity": {
     "card_title": "Activity",
@@ -1513,7 +1517,8 @@
     "send_failed": "send failed",
     "unknown_error": "Unknown error",
     "network_error": "Network error",
-    "listener_not_applicable": "This action is not applicable to TCP/Bluetooth connections"
+    "listener_not_applicable": "This action is not applicable to TCP/Bluetooth connections",
+    "csrf_invalid": "Your session security check expired. Reload the page and try again."
   },
   "time": {
     "card_title": "Time & Timers",

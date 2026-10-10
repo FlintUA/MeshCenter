@@ -4275,6 +4275,18 @@ function escapeHtml(value) {
 // carrying the matched data-chat-action, not necessarily e.target itself
 // (a click can land on a child of the actionable element).
 const CHAT_ACTIONS = {
+    'message-focus-sender': (target, event) => {
+        const row = target.closest('.message[data-message-id]');
+        if (!row) return;
+        const selection = window.getSelection ? String(window.getSelection()) : '';
+        if (!window.MCViews.isPlainMessageClick(event.target, selection.length > 0)) return;
+        focusMessageSenderNode(renderedMessagesById.get(row.dataset.messageId));
+    },
+    'message-menu-sender-node': () => {
+        const message = messageActionTarget;
+        closeMessageActionsMenu();
+        if (message) focusMessageSenderNode(message);
+    },
     'messages-jump-bottom': () => {
         const container = document.getElementById('messagesContainer');
         if (container) container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
@@ -6039,8 +6051,85 @@ function openMessageActions(messageId, anchorElement, pointerEvent = null) {
     );
     if (messageElement) messageElement.classList.add('actions-open');
 
+    // "Sender's node" only makes sense where the node list is on screen and
+    // the message has a resolvable sender.
+    const senderItem = document.getElementById('messageActionSenderNode');
+    if (senderItem) {
+        senderItem.hidden = !(isNodePanelVisible() && messageSenderNodeId(message));
+    }
+
     positionMessageActionsMenu(anchorElement || messageElement, pointerEvent);
 }
+
+// ---- Message click -> sender's node card (desktop layout) ----
+
+function isNodePanelVisible() {
+    const panel = document.getElementById('sidebar');
+    if (!panel || typeof panel.getBoundingClientRect !== 'function') return false;
+    // Desktop layout only (the CSS turns panels into drawers at <= 900px; the
+    // mobile interaction comes later) and the panel must really be on screen.
+    if (window.innerWidth < 901) return false;
+    const rect = panel.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    if (rect.right <= 0 || rect.left >= window.innerWidth || rect.bottom <= 0 || rect.top >= window.innerHeight) return false;
+    const style = window.getComputedStyle ? window.getComputedStyle(panel) : null;
+    return !style || (style.display !== 'none' && style.visibility !== 'hidden');
+}
+
+function messageSenderNodeId(message) {
+    return window.MCViews.resolveSenderNodeId(message, {
+        isOwn: messageBelongsToActiveRadio,
+        localNodeId: activeLocalNodeId,
+    });
+}
+
+function flashNodeCard(nodeId) {
+    const card = document.querySelector(`#nodesList .node-card[data-node-id="${CSS.escape(nodeId)}"]`);
+    if (!card) return false;
+    card.classList.add('node-card-flash');
+    window.setTimeout(() => card.classList.remove('node-card-flash'), 2000);
+    return true;
+}
+
+function focusMessageSenderNode(message) {
+    // Narrow/mobile layouts have no node panel on screen: do nothing there.
+    if (!message || !isNodePanelVisible()) return;
+    const nodeId = messageSenderNodeId(message);
+    if (!nodeId) return;
+
+    // The Tools tab hides the list - bring the Network tab back first.
+    if (!document.getElementById('tab-nodes')?.classList.contains('active')) {
+        switchSidebarTab('nodes');
+    }
+
+    const visibleIds = new Set(computeFilteredNodeCards().map(node => node.node_id));
+    const knownIds = new Set(nodeCache.map(node => node.node_id));
+    const plan = window.MCViews.planSenderFocus(nodeId, visibleIds, knownIds);
+
+    if (plan === 'not_found') {
+        showToast(window.I18N.t('nodes.sender_not_found'), 'info');
+        return;
+    }
+    if (plan === 'hidden_by_filter') {
+        const node = nodeCache.find(item => item.node_id === nodeId);
+        showToast(window.I18N.t('nodes.sender_hidden_by_filter'), 'info', {
+            actionLabel: window.I18N.t('nodes.sender_show_action'),
+            action: () => {
+                nodeFilterState = window.MCViews.stateRevealingNode(loadNodeFilterState(), node);
+                nodeSearchTerm = '';
+                const search = document.getElementById('nodeSearchInput');
+                if (search) search.value = '';
+                refreshNodeListAfterFilterChange();
+                scrollNodeCardIntoView(nodeId, true);
+                flashNodeCard(nodeId);
+            },
+        });
+        return;
+    }
+    scrollNodeCardIntoView(nodeId, true);
+    flashNodeCard(nodeId);
+}
+
 
 async function copyMessageText() {
     const message = messageActionTarget;
@@ -6270,7 +6359,7 @@ async function executeDeleteMessage() {
         const data = await response.json();
 
         if (!response.ok || !data.ok) {
-            throw new Error(data.error || window.I18N.t('chat.delete_failed_http', { status: response.status }));
+            throw new Error(apiErrorText(data, window.I18N.t('chat.delete_failed_http', { status: response.status })));
         }
 
         invalidateCache(currentChatId);
@@ -6336,7 +6425,7 @@ function initializeMessageActions() {
         );
 
         if (!original) {
-            showMessageActionStatus(window.I18N.t('chat.original_message_unavailable'), 'error');
+            showToast(window.I18N.t('chat.original_message_unavailable'), 'info');
             return;
         }
 
@@ -6563,7 +6652,7 @@ function renderMessages(container, messages, chatId) {
 
             return unreadDivider + `
                 <div class="message ${isMe ? 'me' : 'rx'}" data-message-id="${messageId}">
-                    <div class="bubble">
+                    <div class="bubble" data-chat-action="message-focus-sender">
                         ${actionsButton}
                         <div class="sender">${sender}</div>
                         ${replyBlock}
@@ -6821,6 +6910,20 @@ let pendingOptimisticMessages = {}; // chatId -> Map(clientId -> message)
 // id so the same failure isn't re-announced on every subsequent poll.
 let notifiedFailedMessageIds = new Set();
 
+// A translated message for a failed API call: the catalog entry for the
+// response's error_code (errors.<code>, e.g. errors.csrf_invalid) when there
+// is one, else the server's own text, else `fallback`. Never shows a raw
+// English server string for a code the UI knows.
+function apiErrorText(errorData, fallback) {
+    const data = errorData || {};
+    const code = data.error_code || '';
+    if (code) {
+        const translated = window.I18N.tOrFallback('errors.' + code, data.error_params, '');
+        if (translated) return translated;
+    }
+    return data.error || fallback;
+}
+
 function notifyFailedOutgoingMessages(messageList) {
     if (!Array.isArray(messageList)) return;
 
@@ -6929,8 +7032,7 @@ async function submitOutgoingMessage(chatId, chatType, chatName, text, replyTo) 
 
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
-            const reason = window.I18N.tOrFallback('errors.' + (errorData.error_code || ''), errorData.error_params, errorData.error || `HTTP ${response.status}`);
-            throw new Error(reason);
+            throw new Error(apiErrorText(errorData, `HTTP ${response.status}`));
         }
 
         // The server has already stored the real message (status
@@ -6994,7 +7096,7 @@ async function retryStoredMessage(chatId, messageId) {
 
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
-            throw new Error(errorData.error || `HTTP ${response.status}`);
+            throw new Error(apiErrorText(errorData, `HTTP ${response.status}`));
         }
 
         invalidateCache(chatId);

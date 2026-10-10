@@ -5081,3 +5081,15 @@ html[data-theme="dark"] #notificationsCard {
     cursor: pointer;
 }
 .nodes-filter-summary { gap: 12px; justify-content: flex-start; }
+
+/* ===== U2: sender node highlight (message click) ===== */
+.node-card.node-card-flash {
+    outline: 3px solid var(--mc-primary, #1f6fdb);
+    outline-offset: 1px;
+    animation: node-card-flash-fade 2s ease-out;
+}
+@keyframes node-card-flash-fade {
+    0%, 70% { box-shadow: 0 0 0 4px var(--mc-primary-soft, #eaf3ff); }
+    100% { box-shadow: 0 0 0 0 transparent; }
+}
+.message-action-item[hidden] { display: none; }

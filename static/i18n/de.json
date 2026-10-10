@@ -1151,7 +1151,8 @@
     "paste_api_key": "API-Schlüssel einfügen",
     "show_hide_api_key": "API-Schlüssel anzeigen oder verbergen",
     "reply": "Antworten",
-    "copy": "Kopieren"
+    "copy": "Kopieren",
+    "sender_node": "Node des Absenders"
   },
   "waypoints": {
     "delete_selected_confirm": {
@@ -1447,7 +1448,10 @@
     "filter_known_key_only": "Nur bekannter Schlüssel",
     "filters_reset": "Zurücksetzen",
     "filter_chip_remove": "Diesen Filter entfernen",
-    "no_nodes_match_filters": "Keine Nodes passen zu den aktiven Filtern"
+    "no_nodes_match_filters": "Keine Nodes passen zu den aktiven Filtern",
+    "sender_not_found": "Dieser Absender ist nicht in der Node-Liste",
+    "sender_hidden_by_filter": "Node ist durch einen Filter ausgeblendet",
+    "sender_show_action": "Anzeigen"
   },
   "activity": {
     "card_title": "Aktivität",
@@ -1513,7 +1517,8 @@
     "send_failed": "Senden fehlgeschlagen",
     "unknown_error": "Unbekannter Fehler",
     "network_error": "Netzwerkfehler",
-    "listener_not_applicable": "Diese Aktion ist für TCP-/Bluetooth-Verbindungen nicht anwendbar"
+    "listener_not_applicable": "Diese Aktion ist für TCP-/Bluetooth-Verbindungen nicht anwendbar",
+    "csrf_invalid": "Die Sicherheitsprüfung der Sitzung ist abgelaufen. Seite neu laden und erneut versuchen."
   },
   "time": {
     "card_title": "Zeit & Timer",

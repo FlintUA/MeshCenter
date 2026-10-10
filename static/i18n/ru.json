@@ -1151,7 +1151,8 @@
     "paste_api_key": "Вставьте API-ключ",
     "show_hide_api_key": "Показать или скрыть API-ключ",
     "reply": "Ответить",
-    "copy": "Копировать"
+    "copy": "Копировать",
+    "sender_node": "Узел отправителя"
   },
   "waypoints": {
     "delete_selected_confirm": {
@@ -1447,7 +1448,10 @@
     "filter_known_key_only": "Только с известным ключом",
     "filters_reset": "Сбросить",
     "filter_chip_remove": "Убрать этот фильтр",
-    "no_nodes_match_filters": "Нет узлов, подходящих под активные фильтры"
+    "no_nodes_match_filters": "Нет узлов, подходящих под активные фильтры",
+    "sender_not_found": "Этого отправителя нет в списке узлов",
+    "sender_hidden_by_filter": "Узел скрыт фильтром",
+    "sender_show_action": "Показать"
   },
   "activity": {
     "card_title": "Активность",
@@ -1513,7 +1517,8 @@
     "send_failed": "отправка не удалась",
     "unknown_error": "Неизвестная ошибка",
     "network_error": "Ошибка сети",
-    "listener_not_applicable": "Это действие не применимо для подключений TCP/Bluetooth"
+    "listener_not_applicable": "Это действие не применимо для подключений TCP/Bluetooth",
+    "csrf_invalid": "Срок действия проверки безопасности сессии истёк. Перезагрузите страницу и повторите попытку."
   },
   "time": {
     "card_title": "Время и таймеры",

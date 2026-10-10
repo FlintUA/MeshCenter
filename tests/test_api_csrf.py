@@ -347,3 +347,47 @@ def test_session_cookie_secure_wiring_consumes_config(server_module):
 
     assert ast.unparse(read.value) == "globals().get('SESSION_COOKIE_SECURE', False)"
     assert ast.unparse(wire.value) == "SESSION_COOKIE_SECURE"
+
+
+# --- GET /api/auth/csrf (U2: stale-tab recovery) ----------------------------
+
+def test_csrf_endpoint_returns_the_current_session_token():
+    app, _, _ = _make_app(enabled=False)
+    client = app.test_client()
+    page_token = _get_token(client)
+    resp = client.get("/api/auth/csrf")
+    assert resp.status_code == 200
+    assert resp.get_json() == {"ok": True, "csrf_token": page_token}
+    assert resp.headers["Cache-Control"] == "no-store"
+    assert "Access-Control-Allow-Origin" not in resp.headers
+
+
+def test_csrf_endpoint_requires_authentication():
+    app, _, _ = _make_app(enabled=True)
+    resp = app.test_client().get("/api/auth/csrf")
+    assert resp.status_code == 401
+    assert resp.get_json()["error_code"] == "auth_required"
+    assert "csrf_token" not in resp.get_json()
+
+
+def test_stale_tab_token_recovers_after_relogin():
+    # Tab A holds the pre-login token; a re-login (tab B, same session cookie)
+    # rotates it. The endpoint hands tab A the new one and the POST then works.
+    app, _, _ = _make_app(enabled=True)
+    client = app.test_client()
+    with client.session_transaction() as sess:
+        sess["authenticated"] = True
+        sess["csrf_token"] = "old-token"
+    with client.session_transaction() as sess:
+        sess["csrf_token"] = "rotated-by-login"
+    assert client.post("/api/ping", headers={"X-CSRF-Token": "old-token"}).status_code == 403
+    fresh = client.get("/api/auth/csrf").get_json()["csrf_token"]
+    assert fresh == "rotated-by-login"
+    assert client.post("/api/ping", headers={"X-CSRF-Token": fresh}).status_code == 200
+
+
+def test_csrf_endpoint_is_get_only():
+    app, _, _ = _make_app(enabled=False)
+    client = app.test_client()
+    token = _get_token(client)
+    assert client.post("/api/auth/csrf", headers={"X-CSRF-Token": token}).status_code == 405

@@ -60,3 +60,25 @@ def test_chat_list_exposes_last_ts(srv):
     chat_list, _ = srv.get_chats_list()
     entry = next(c for c in chat_list if c["id"] == REMOTE)
     assert isinstance(entry["last_ts"], int)
+
+
+def test_chat_list_orders_by_last_ts_across_midnight(srv):
+    a, b = "!1fa065f0", "!2b3c4d5e"
+    yesterday_2300 = 1_800_000_000          # arbitrary epoch
+    today_0900 = yesterday_2300 + 10 * 3600  # 10h later, "HH:MM:SS" string sorts lower
+    srv.chats[a] = {"id": a, "name": "A", "type": "dm", "last_message": "x",
+                    "last_time": "23:00:00", "last_ts": yesterday_2300, "unread": 0}
+    srv.chats[b] = {"id": b, "name": "B", "type": "dm", "last_message": "y",
+                    "last_time": "09:00:00", "last_ts": today_0900, "unread": 0}
+    ids = [c["id"] for c in srv.get_chats_list()[0] if not c["is_channel"]]
+    assert ids.index(a) < ids.index(b)  # same ascending order as before: older first
+    # string order alone would have put B ("09:00:00") first
+    assert "09:00:00" < "23:00:00"
+
+
+def test_chat_list_legacy_chats_without_ts_still_sort(srv):
+    a, b = "!1fa065f0", "!2b3c4d5e"
+    srv.chats[a] = {"id": a, "name": "A", "type": "dm", "last_message": "", "last_time": "10:00:00", "unread": 0}
+    srv.chats[b] = {"id": b, "name": "B", "type": "dm", "last_message": "", "last_time": "09:00:00", "last_ts": 1_800_000_000, "unread": 0}
+    ids = [c["id"] for c in srv.get_chats_list()[0] if not c["is_channel"]]
+    assert set([a, b]) <= set(ids)

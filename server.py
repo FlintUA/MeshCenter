@@ -4296,11 +4296,19 @@ def get_chats_list():
                 "ignored": chat_id.startswith("!") and nodes.get(chat_id, {}).get("ignored", False),
                 "favorite": is_favorite, "last_sender": sender_display
             })
+        def recency(c):
+            # last_ts (epoch) orders across days; legacy chats without it fall
+            # back to the old "HH:MM:SS" string and sort before any ts chat.
+            ts = c.get("last_ts")
+            if isinstance(ts, (int, float)):
+                return (1, ts)
+            return (0, c["last_time"] or "")
+
         def sort_key(c):
-            if c["is_channel"]: return (0, c.get("id", ""), "")
-            if c["favorite"]: return (1, "", c["last_time"] or "")
-            if c["unread"] > 0: return (2, "", c["last_time"] or "")
-            return (3, "", c["last_time"] or "")
+            if c["is_channel"]: return (0, c.get("id", ""), (0, ""))
+            if c["favorite"]: return (1, "", recency(c))
+            if c["unread"] > 0: return (2, "", recency(c))
+            return (3, "", recency(c))
         chat_list.sort(key=sort_key)
     return chat_list, total_unread
 

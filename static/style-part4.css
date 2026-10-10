@@ -5102,3 +5102,40 @@ html[data-theme="dark"] #notificationsCard {
     }
 }
 .message-action-item[hidden] { display: none; }
+
+/* ===== Dark theme: outgoing bubble legibility =====
+   The outgoing bubble is a LIGHT blue gradient in dark themes (--mc-primary
+   is light there) with --mc-text-inverse (dark navy) as its main text colour,
+   but the generic dark rules gave the footer time a light "muted" grey, the
+   sender name white and the status ticks fixed greys/greens - all unreadable
+   on that blue. Everything inside .message.me now follows the same
+   --mc-text-inverse token the bubble's own text uses (so it also stays right
+   in any dark family whose primary is dark and inverse is light). Failed
+   keeps a clearly red pill that reads on any bubble colour. Light theme and
+   incoming bubbles are untouched. */
+html[data-theme="dark"] .message.me .bubble .sender {
+    color: var(--mc-text-inverse) !important;
+    opacity: 0.88;
+}
+html[data-theme="dark"] .message.me .bubble .time {
+    color: var(--mc-text-inverse) !important;
+    opacity: 0.8;
+}
+html[data-theme="dark"] .message.me .message-status.sent,
+html[data-theme="dark"] .message.me .message-status.transmitted,
+html[data-theme="dark"] .message.me .message-status.delivered,
+html[data-theme="dark"] .message.me .message-status.unconfirmed,
+html[data-theme="dark"] .message.me .message-status.pending {
+    color: var(--mc-text-inverse);
+}
+html[data-theme="dark"] .message.me .message-status.failed {
+    padding: 0 6px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--mc-danger) 55%, black);
+    color: white;
+}
+html[data-theme="dark"] .message.me .message-reply-quote {
+    color: var(--mc-text-inverse);
+    border-left-color: var(--mc-text-inverse);
+    background: color-mix(in srgb, var(--mc-text-inverse) 12%, transparent);
+}

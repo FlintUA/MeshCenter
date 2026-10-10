@@ -1151,7 +1151,8 @@
     "paste_api_key": "Вставте API-ключ",
     "show_hide_api_key": "Показати або приховати API-ключ",
     "reply": "Відповісти",
-    "copy": "Копіювати"
+    "copy": "Копіювати",
+    "sender_node": "Вузол відправника"
   },
   "waypoints": {
     "delete_selected_confirm": {
@@ -1447,7 +1448,10 @@
     "filter_known_key_only": "Лише з відомим ключем",
     "filters_reset": "Скинути",
     "filter_chip_remove": "Прибрати цей фільтр",
-    "no_nodes_match_filters": "Немає вузлів, що відповідають активним фільтрам"
+    "no_nodes_match_filters": "Немає вузлів, що відповідають активним фільтрам",
+    "sender_not_found": "Цього відправника немає у списку вузлів",
+    "sender_hidden_by_filter": "Вузол приховано фільтром",
+    "sender_show_action": "Показати"
   },
   "activity": {
     "card_title": "Активність",
@@ -1513,7 +1517,8 @@
     "send_failed": "надсилання не вдалося",
     "unknown_error": "Невідома помилка",
     "network_error": "Помилка мережі",
-    "listener_not_applicable": "Ця дія не застосовується для підключень TCP/Bluetooth"
+    "listener_not_applicable": "Ця дія не застосовується для підключень TCP/Bluetooth",
+    "csrf_invalid": "Термін дії перевірки безпеки сесії минув. Перезавантажте сторінку й повторіть спробу."
   },
   "time": {
     "card_title": "Час і таймери",

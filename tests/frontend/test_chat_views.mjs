@@ -243,4 +243,57 @@ test('search-style narrowing composes on top of the filtered list', () => {
     assert.ok(searched.every((n) => n.node_id !== '!aaaa0003'));
 });
 
+
+// --------------------------------------------- U2: message click -> node card
+const el = (matches) => ({ closest: (sel) => (matches.some((m) => sel.split(',').map((x) => x.trim()).includes(m)) ? {} : null) });
+
+test('click filtering: plain bubble text counts, interactive children and selections do not', () => {
+    assert.equal(V.isPlainMessageClick(el([]), false), true);
+    for (const cls of ['.message-actions-trigger', '.message-reply-quote', '.message-retry-btn', 'a', 'button', 'input']) {
+        assert.equal(V.isPlainMessageClick(el([cls]), false), false, cls);
+    }
+    assert.equal(V.isPlainMessageClick(el([]), true), false, 'text selected');
+    assert.equal(V.isPlainMessageClick(null, false), false);
+    assert.equal(V.isPlainMessageClick({}, false), false);
+});
+
+test('sender resolution: received -> node_id, own -> local node, reply metadata ignored', () => {
+    const ctx = { isOwn: (m) => m.kind === 'me', localNodeId: '!B0F14D2A' };
+    assert.equal(V.resolveSenderNodeId({ kind: 'rx', node_id: '!1FA065F0' }, ctx), '!1fa065f0');
+    assert.equal(V.resolveSenderNodeId({ kind: 'me', node_id: '!1fa065f0' }, ctx), '!b0f14d2a');
+    // the quoted original's sender is not the sender of THIS message
+    assert.equal(V.resolveSenderNodeId({ kind: 'rx', node_id: '!1fa065f0', reply_to: { node_id: '!99999999' } }, ctx), '!1fa065f0');
+    assert.equal(V.resolveSenderNodeId({ kind: 'system', node_id: '!1fa065f0' }, ctx), null);
+    assert.equal(V.resolveSenderNodeId({ kind: 'rx', node_id: '' }, ctx), null);
+    assert.equal(V.resolveSenderNodeId({ kind: 'rx', node_id: 'channel' }, ctx), null);
+    assert.equal(V.resolveSenderNodeId({ kind: 'me' }, { isOwn: () => true, localNodeId: '' }), null);
+    assert.equal(V.resolveSenderNodeId(null, ctx), null);
+});
+
+test('planSenderFocus: visible -> focus, known but not shown -> hidden_by_filter, else not_found', () => {
+    const visible = new Set(['!aaaa0001']);
+    const known = new Set(['!aaaa0001', '!aaaa0002']);
+    assert.equal(V.planSenderFocus('!aaaa0001', visible, known), 'focus');
+    assert.equal(V.planSenderFocus('!aaaa0002', visible, known), 'hidden_by_filter');
+    assert.equal(V.planSenderFocus('!aaaa0003', visible, known), 'not_found');
+    assert.equal(V.planSenderFocus(null, visible, known), 'not_found');
+});
+
+test('hidden-by-filter end to end: the real filters hide an ignored sender; "Show" state reveals it', () => {
+    const hidden = V.filterAndSortNodes(NODES, null, ctx).map((n) => n.node_id);
+    const known = new Set(NODES.map((n) => n.node_id));
+    assert.equal(V.planSenderFocus('!aaaa0003', new Set(hidden), known), 'hidden_by_filter');
+    const ignoredNode = NODES.find((n) => n.node_id === '!aaaa0003');
+    const reveal = V.stateRevealingNode({ sort: 'name', hideOffline: true, directOnly: true }, ignoredNode);
+    assert.equal(reveal.sort, 'name', 'sort is kept');
+    assert.equal(reveal.hideOffline, false);
+    assert.equal(reveal.ignoredOnly, true);
+    const shown = V.filterAndSortNodes(NODES, reveal, ctx).map((n) => n.node_id);
+    assert.ok(shown.includes('!aaaa0003'));
+    // a normal node just gets every filter dropped
+    const plain = V.stateRevealingNode({ hideOffline: true }, NODES[1]);
+    assert.equal(V.activeFilterCount(plain), 0);
+    assert.ok(V.filterAndSortNodes(NODES, plain, ctx).some((n) => n.node_id === '!aaaa0002'));
+});
+
 console.log(`test_chat_views.mjs: ${passed} tests passed`);

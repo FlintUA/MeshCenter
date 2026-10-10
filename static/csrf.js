@@ -18,11 +18,16 @@
 // multipart boundary).
 //
 // Failure behaviour: a 403 whose JSON body names error_code ===
-// "csrf_invalid" is never retried or replayed. It shows at most one
-// persistent notification telling the user to reload the page (which
-// fetches a fresh token) — checked whenever the original request was a
-// same-origin mutating /api/ call, even if the page's token was missing or
-// stale. Every other response — including ordinary 403s — passes through
+// "csrf_invalid" means the page's token is stale (a re-login elsewhere
+// rotates the session token). The wrapper fetches the current token from
+// GET /api/auth/csrf (one shared refresh for any number of parallel
+// failures), updates the <meta> tag and replays the request ONCE - safe
+// because the server rejected it before any handler ran. If the refresh
+// fails or the replay is rejected again it shows at most one persistent
+// "reload the page" notification and returns the failing response; there is
+// never a second retry. Checked whenever the original request was a
+// same-origin mutating /api/ call, even if the page's token was missing.
+// Every other response - including ordinary 403s - passes through
 // unchanged, body unconsumed.
 // ============================================================
 (function (window) {
@@ -42,6 +47,7 @@
 
     var originalFetch = window.fetch;
     var reloadPromptShown = false;
+    var REFRESH_URL = '/api/auth/csrf';
 
     function getToken() {
         if (typeof document === 'undefined') return '';
@@ -202,17 +208,72 @@
         }
     }
 
+    function setToken(token) {
+        if (typeof document === 'undefined') return;
+        var meta = document.querySelector(TOKEN_META_SELECTOR);
+        if (meta && typeof meta.setAttribute === 'function') meta.setAttribute('content', token);
+    }
+
+    // One in-flight refresh shared by every request that failed at the same
+    // time (a burst of parallel fetches after the session token rotated must
+    // cost ONE round trip). Resolves to the fresh token, or '' on any failure.
+    var refreshInFlight = null;
+
+    function refreshToken() {
+        if (refreshInFlight) return refreshInFlight;
+        refreshInFlight = originalFetch.call(window, REFRESH_URL, {
+            method: 'GET',
+            credentials: 'same-origin',
+            cache: 'no-store',
+        }).then(function (response) {
+            if (!response.ok) return '';
+            return response.json().then(function (body) {
+                var token = body && typeof body.csrf_token === 'string' ? body.csrf_token : '';
+                if (token) setToken(token);
+                return token;
+            });
+        }).catch(function () {
+            return '';
+        }).then(function (token) {
+            refreshInFlight = null;
+            return token;
+        });
+        return refreshInFlight;
+    }
+
+    // Replay a request the server rejected for its CSRF token - exactly once.
+    // Safe because the rejection happens in a before_request hook, before any
+    // handler ran, so nothing was executed the first time.
+    function retryWithToken(retryInput, init, token) {
+        return originalFetch.call(window, retryInput, addTokenHeader(retryInput, init, token))
+            .then(function (response) {
+                var reason = csrfRejectReason(response);
+                if (!reason) return response;
+                return reason.then(function (body) {
+                    if (body) showReloadPrompt();
+                    return response;
+                });
+            });
+    }
+
     function wrappedFetch(input, init) {
         // needsToken() (same-origin mutating /api/) decides BOTH whether the
         // token is added and whether a 403 is inspected for csrf_invalid. The
         // second must not depend on a token actually being present: a missing
-        // or stale page token is precisely when the reload instruction is
-        // needed, and it must never fire for cross-origin or safe calls.
+        // or stale page token is precisely when recovery is needed, and it
+        // must never fire for cross-origin or safe calls.
         var needs = needsToken(input, init);
+        var sentToken = '';
+        var retryInput = input;
+        var retryInit = init;
         if (needs) {
-            var token = getToken();
-            if (token) {
-                init = addTokenHeader(input, init, token);
+            sentToken = getToken();
+            if (sentToken) {
+                init = addTokenHeader(input, init, sentToken);
+            }
+            // A Request's body can only be read once - keep a pristine copy to replay.
+            if (typeof Request !== 'undefined' && input instanceof Request) {
+                try { retryInput = input.clone(); } catch (e) { retryInput = null; }
             }
         }
 
@@ -221,15 +282,29 @@
         if (needs) {
             promise = promise.then(function (response) {
                 var reason = csrfRejectReason(response);
-                if (reason) {
-                    // Fire-and-forget: show the prompt without disturbing the
-                    // caller's own .then() chain, and without consuming the
-                    // response body (clone() already made a private copy).
-                    reason.then(function (body) {
-                        if (body) showReloadPrompt();
+                if (!reason) return response;
+                return reason.then(function (body) {
+                    if (!body) return response;
+                    if (retryInput === null) {
+                        showReloadPrompt();
+                        return response;
+                    }
+                    // Another request may already have refreshed the page's
+                    // token; otherwise fetch the current one (shared).
+                    var current = getToken();
+                    var tokenPromise = (current && current !== sentToken)
+                        ? Promise.resolve(current)
+                        : refreshToken();
+                    return tokenPromise.then(function (token) {
+                        if (!token || token === sentToken) {
+                            // Refresh failed, or the server still has the same
+                            // token we sent - nothing a retry could fix.
+                            showReloadPrompt();
+                            return response;
+                        }
+                        return retryWithToken(retryInput, retryInit, token);
                     });
-                }
-                return response;
+                });
             });
         }
 
@@ -238,7 +313,8 @@
 
     window.fetch = wrappedFetch;
     window.MeshCenterCSRF = {
-        version: '2',
+        version: '3',
+        refreshToken: refreshToken,
         getToken: getToken,
         needsToken: needsToken,
         addTokenHeader: addTokenHeader,

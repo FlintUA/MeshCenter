@@ -5431,8 +5431,11 @@ function nodeHasKnownKey(node) {
 }
 
 function nodeDistanceMeters(node) {
-    const latitude = Number(node && node.position && node.position.latitude);
-    const longitude = Number(node && node.position && node.position.longitude);
+    const position = node && node.position;
+    // Number(null) is 0 - a missing coordinate must not turn into (0, 0).
+    if (!position || position.latitude == null || position.longitude == null) return null;
+    const latitude = Number(position.latitude);
+    const longitude = Number(position.longitude);
     const reference = getReferenceLocation();
     if (
         !Number.isFinite(latitude) || !Number.isFinite(longitude)

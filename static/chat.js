@@ -2035,7 +2035,7 @@ function updateReferenceLocationSummary() {
     if (!nameElement || !coordinatesElement) return;
 
     if (!reference) {
-        nameElement.textContent = `📍 ${window.I18N.t('settings.location_not_configured')}`;
+        nameElement.textContent = `📌 ${window.I18N.t('settings.location_not_configured')}`;
         coordinatesElement.textContent = window.I18N.t('settings.click_to_configure');
         locationButton?.classList.add('reference-is-disabled');
         return;
@@ -2047,7 +2047,7 @@ function updateReferenceLocationSummary() {
         String(appSettings?.reference_location?.place_name || '').trim()
         || String(reference.name || '').trim()
         || window.I18N.t('settings.reference_location');
-    nameElement.textContent = `📍 ${placeName}`;
+    nameElement.textContent = `📌 ${placeName}`;
     coordinatesElement.textContent = hasCoordinates
         ? `${reference.latitude.toFixed(5)} • ${reference.longitude.toFixed(5)}`
         : window.I18N.t('settings.position_unavailable');

@@ -37,34 +37,10 @@ function getNodeDisplayName(node) {
     return String(node?.clean_name || node?.name || node?.long_name || node?.short_name || node?.node_id || 'Unknown node');
 }
 
-// The reference-point pushpin (same 📌 idea as the "Set as reference" menu
-// item). Needle tip at (12, 31) of a 24x32 box - the icon anchor - so the tip
-// sits exactly on the coordinates (and where the dashed line starts).
-const MESH_MAP_PIN_SVG =
-    '<svg viewBox="0 0 24 32" width="24" height="32" aria-hidden="true" focusable="false">' +
-    '<path class="meshcenter-map-pin-needle" d="M10.6 15 L12 31 L13.4 15 Z"/>' +
-    '<circle class="meshcenter-map-pin-head" cx="12" cy="9.5" r="8"/>' +
-    '<circle class="meshcenter-map-pin-shine" cx="9.3" cy="6.8" r="2.2"/></svg>';
-
-// kind: node | selected | reference (a plain-location reference: the pushpin
-// itself). options.referencePin: this NODE is the reference point - it keeps
-// its own dot (so you can tell which node it is) and wears a small pushpin.
-function createMeshMapIcon(kind = 'node', options = {}) {
-    if (kind === 'reference') {
-        return L.divIcon({
-            className: 'meshcenter-map-marker reference',
-            html: `<div class="meshcenter-map-pin">${MESH_MAP_PIN_SVG}</div>`,
-            iconSize: [24, 32],
-            iconAnchor: [12, 31],
-            popupAnchor: [0, -30]
-        });
-    }
-    const badge = options.referencePin
-        ? `<div class="meshcenter-map-pin meshcenter-map-pin-badge">${MESH_MAP_PIN_SVG}</div>`
-        : '';
+function createMeshMapIcon(kind = 'node') {
     return L.divIcon({
-        className: `meshcenter-map-marker ${kind}${options.referencePin ? ' has-reference-pin' : ''}`,
-        html: `<div class="meshcenter-map-marker-dot"></div>${badge}`,
+        className: `meshcenter-map-marker ${kind}`,
+        html: '<div class="meshcenter-map-marker-dot"></div>',
         iconSize: [20, 20],
         iconAnchor: [10, 10],
         popupAnchor: [0, -11]
@@ -1416,11 +1392,10 @@ function renderMeshMap(targetNodeId = null, options = {}) {
         const pos = getNodePosition(node);
         const selected = String(node.node_id) === String(meshMapTargetNodeId);
         const marker = L.marker([pos.latitude, pos.longitude], {
-            // A node that IS the reference point keeps its own dot (selected or
-            // not) and wears the pushpin; it keeps every node behaviour.
-            icon: createMeshMapIcon(selected ? 'selected' : 'node', {
-                referencePin: Boolean(referenceNodeId) && String(node.node_id).toLowerCase() === referenceNodeId
-            }),
+            // A node that IS the reference point wears the reference marker
+            // (green) and keeps every node behaviour - select, menu, DM.
+            icon: createMeshMapIcon(selected ? 'selected'
+                : (referenceNodeId && String(node.node_id).toLowerCase() === referenceNodeId ? 'reference' : 'node')),
             title: getNodeDisplayName(node),
             riseOnHover: true,
             zIndexOffset: selected ? 1000 : 0

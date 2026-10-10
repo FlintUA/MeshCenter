@@ -1087,7 +1087,9 @@ function ensureMeshMap() {
     return meshMap;
 }
 
-function buildMapPopup(node) {
+// Compact info block at the top of a node's context menu (what the old popup
+// showed): name, id, role, last activity, hops, SNR, battery, distance, azimuth.
+function buildNodeInfoHeader(node) {
     const pos = getNodePosition(node);
     const navigation = pos ? getNodeDistanceAndBearing(pos.latitude, pos.longitude) : { distanceText:'--', bearingText:'--' };
     const age = node?.age || '--';
@@ -1096,8 +1098,8 @@ function buildMapPopup(node) {
     const row = (label, value) => `<span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value))}</strong>`;
 
     return `
-        <div class="map-popup-name">${escapeHtml(getNodeDisplayName(node))}</div>
-        <div class="map-popup-grid">
+        <div class="mesh-map-node-menu-title">${escapeHtml(getNodeDisplayName(node))}</div>
+        <div class="mesh-map-node-menu-info">
             ${row('ID', node?.node_id || '--')}
             ${row(window.I18N.t('nodes.role_label'), node?.role || 'CLIENT')}
             ${row(window.I18N.t('nodes.last_heard_label'), age)}
@@ -1107,7 +1109,6 @@ function buildMapPopup(node) {
             ${row(window.I18N.t('nodes.distance'), navigation.distanceText)}
             ${row(window.I18N.t('nodes.bearing'), navigation.bearingText)}
         </div>
-        <div class="map-popup-actions">${renderNodeActionButtons(node, 'map-popup-action-btn')}</div>
     `;
 }
 
@@ -1144,24 +1145,76 @@ function openMeshMapNodeMenu(node, containerPoint) {
     const menu = document.createElement('div');
     menu.className = 'mesh-map-node-menu';
     menu.setAttribute('role', 'menu');
-    menu.innerHTML =
-        `<div class="mesh-map-node-menu-title">${escapeHtml(getNodeDisplayName(node))}</div>` +
-        renderNodeActionButtons(node, 'mesh-map-node-menu-item');
-    // The menu is not a map layer: keep drags/double clicks/right clicks on it
-    // from reaching Leaflet. (Click is left alone so the data-chat-action
-    // dispatcher still sees it.)
-    ['mousedown', 'dblclick', 'pointerdown', 'touchstart'].forEach(type => {
+    menu.innerHTML = buildNodeInfoHeader(node) +
+        `<div class="mesh-map-node-menu-actions">${renderNodeActionButtons(node, 'mesh-map-node-menu-item')}</div>`;
+    mountMeshMapMenu(menu, container, containerPoint);
+}
+
+// Shared by the node menu and the reference-point menu: keep drags / double
+// clicks / right clicks on it away from Leaflet (click is left alone so the
+// data-chat-action dispatcher still sees it), then place it inside the map
+// (flipped near the edges, scrollable when taller than the space).
+function mountMeshMapMenu(menu, container, containerPoint) {
+    ['mousedown', 'dblclick', 'pointerdown', 'touchstart', 'wheel'].forEach(type => {
         menu.addEventListener(type, event => event.stopPropagation());
     });
     menu.addEventListener('contextmenu', event => { event.preventDefault(); event.stopPropagation(); });
+    menu.style.visibility = 'hidden';
     container.appendChild(menu);
-
-    const margin = 6;
-    const left = Math.max(margin, Math.min(containerPoint.x, container.clientWidth - menu.offsetWidth - margin));
-    const top = Math.max(margin, Math.min(containerPoint.y, container.clientHeight - menu.offsetHeight - margin));
-    menu.style.left = `${left}px`;
-    menu.style.top = `${top}px`;
+    const placement = window.MCViews.placeContextMenu(
+        { x: containerPoint.x, y: containerPoint.y },
+        { width: menu.offsetWidth, height: menu.scrollHeight + 2 },
+        { width: container.clientWidth, height: container.clientHeight }
+    );
+    menu.style.left = `${placement.left}px`;
+    menu.style.top = `${placement.top}px`;
+    menu.style.maxHeight = `${placement.maxHeight}px`;
+    menu.style.visibility = '';
     meshMapNodeMenuEl = menu;
+}
+
+// Right-click / long-press on a plain-location reference point: a header with
+// the label and coordinates, then Copy coordinates / Change reference point /
+// Waypoint here.
+function openMeshMapReferenceMenu(reference, containerPoint) {
+    if (!meshMap || !reference) return;
+    closeMeshMapNodeMenu();
+    meshMap.closePopup();
+    const label = reference.name || window.I18N.t('settings.reference_location');
+    const coordinates = `${reference.latitude.toFixed(6)}, ${reference.longitude.toFixed(6)}`;
+    const labels = {
+        copy_coordinates: ['📋', window.I18N.t('waypoints.coordinates')],
+        change_reference: ['⚙️', window.I18N.t('nodes.change_reference_point')],
+        waypoint_here: ['📍', window.I18N.t('nodes.waypoint_here')],
+    };
+    const menu = document.createElement('div');
+    menu.className = 'mesh-map-node-menu';
+    menu.setAttribute('role', 'menu');
+    menu.innerHTML =
+        `<div class="mesh-map-node-menu-title">📍 ${escapeHtml(label)}</div>` +
+        `<div class="mesh-map-node-menu-info"><span>${escapeHtml(window.I18N.t('nodes.type_label'))}</span><strong>${escapeHtml(window.I18N.t('nodes.reference_short'))}</strong>` +
+        `<span>${escapeHtml(window.I18N.t('nodes.coordinates_label'))}</span><strong>${escapeHtml(coordinates)}</strong></div>` +
+        `<div class="mesh-map-node-menu-actions">` +
+        window.MCViews.referenceLocationItems().map(item =>
+            `<button type="button" class="mesh-map-node-menu-item" data-chat-action="ref-act" data-act="${item.id}" data-lat="${reference.latitude}" data-lon="${reference.longitude}">` +
+            `<span aria-hidden="true">${labels[item.id][0]}</span> ${escapeHtml(labels[item.id][1])}</button>`
+        ).join('') +
+        `</div>`;
+    mountMeshMapMenu(menu, meshMap.getContainer(), containerPoint);
+}
+
+function runReferenceAction(act, latitude, longitude) {
+    closeMeshMapNodeMenu();
+    if (act === 'copy_coordinates') copyCoordinates(latitude, longitude);
+    else if (act === 'change_reference') openReferenceSettings();
+    else if (act === 'waypoint_here') openCreateWaypointDialog(latitude, longitude);
+}
+
+// Whether a node belongs on the map right now: ignored nodes follow the same
+// rule as the node list (hidden unless "Ignored only" is on).
+function meshMapShouldShowNode(node) {
+    if (!node || !node.ignored) return true;
+    return Boolean(loadNodeFilterState().ignoredOnly);
 }
 
 // Left click / tap: LOOK. Select the node (marker, dashed line, popup, card
@@ -1187,10 +1240,12 @@ function handleMeshMapNodeClick(node, event) {
 
     meshMapTargetNodeId = nodeId;
     storeSyncSelection('node', nodeId);
-    // Update the orange marker and reference line immediately instead of
-    // waiting for the next node refresh.
-    renderMeshMap(nodeId, { preserveViewport: true, openPopup: true });
+    // Left click = SELECT ONLY: marker, dashed line, header distance/bearing
+    // and the card in the node list. No popup, no DM; the info and the
+    // actions live in the right-click menu.
+    renderMeshMap(nodeId, { preserveViewport: true, openPopup: false });
     focusNodeInList(nodeId);
+
 }
 
 function centerMeshMapOnNode(nodeId) {
@@ -1249,9 +1304,15 @@ function installMeshMapLongPress(container) {
             const rect = container.getBoundingClientRect();
             const containerPoint = L.point(point.x - rect.left, point.y - rect.top);
             const node = meshMapNodeFromElement(downTarget);
+            const referenceIcon = meshMapReferenceMarker && meshMapReferenceMarker.getElement
+                ? meshMapReferenceMarker.getElement() : null;
             if (node) {
                 openMeshMapNodeMenu(node, containerPoint);
+            } else if (referenceIcon && downTarget && referenceIcon.contains(downTarget)) {
+                const reference = getReferenceLocation();
+                if (reference && Number.isFinite(reference.latitude)) openMeshMapReferenceMenu(reference, containerPoint);
             } else if (!(downTarget && downTarget.closest && downTarget.closest('.leaflet-marker-icon'))) {
+
                 const latlng = meshMap.containerPointToLatLng(containerPoint);
                 openCreateWaypointDialog(latlng.lat, latlng.lng);
             }
@@ -1284,7 +1345,8 @@ function renderMeshMap(targetNodeId = null, options = {}) {
     }
 
     const preserveViewport = Boolean(options && options.preserveViewport);
-    const openTargetPopup = options?.openPopup !== false;
+    // (options.openPopup is accepted for old callers; node markers no longer
+    // have a popup - the right-click menu replaced it.)
     const savedCenter = preserveViewport ? map.getCenter() : null;
     const savedZoom = preserveViewport ? map.getZoom() : null;
 
@@ -1293,12 +1355,6 @@ function renderMeshMap(targetNodeId = null, options = {}) {
     } else if (targetNodeId) {
         meshMapTargetNodeId = String(targetNodeId);
     }
-    // A popup that is open now (periodic refresh, re-render after a click)
-    // must survive the rebuild below.
-    let reopenPopupNodeId = null;
-    meshMapMarkers.forEach((marker, nodeId) => {
-        if (marker.isPopupOpen && marker.isPopupOpen()) reopenPopupNodeId = nodeId;
-    });
     meshMapMarkers.forEach(marker => marker.remove());
     meshMapMarkers.clear();
     meshMapWaypointMarkers.forEach(marker => marker.remove());
@@ -1306,7 +1362,11 @@ function renderMeshMap(targetNodeId = null, options = {}) {
     if (meshMapReferenceMarker) { meshMapReferenceMarker.remove(); meshMapReferenceMarker = null; }
     if (meshMapReferenceLine) { meshMapReferenceLine.remove(); meshMapReferenceLine = null; }
 
-    const positionedNodes = nodeCache.filter(node => getNodePosition(node));
+    const positionedNodes = nodeCache.filter(node => getNodePosition(node) && meshMapShouldShowNode(node));
+    const referenceForMarkers = getReferenceLocation();
+    const referenceNodeId = referenceForMarkers && referenceForMarkers.mode === 'node'
+        ? String(referenceForMarkers.node_id || '').toLowerCase()
+        : '';
     const bounds = [];
 
     // Group nodes that occupy the same visual location. Four decimal places
@@ -1326,17 +1386,15 @@ function renderMeshMap(targetNodeId = null, options = {}) {
         const pos = getNodePosition(node);
         const selected = String(node.node_id) === String(meshMapTargetNodeId);
         const marker = L.marker([pos.latitude, pos.longitude], {
-            icon: createMeshMapIcon(selected ? 'selected' : 'node'),
+            // A node that IS the reference point wears the reference marker
+            // (green) and keeps every node behaviour - select, menu, DM.
+            icon: createMeshMapIcon(selected ? 'selected'
+                : (referenceNodeId && String(node.node_id).toLowerCase() === referenceNodeId ? 'reference' : 'node')),
             title: getNodeDisplayName(node),
             riseOnHover: true,
             zIndexOffset: selected ? 1000 : 0
         }).addTo(map);
 
-        marker.bindPopup(buildMapPopup(node), {
-            className: 'meshcenter-map-popup',
-            maxWidth: 300,
-            offset: L.point(0, -10)
-        });
 
         // The selected node keeps its prominent callout at every zoom level.
         // Other node names appear progressively and reuse exactly the same
@@ -1438,13 +1496,36 @@ function renderMeshMap(targetNodeId = null, options = {}) {
     }
 
     const reference = getReferenceLocation();
-    if (reference) {
-        const referenceLocationLabel = reference.name || window.I18N.t('settings.reference_location');
-        meshMapReferenceMarker = L.marker([reference.latitude, reference.longitude], {
-            icon: createMeshMapIcon('reference'),
-            title: referenceLocationLabel,
-            zIndexOffset: 700
-        }).addTo(map).bindPopup(`<div class="map-popup-name">${escapeHtml(referenceLocationLabel)}</div><div class="map-popup-grid"><span>${escapeHtml(window.I18N.t('nodes.type_label'))}</span><strong>${escapeHtml(window.I18N.t('nodes.reference_short'))}</strong><span>${escapeHtml(window.I18N.t('settings.latitude'))}</span><strong>${reference.latitude.toFixed(6)}</strong><span>${escapeHtml(window.I18N.t('settings.longitude'))}</span><strong>${reference.longitude.toFixed(6)}</strong></div>`, { className:'meshcenter-map-popup' });
+    const referenceHasCoordinates = Boolean(reference)
+        && Number.isFinite(reference.latitude) && Number.isFinite(reference.longitude);
+    // A reference that IS a node on the map is drawn by that node's own marker
+    // (green, same select / menu / DM behaviour), so no second marker here.
+    const referenceIsMappedNode = referenceHasCoordinates && referenceNodeId !== ''
+        && positionedNodes.some(node => String(node.node_id).toLowerCase() === referenceNodeId);
+    if (referenceHasCoordinates) {
+        if (!referenceIsMappedNode) {
+            const referenceLocationLabel = reference.name || window.I18N.t('settings.reference_location');
+            // Above everything else (selected node 1000, waypoints 850): a node
+            // marker at the same spot must not swallow its clicks.
+            meshMapReferenceMarker = L.marker([reference.latitude, reference.longitude], {
+                icon: createMeshMapIcon('reference'),
+                title: referenceLocationLabel,
+                zIndexOffset: 1100
+            }).addTo(map).bindPopup(`<div class="map-popup-name">${escapeHtml(referenceLocationLabel)}</div><div class="map-popup-grid"><span>${escapeHtml(window.I18N.t('nodes.type_label'))}</span><strong>${escapeHtml(window.I18N.t('nodes.reference_short'))}</strong><span>${escapeHtml(window.I18N.t('settings.latitude'))}</span><strong>${reference.latitude.toFixed(6)}</strong><span>${escapeHtml(window.I18N.t('settings.longitude'))}</span><strong>${reference.longitude.toFixed(6)}</strong></div>`, { className:'meshcenter-map-popup' });
+            meshMapReferenceMarker.on('contextmenu', event => {
+                const original = event.originalEvent;
+                if (original) {
+                    original._mcNodeMenu = true;
+                    L.DomEvent.stop(original);
+                }
+                if (!acceptMeshMapContextAction()) return;
+                meshMapSuppressClickUntil = Date.now() + 400;
+                openMeshMapReferenceMenu(reference, event.containerPoint);
+            });
+            meshMapReferenceMarker.on('dblclick', event => {
+                if (event.originalEvent) L.DomEvent.stop(event.originalEvent);
+            });
+        }
         bounds.push([reference.latitude, reference.longitude]);
 
         const targetNode = positionedNodes.find(node => String(node.node_id) === String(meshMapTargetNodeId));
@@ -1461,16 +1542,6 @@ function renderMeshMap(targetNodeId = null, options = {}) {
 
     updateMeshMapNodeLabelLevel();
 
-    if (reopenPopupNodeId && !openTargetPopup) {
-        const marker = meshMapMarkers.get(reopenPopupNodeId);
-        const popup = marker && marker.getPopup && marker.getPopup();
-        if (popup) {
-            const previousAutoPan = popup.options.autoPan;
-            popup.options.autoPan = false;
-            marker.openPopup();
-            popup.options.autoPan = previousAutoPan;
-        }
-    }
 
     const countEl = document.getElementById('mapNodeCount');
 
@@ -1525,20 +1596,6 @@ if (targetNode && targetPos) {
                 easeLinearity: 0.25
             }
         );
-    }
-    if (openTargetPopup) {
-        const openPopup = () => {
-            const marker =
-                meshMapMarkers.get(String(targetNode.node_id));
-            if (marker)
-                marker.openPopup();
-        };
-        if (preserveViewport) {
-            requestAnimationFrame(openPopup);
-        } else {
-            map.once("moveend", openPopup);
-            setTimeout(openPopup, 700);
-        }
     }
 } else {
         if (title) title.textContent = `🗺 ${window.I18N.t('nodes.map_title')}`;

@@ -409,4 +409,69 @@ test('chat list follow: scroll when the entry exists but is not visible, wait wh
     assert.equal(V.chatListFollowAction(null, 1500, true, false), 'none');
 });
 
+// ------------------------------------------------ U3.1: menu composition, placement, scroll sync
+test('menu composition: a node that is the reference point offers Clear instead of Set', () => {
+    const asRef = actionIds(V.nodeActionItems({}, { hasPosition: true, isReference: true }));
+    assert.ok(asRef.includes('clear_reference'));
+    assert.ok(!asRef.includes('set_reference'));
+    const notRef = actionIds(V.nodeActionItems({}, { hasPosition: true, isReference: false }));
+    assert.ok(notRef.includes('set_reference'));
+    assert.ok(!notRef.includes('clear_reference'));
+});
+
+test('menu composition: Clear reference stays available even if the node has no position', () => {
+    const out = actionIds(V.nodeActionItems({}, { hasPosition: false, isReference: true }));
+    assert.ok(out.includes('clear_reference'));
+    assert.ok(!out.includes('copy_coordinates'));
+});
+
+test('menu composition: plain reference location has exactly three items, in order', () => {
+    assert.deepEqual(actionIds(V.referenceLocationItems()), ['copy_coordinates', 'change_reference', 'waypoint_here']);
+});
+
+test('menu composition: reference node + unknown key + favorite + ignored all together', () => {
+    const items = V.nodeActionItems({ favorite: true, ignored: true },
+        { hasPosition: true, isReference: true, keyUnknown: true, canRequestKey: true });
+    const out = actionIds(items);
+    assert.deepEqual(out, ['message', 'favorite', 'ignore', 'waypoint_here', 'center', 'request_key',
+        'request_telemetry', 'request_position', 'traceroute', 'clear_reference', 'copy_coordinates', 'details']);
+    assert.equal(items.find((i) => i.id === 'favorite').on, true);
+    assert.equal(items.find((i) => i.id === 'ignore').on, true);
+});
+
+test('menu placement: opens bottom-right of the pointer when there is room', () => {
+    const p = V.placeContextMenu({ x: 100, y: 80 }, { width: 200, height: 300 }, { width: 800, height: 600 });
+    assert.equal(p.left, 100);
+    assert.equal(p.top, 80);
+});
+
+test('menu placement: flips left / above near the right and bottom edges', () => {
+    const p = V.placeContextMenu({ x: 760, y: 560 }, { width: 200, height: 300 }, { width: 800, height: 600 });
+    assert.equal(p.left, 560);   // right edge of menu at the pointer
+    assert.equal(p.top, 260);    // bottom edge of menu at the pointer
+});
+
+test('menu placement: never leaves the viewport, and a too-tall menu gets a max height (scrolls)', () => {
+    const p = V.placeContextMenu({ x: 5, y: 590 }, { width: 200, height: 900 }, { width: 800, height: 600 });
+    assert.ok(p.left >= 6);
+    assert.equal(p.top, 6);
+    assert.equal(p.maxHeight, 588);
+    const tiny = V.placeContextMenu({ x: 0, y: 0 }, { width: 500, height: 100 }, { width: 300, height: 200 });
+    assert.ok(tiny.left >= 6 && tiny.left + 288 <= 294 + 0.001);
+});
+
+test('list scroll: visible item -> no scroll; near item -> nearest edge; far item -> centered', () => {
+    // view is 0..400
+    assert.equal(V.scrollDeltaForItem(100, 160, 0, 400), 0);
+    assert.equal(V.scrollDeltaForItem(420, 480, 0, 400), 480 - 400 + 8);   // just below: nearest bottom edge
+    assert.equal(V.scrollDeltaForItem(-60, -10, 0, 400), -60 - 0 - 8);      // just above: nearest top edge
+    assert.equal(V.scrollDeltaForItem(2000, 2060, 0, 400), 2030 - 200);     // far: centered
+    assert.equal(V.scrollDeltaForItem(-3000, -2940, 0, 400), -2970 - 200);
+});
+
+test('list scroll: an item partly outside counts as needing a scroll', () => {
+    assert.notEqual(V.scrollDeltaForItem(380, 440, 0, 400), 0);
+    assert.notEqual(V.scrollDeltaForItem(-30, 30, 0, 400), 0);
+});
+
 console.log(`test_chat_views.mjs: ${passed} tests passed`);

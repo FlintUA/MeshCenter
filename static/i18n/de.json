@@ -21,7 +21,8 @@
     "disabled": "Deaktiviert",
     "please_wait": "Bitte warten",
     "error_prefix": "Fehler: {reason}",
-    "reloading": "Wird neu geladen …"
+    "reloading": "Wird neu geladen …",
+    "undo": "Rückgängig"
   },
   "nav": {
     "chats": "Chats",
@@ -534,7 +535,8 @@
     "yes_delete_everything": "Ja, alles löschen!",
     "date_yesterday": "gestern",
     "unread_divider": "Ungelesene Nachrichten ({count})",
-    "jump_to_latest": "Zur neuesten Nachricht springen"
+    "jump_to_latest": "Zur neuesten Nachricht springen",
+    "node_ignored_hidden": "Node ignoriert – aus der Liste ausgeblendet"
   },
   "camera": {
     "live_camera": "Live-Kamera",
@@ -1456,7 +1458,11 @@
     "last_heard_label": "Zuletzt gehört",
     "waypoint_here": "Wegpunkt hier",
     "center_on_map": "Auf Karte zentrieren",
-    "details_action": "Details"
+    "details_action": "Details",
+    "clear_reference": "Referenzpunkt entfernen",
+    "change_reference_point": "Referenzpunkt ändern",
+    "reference_cleared": "Referenzpunkt entfernt",
+    "coordinates_label": "Koordinaten"
   },
   "activity": {
     "card_title": "Aktivität",

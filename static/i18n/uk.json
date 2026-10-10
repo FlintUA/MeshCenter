@@ -21,7 +21,8 @@
     "disabled": "Вимкнено",
     "please_wait": "Зачекайте",
     "error_prefix": "Помилка: {reason}",
-    "reloading": "Перезавантаження…"
+    "reloading": "Перезавантаження…",
+    "undo": "Скасувати"
   },
   "nav": {
     "chats": "Чати",
@@ -534,7 +535,8 @@
     "yes_delete_everything": "Так, видалити все!",
     "date_yesterday": "вчора",
     "unread_divider": "Непрочитані повідомлення ({count})",
-    "jump_to_latest": "До останнього повідомлення"
+    "jump_to_latest": "До останнього повідомлення",
+    "node_ignored_hidden": "Вузол ігнорується — приховано зі списку"
   },
   "camera": {
     "live_camera": "Камера в реальному часі",
@@ -1456,7 +1458,11 @@
     "last_heard_label": "Остання активність",
     "waypoint_here": "Шляхова точка тут",
     "center_on_map": "Центрувати на карті",
-    "details_action": "Деталі"
+    "details_action": "Деталі",
+    "clear_reference": "Скинути опорну точку",
+    "change_reference_point": "Змінити опорну точку",
+    "reference_cleared": "Опорну точку скинуто",
+    "coordinates_label": "Координати"
   },
   "activity": {
     "card_title": "Активність",

@@ -21,7 +21,8 @@
     "disabled": "Отключено",
     "please_wait": "Подождите",
     "error_prefix": "Ошибка: {reason}",
-    "reloading": "Перезагрузка…"
+    "reloading": "Перезагрузка…",
+    "undo": "Отменить"
   },
   "nav": {
     "chats": "Чаты",
@@ -534,7 +535,8 @@
     "yes_delete_everything": "Да, удалить всё!",
     "date_yesterday": "вчера",
     "unread_divider": "Непрочитанные сообщения ({count})",
-    "jump_to_latest": "К последнему сообщению"
+    "jump_to_latest": "К последнему сообщению",
+    "node_ignored_hidden": "Узел игнорируется — скрыт из списка"
   },
   "camera": {
     "live_camera": "Камера в реальном времени",
@@ -1456,7 +1458,11 @@
     "last_heard_label": "Последняя активность",
     "waypoint_here": "Путевая точка здесь",
     "center_on_map": "Центрировать на карте",
-    "details_action": "Подробности"
+    "details_action": "Подробности",
+    "clear_reference": "Сбросить опорную точку",
+    "change_reference_point": "Изменить опорную точку",
+    "reference_cleared": "Опорная точка сброшена",
+    "coordinates_label": "Координаты"
   },
   "activity": {
     "card_title": "Активность",

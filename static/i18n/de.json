@@ -1529,7 +1529,8 @@
     "unknown_error": "Unbekannter Fehler",
     "network_error": "Netzwerkfehler",
     "listener_not_applicable": "Diese Aktion ist für TCP-/Bluetooth-Verbindungen nicht anwendbar",
-    "csrf_invalid": "Die Sicherheitsprüfung der Sitzung ist abgelaufen. Seite neu laden und erneut versuchen."
+    "csrf_invalid": "Die Sicherheitsprüfung der Sitzung ist abgelaufen. Seite neu laden und erneut versuchen.",
+    "internal_error": "Auf dem Server ist etwas schiefgelaufen. Referenz: {error_id}"
   },
   "time": {
     "card_title": "Zeit & Timer",

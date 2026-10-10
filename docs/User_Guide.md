@@ -765,6 +765,10 @@ Expected results:
 
 ## 17. Troubleshooting
 
+### "Something went wrong on the server. Reference: xxxxxxxx"
+
+This message means the server hit an unexpected error while handling your request. For safety the details are never shown in the browser; they are recorded under the 8-character reference in `Workspace > System > System Log` (an ERROR entry named "Unexpected error in …") and in the service log (`journalctl -u meshcenter.service`, where the full traceback is). Quote that reference when reporting the problem. Request contents (messages, passwords) are not logged.
+
 ### Service does not start
 
 ```bash

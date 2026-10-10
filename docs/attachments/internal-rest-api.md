@@ -60,7 +60,7 @@ Every mutation endpoint in this contract is marked `CSRF: required`. Until the p
 ### 2.4 JSON envelope
 
 - **Success:** `{"ok": true, ...}` with domain fields.
-- **Error:** `{"ok": false, "error": "<human text>", "error_code": "<snake_case_code>"}` plus the correct HTTP status. Codes are snake_case: existing examples `waypoint_not_found`, `radio_busy`, `auth_required`, `password_too_short`.
+- **Error:** `{"ok": false, "error": "<human text>", "error_code": "<snake_case_code>"}` plus the correct HTTP status. An *unexpected* exception is always answered `500 {"ok": false, "error": "Internal server error", "error_code": "internal_error", "error_id": "<8 hex>"}` - never `str(e)` or a traceback, debug mode included; the full exception is logged server-side (process log + one System Log ERROR entry) under the same `error_id`. Codes are snake_case: existing examples `waypoint_not_found`, `radio_busy`, `auth_required`, `password_too_short`.
 
 `handle_errors` (server.py:496) turns an uncaught exception into a 500 envelope; MCAttach routes must catch domain errors and return a stable `error_code` rather than leaking `str(e)` (see §10).
 

@@ -4,6 +4,7 @@ import threading
 import queue
 import re
 
+from meshsrv import error_reporting
 from meshsrv.radio_transport import OutgoingMessage
 
 # Meshtastic protobufs: Data.payload max_size (see meshtastic/protobufs
@@ -220,10 +221,14 @@ def register_chat_routes(
                 if batch:
                     _process_send_batch(batch)
             except Exception as worker_error:
-                print(f"[SEND WORKER] Unexpected error: {worker_error}", flush=True)
+                error_id = error_reporting.report_unexpected_error(worker_error, "send_worker")
                 for failed_job in batch:
                     try:
-                        _mark_failed(failed_job.get("message_id"), failed_job.get("final_chat_id"), str(worker_error))
+                        # Shown on the message bubble: generic text + id, never the exception.
+                        _mark_failed(
+                            failed_job.get("message_id"), failed_job.get("final_chat_id"),
+                            f"{error_reporting.GENERIC_MESSAGE} (ID: {error_id})",
+                        )
                     except Exception:
                         pass
             finally:

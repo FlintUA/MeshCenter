@@ -1,6 +1,8 @@
 import threading
 import time
 
+from meshsrv import error_reporting
+
 
 class RadioConnectionManager:
     """Manage temporary release and reconnect of the Meshtastic serial radio.
@@ -122,12 +124,23 @@ class RadioConnectionManager:
 
         except Exception as error:
             self._pause_event.clear()
+            if isinstance(error, RuntimeError):
+                # Our own, deliberately worded reason ("listener could not be
+                # stopped", "serial port is still busy: ...") - safe to show.
+                shown = str(error)
+            else:
+                # Anything else is an unexpected fault: the status shows only a
+                # generic text + id, the cause goes to the logs under that id.
+                error_id = error_reporting.report_unexpected_error(
+                    error, "radio_release", log_event=None, source="radio"
+                )
+                shown = f"{error_reporting.GENERIC_MESSAGE} (ID: {error_id})"
             self._set_state(
                 "error",
                 "The radio could not be released.",
-                str(error),
+                shown,
             )
-            self._log("ERROR", "Radio release failed", str(error))
+            self._log("ERROR", "Radio release failed", shown)
             print(f"[RADIO MANAGER] Release failed: {error}", flush=True)
             return False, self.status(False)
 

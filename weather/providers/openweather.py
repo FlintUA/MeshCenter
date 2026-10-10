@@ -205,7 +205,7 @@ class OpenWeatherProvider(WeatherProvider):
                     result.update({
                         "cached": True,
                         "stale": True,
-                        "warning": str(exc),
+                        "warning": self._friendly_error(exc),
                     })
                     return result
 
@@ -447,7 +447,10 @@ class OpenWeatherProvider(WeatherProvider):
 
     @staticmethod
     def _friendly_error(exc: Exception) -> str:
-        message = str(exc)
+        # Only the provider wrapper's own RuntimeError text (built in
+        # _request from the HTTP status / network reason) is shown; any other
+        # exception type is an internal fault, not a message for the user.
+        message = str(exc) if isinstance(exc, RuntimeError) else ""
         if "401" in message:
             return "OpenWeather API key is invalid or not active yet"
         if "429" in message:

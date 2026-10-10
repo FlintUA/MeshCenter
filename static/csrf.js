@@ -256,6 +256,43 @@
             });
     }
 
+    // Any same-origin /api/ request (every method).
+    function isApiRequest(input) {
+        var url = resolveURL(input);
+        return Boolean(url) && url.origin === window.location.origin && url.pathname.indexOf('/api/') === 0;
+    }
+
+    // An UNEXPECTED server error (500, error_code "internal_error") carries a
+    // generic English message plus an error_id (the cause is only in the server
+    // log). Every caller shows `data.error` as-is, so rewrite it here, once, to
+    // the translated text with the id - no per-call-site changes. Everything
+    // else in the body (and the status/headers) is preserved.
+    function localizeInternalError(response) {
+        if (!response || response.status < 500 || typeof Response === 'undefined') return response;
+        var original = response;
+        try {
+            return original.clone().json().then(function (body) {
+                if (!body || body.error_code !== 'internal_error') return original;
+                var id = body.error_id ? String(body.error_id) : '';
+                var fallback = 'Internal server error' + (id ? ' (ID: ' + id + ')' : '');
+                var text = (window.I18N && typeof window.I18N.tOrFallback === 'function')
+                    ? window.I18N.tOrFallback('errors.internal_error', { error_id: id }, fallback)
+                    : fallback;
+                var rewritten = Object.assign({}, body, {
+                    error: text,
+                    error_params: Object.assign({}, body.error_params, { error_id: id }),
+                });
+                return new Response(JSON.stringify(rewritten), {
+                    status: original.status,
+                    statusText: original.statusText,
+                    headers: original.headers,
+                });
+            }).catch(function () { return original; });
+        } catch (e) {
+            return original;
+        }
+    }
+
     function wrappedFetch(input, init) {
         // needsToken() (same-origin mutating /api/) decides BOTH whether the
         // token is added and whether a 403 is inspected for csrf_invalid. The
@@ -308,12 +345,16 @@
             });
         }
 
+        if (isApiRequest(input)) {
+            promise = promise.then(localizeInternalError);
+        }
+
         return promise;
     }
 
     window.fetch = wrappedFetch;
     window.MeshCenterCSRF = {
-        version: '3',
+        version: '4',
         refreshToken: refreshToken,
         getToken: getToken,
         needsToken: needsToken,

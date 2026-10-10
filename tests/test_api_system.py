@@ -79,11 +79,17 @@ def test_wifi_scan_unexpected_exception_returns_reason_and_logs_it(client, monke
     assert response.status_code == 500
     data = response.get_json()
     assert data["ok"] is False
-    assert data["error"] == "iw not found"
+    # The exception text no longer reaches the client: generic body + error_id...
+    assert data["error"] == "Internal server error"
+    assert data["error_code"] == "internal_error"
+    assert "iw not found" not in response.get_data(as_text=True)
+    assert data["networks"] == []
 
+    # ...and the real cause is in the System Log under that same id.
     assert len(logged) == 1
     assert logged[0]["source"] == "wifi"
     assert logged[0]["level"] == "ERROR"
+    assert data["error_id"] in logged[0]["details"]
     assert "iw not found" in logged[0]["details"]
 
 

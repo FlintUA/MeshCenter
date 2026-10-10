@@ -5107,6 +5107,7 @@ function findChatListEntry(chatId) {
 
 function scrollContainerToShowItem(container, item) {
     const c = container.getBoundingClientRect();
+    if (c.height <= 0) return false;   // list not laid out / hidden: nothing to scroll
     const r = item.getBoundingClientRect();
     const delta = window.MCViews.scrollDeltaForItem(r.top, r.bottom, c.top, c.bottom);
     if (!delta) return false;
@@ -7551,6 +7552,9 @@ async function toggleIgnore(nodeId) {
 
             loadMessages();
             loadChatList();
+            // The map follows the list's ignore rule; in split mode nothing else
+            // re-renders it, so the marker would stay until the next interaction.
+            refreshMapAfterReferenceChange();
             
             updateNodeDetails(nodeId);
             if (data.ignored) {

@@ -242,8 +242,8 @@ MeshCenter's browser interface talks to itself over a REST API — primarily for
 | KI-001b | A WeAct 1.54" e-Paper panel can stop showing visible updates despite the protocol completing correctly | Open, hardware-specific |
 | KI-002 | The Meshtastic Python API (2.7.x) does not support reading a node's current time | Waiting on upstream |
 | KI-003 | The field picker UI for the "Send data report" schedule action is still basic | Planned |
-| KI-007 | Chat-list timestamps are formatted server-side and don't react to the 12h/24h toggle | Planned |
-| KI-009 | During quiet operation the serial listener occasionally restarts (claim pauses, an unrelated library quirk) - pre-existing, not a hot-reconnect regression | Open, backlog |
+| KI-007 | Message and chat-list times use a fixed 24-hour format and don't react to the 12h/24h toggle | Planned |
+| KI-009 | During quiet operation the serial listener occasionally restarts (claim pauses, an unrelated library quirk) - measured over 24 h, pre-existing and cosmetic, not a hot-reconnect regression | Closed (documented) |
 
 Full history and root-cause details for these and other issues: see [KNOWN_ISSUES.md](KNOWN_ISSUES.md). See also the Radio Connection limitations above (TCP's narrower receive scope, Bluetooth's send-only behavior) and [docs/User_Guide.md's Troubleshooting section](docs/User_Guide.md#17-troubleshooting).
 
@@ -285,6 +285,8 @@ See **[docs/development/Roadmap.md](docs/development/Roadmap.md)** for current a
 
 | Version | Highlights |
 |----------|------------|
+| v1.10.0 | Messaging: message dates, jump to first unread, click a message to find its sender; node-list sort and filters; map and node list "click selects, actions via menu" model with a node context menu; serial hot-reconnect; CSRF auto-recovery, security headers, XSS CI ratchet. Applies from the Updates card — see [release notes](docs/releases/v1.10.0.md) |
+| v1.9.0 | Security and storage-reliability hardening, TCP transport with inbound receive, multi-connection radios, mandatory `/setup` password wizard, USB cameras without GPL imports. Needs a manual upgrade — see [release notes](docs/releases/v1.9.0.md) |
 | v1.8.4 | MCAttach control-channel index fix; production logging (`wsgi.py`); Relay server source published under `relay-server/` for optional self-hosting; a guided "Connect a Relay" setup wizard; transfer detail card with Normal/Advanced/Technical levels |
 | v1.8.2 | Documentation maintenance: `STYLE_GUIDE.md` brought up to date with the theme-registry work |
 | v1.8.1 | Installation ID (`PRIVACY.md`) with a management CLI; unified `.btn` sizing system; identity-check failures routed to the System Log instead of raw exception text |
@@ -299,7 +301,7 @@ See **[docs/development/Roadmap.md](docs/development/Roadmap.md)** for current a
 | v1.0.1 | Early production-readiness fixes: config validation, port-release handling, `sensors.json` robustness |
 | v1.0.0 | First Stable Release |
 
-A substantial batch of security, storage-reliability, telemetry and TCP-transport work has landed on `main` since v1.8.4 and is pending its own release tag — see the [GitHub Releases page](https://github.com/FlintUA/MeshCenter/releases) for the authoritative, up-to-date list, and recent commits/PRs for anything not yet tagged.
+Full per-release notes are in [`docs/releases/`](docs/releases/) and on the [GitHub Releases page](https://github.com/FlintUA/MeshCenter/releases); commits on `main` after the latest tag are not yet released.
 
 ---
 

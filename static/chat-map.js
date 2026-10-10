@@ -1171,7 +1171,13 @@ function handleMeshMapNodeClick(node, event) {
     if (Date.now() < meshMapSuppressClickUntil) return;
     closeMeshMapNodeMenu();
     const nodeId = String(node.node_id);
-    const verdict = window.MCViews.classifyNodeClick(meshMapLastNodeClick, nodeId, Date.now());
+    // Use the INPUT time of the click, not "now": rebuilding the markers can
+    // take a while on a big mesh, and the second click of a double click sits
+    // queued behind it - measured at handler time it would look like a slow
+    // second click.
+    const original = event && event.originalEvent;
+    const clickAt = original && Number.isFinite(original.timeStamp) ? original.timeStamp : performance.now();
+    const verdict = window.MCViews.classifyNodeClick(meshMapLastNodeClick, nodeId, clickAt);
     meshMapLastNodeClick = verdict.next;
 
     if (verdict.kind === 'double') {

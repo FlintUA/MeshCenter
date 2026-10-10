@@ -408,7 +408,7 @@ def register_chat_routes(
         chat_by_id = {item.get("id"): item for item in chat_list}
         for channel in channels:
             stored = chat_by_id.get(channel.get("id"), {})
-            for key in ("last_message", "last_time", "unread", "last_sender"):
+            for key in ("last_message", "last_time", "last_ts", "unread", "last_sender"):
                 if stored.get(key) not in (None, "", 0):
                     channel[key] = stored.get(key)
         return jsonify({
@@ -522,9 +522,14 @@ def register_chat_routes(
                     last_message = remaining[-1]
                     chats[chat_id]["last_message"] = last_message.get("text", "")
                     chats[chat_id]["last_time"] = last_message.get("time", "")
+                    if last_message.get("ts") is not None:
+                        chats[chat_id]["last_ts"] = last_message.get("ts")
+                    else:
+                        chats[chat_id].pop("last_ts", None)
                 else:
                     chats[chat_id]["last_message"] = ""
                     chats[chat_id]["last_time"] = ""
+                    chats[chat_id].pop("last_ts", None)
 
                 chats[chat_id]["unread"] = 0
                 if not save_chats():

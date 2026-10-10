@@ -2238,10 +2238,14 @@ def ensure_chat(node_id, node_name=None, force=False):
     except Exception:
         pass
 
-def update_chat_last_message(chat_id, text, time_str):
+def update_chat_last_message(chat_id, text, time_str, ts=None):
     if chat_id in chats:
         chats[chat_id]["last_message"] = text[:100]
         chats[chat_id]["last_time"] = time_str
+        if ts is not None:
+            chats[chat_id]["last_ts"] = ts
+        else:
+            chats[chat_id].pop("last_ts", None)
         save_chats()
 
 def reset_unread(chat_id):
@@ -3925,8 +3929,22 @@ def process_nodeinfo(block):
         save_nodes()
     return True
 
+def resolve_message_ts(rx_time=None):
+    """Epoch seconds for a new message: the packet's rxTime when it is a sane
+    value (the radio's clock may be unset or far off - then it would show a
+    nonsense date), otherwise server time."""
+    current = int(time.time())
+    try:
+        candidate = int(rx_time)
+    except (TypeError, ValueError):
+        return current
+    if current - 86400 <= candidate <= current + 300:
+        return candidate
+    return current
+
+
 def add_message(kind, sender, text, node_id="", chat_id=None, chat_name=None, reply_to=None, packet_id=None,
-                 status=None, client_id=None, reply_id=None):
+                 status=None, client_id=None, reply_id=None, rx_time=None):
     # Store all locally transmitted messages under one canonical direction.
     # Older waypoint notifications used "tx", while the rest of the chat
     # subsystem and UI use "me" for outgoing messages.
@@ -3974,7 +3992,7 @@ def add_message(kind, sender, text, node_id="", chat_id=None, chat_name=None, re
         msg = {
             "id": uuid.uuid4().hex,
             "kind": kind, "sender": sender, "node_id": node_id,
-            "text": text, "time": now(),
+            "text": text, "time": now(), "ts": resolve_message_ts(rx_time),
             "chat_id": chat_id, "chat_type": chat_type, "chat_name": chat_name,
             # "pending" -> "sent" / "failed" is used by the async /api/send flow so the
             # frontend can render an optimistic bubble and reconcile it once the
@@ -4036,7 +4054,7 @@ def add_message(kind, sender, text, node_id="", chat_id=None, chat_name=None, re
             }
         messages.append(msg)
         messages[:] = messages[-MAX_HISTORY_MESSAGES:]
-        update_chat_last_message(chat_id, text, msg["time"])
+        update_chat_last_message(chat_id, text, msg["time"], msg["ts"])
         if kind == "rx" and chat_id in chats:
             chats[chat_id]["unread"] = chats[chat_id].get("unread", 0) + 1
             save_chats()
@@ -4220,6 +4238,7 @@ def get_nodes_list():
                 "relay_node": relay_node,
                 "signal_quality": quality,
                 "age": age_display,
+                "last_seen": last_seen,
                 "ignored": ignored,
                 "favorite": favorite,
 
@@ -4271,16 +4290,25 @@ def get_chats_list():
             chat_list.append({
                 "id": chat_id, "name": chat.get("name", chat_id),
                 "type": chat.get("type", "dm"), "last_message": last_msg,
-                "last_time": chat.get("last_time", ""), "unread": unread,
+                "last_time": chat.get("last_time", ""), "last_ts": chat.get("last_ts"),
+                "unread": unread,
                 "is_channel": chat_id == CHANNEL_CHAT_ID or chat_id.startswith("channel:"),
                 "ignored": chat_id.startswith("!") and nodes.get(chat_id, {}).get("ignored", False),
                 "favorite": is_favorite, "last_sender": sender_display
             })
+        def recency(c):
+            # last_ts (epoch) orders across days; legacy chats without it fall
+            # back to the old "HH:MM:SS" string and sort before any ts chat.
+            ts = c.get("last_ts")
+            if isinstance(ts, (int, float)):
+                return (1, ts)
+            return (0, c["last_time"] or "")
+
         def sort_key(c):
-            if c["is_channel"]: return (0, c.get("id", ""), "")
-            if c["favorite"]: return (1, "", c["last_time"] or "")
-            if c["unread"] > 0: return (2, "", c["last_time"] or "")
-            return (3, "", c["last_time"] or "")
+            if c["is_channel"]: return (0, c.get("id", ""), (0, ""))
+            if c["favorite"]: return (1, "", recency(c))
+            if c["unread"] > 0: return (2, "", recency(c))
+            return (3, "", recency(c))
         chat_list.sort(key=sort_key)
     return chat_list, total_unread
 
@@ -4771,6 +4799,7 @@ def build_serial_text_event(line, text):
         packet_id=extract_packet_id(line),
         channel_index=extract_optional_channel_index(line),
         reply_id=extract_reply_id(line),
+        rx_time=_optional_int(extract_field(line, ["rxTime"])),
         rx_rssi=_optional_int(extract_rssi(line)),
         rx_snr=float(snr_text) if snr_text is not None else None,
         hop_start=_optional_int(extract_hop_start(line)),
@@ -7954,6 +7983,7 @@ def api_clear_chat():
         if chat_entry_snapshot is not None:
             chats[chat_id]["last_message"] = ""
             chats[chat_id]["last_time"] = ""
+            chats[chat_id].pop("last_ts", None)
             chats[chat_id]["unread"] = 0
             if not save_chats():
                 _restore()

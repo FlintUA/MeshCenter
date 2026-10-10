@@ -10,8 +10,11 @@ let nodeSearchTerm = '';
 let directMessageTarget = null;
 let chatListCache = [];              // <-- ЭТО ОБЯЗАТЕЛЬНО!
 let messagePollInterval = null;
-let showIgnored = false;
-let showFavorites = false;
+// U1: node list sort/filter state (persisted in localStorage, see loadNodeFilterState()).
+let nodeFilterState = null;
+// U1: per-open-chat view state - the unread count captured BEFORE the server
+// resets it, and where the "Unread messages" divider sits while the chat stays open.
+let chatViewState = { chatId: null, unreadCount: 0, anchorId: null, pendingPlacement: false, forceBottomOnce: false };
 let nodeCache = [];
 let deleteTargetChatId = null;
 let clearTargetChatId = null;
@@ -4272,6 +4275,13 @@ function escapeHtml(value) {
 // carrying the matched data-chat-action, not necessarily e.target itself
 // (a click can land on a child of the actionable element).
 const CHAT_ACTIONS = {
+    'messages-jump-bottom': () => {
+        const container = document.getElementById('messagesContainer');
+        if (container) container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+    },
+    'node-filters-toggle': () => toggleNodeFiltersPopover(),
+    'node-filter-chip-remove': (target) => removeNodeFilterChip(target.getAttribute('data-filter')),
+    'node-filters-reset': () => resetNodeFilters(),
     'notif-mark-read': (target) => {
         markBackendNotificationRead(target.getAttribute('data-id'), target);
     },
@@ -4305,18 +4315,17 @@ function truncateText(text, maxLen) {
     return text.substring(0, maxLen) + '...';
 }
 
-function toggleShowIgnored() {
-    const checkbox = document.getElementById('showIgnoredToggle');
-    showIgnored = checkbox ? checkbox.checked : false;
-    localStorage.setItem('mesh_show_ignored', showIgnored);
-    loadMessages();
-}
-
-function toggleShowFavorites() {
-    const checkbox = document.getElementById('showFavoritesToggle');
-    showFavorites = checkbox ? checkbox.checked : false;
-    localStorage.setItem('mesh_show_favorites', showFavorites);
-    loadMessages();
+// U1: message / chat-list timestamps. New messages carry `ts` (epoch seconds);
+// old ones only have the legacy "HH:MM:SS" string, which is shown as before.
+function formatChatTimestamp(ts, legacyTime) {
+    const views = window.MCViews;
+    const formatted = views
+        ? views.formatMessageTime(ts, {
+            locale: window.I18N && window.I18N.locale,
+            t: (key) => window.I18N.t(key),
+        })
+        : '';
+    return formatted || legacyTime || '';
 }
 
 // ============================================================
@@ -4432,7 +4441,7 @@ function renderChatItem(chat) {
         ? `channel${isDemo ? ' demo' : ''}`
         : `dm node-short-name${chat.favorite ? ' favorite' : ''}`;
     const lastMsg = chat.last_message || window.I18N.t('chat.no_messages_yet_short');
-    const time = chat.last_time || '';
+    const time = formatChatTimestamp(chat.last_ts, chat.last_time || '');
     const ignored = chat.ignored ? '🚫 ' : '';
     const favorite = chat.favorite ? '⚑ ' : '';
     const unreadBadge = (chat.unread || 0) > 0 ? `<span class="chat-unread-badge">${chat.unread}</span>` : '';
@@ -4533,10 +4542,10 @@ async function loadChatList() {
             : null;
 
         const previousActivitySignature = previousActiveChat
-            ? `${previousActiveChat.last_time || ''}|${previousActiveChat.last_message || ''}`
+            ? `${previousActiveChat.last_ts || previousActiveChat.last_time || ''}|${previousActiveChat.last_message || ''}`
             : '';
         const nextActivitySignature = nextActiveChat
-            ? `${nextActiveChat.last_time || ''}|${nextActiveChat.last_message || ''}`
+            ? `${nextActiveChat.last_ts || nextActiveChat.last_time || ''}|${nextActiveChat.last_message || ''}`
             : '';
 
         detectAndNotifyNewMessages(chatListCache, nextChatList);
@@ -5379,12 +5388,182 @@ function renderNodeCard(node) {
 
 // The favorite/ignored display filter, shared by the count summary and the list
 // render so the two can never drift.
+// U1: sort + filters for the Nodes list. The predicates live in
+// static/chat-views.js (unit-tested); this is the state, persistence and UI.
+const NODE_FILTERS_STORAGE_KEY = 'mesh_node_filters';
+
+function loadNodeFilterState() {
+    if (nodeFilterState) return nodeFilterState;
+    let raw = null;
+    try {
+        const stored = localStorage.getItem(NODE_FILTERS_STORAGE_KEY);
+        raw = stored ? JSON.parse(stored) : null;
+        if (!raw) {
+            // One-time carry-over of the two Tools-tab toggles this replaces.
+            const legacy = {};
+            if (localStorage.getItem('mesh_show_favorites') === 'true') legacy.favoritesOnly = true;
+            if (localStorage.getItem('mesh_show_ignored') === 'true') legacy.ignoredOnly = true;
+            raw = legacy;
+        }
+    } catch (error) {
+        raw = null;
+    }
+    nodeFilterState = window.MCViews.normalizeNodeFilters(raw);
+    return nodeFilterState;
+}
+
+function saveNodeFilterState() {
+    try {
+        localStorage.setItem(NODE_FILTERS_STORAGE_KEY, JSON.stringify(nodeFilterState));
+        localStorage.removeItem('mesh_show_favorites');
+        localStorage.removeItem('mesh_show_ignored');
+    } catch (error) {
+        // Private mode / blocked storage: the filters just do not persist.
+    }
+}
+
+function nodeHasKnownKey(node) {
+    // Same condition that decides whether the card says "Key unknown"
+    // (renderNodeCardKeyActions): anything other than an unknown trust state.
+    const store = targetStore();
+    const target = store && typeof store.getNode === 'function' ? store.getNode(node.node_id) : null;
+    return Boolean(target && ['ready', 'confirmation_required', 'changed'].includes(target.trust_state));
+}
+
+function nodeDistanceMeters(node) {
+    const position = node && node.position;
+    // Number(null) is 0 - a missing coordinate must not turn into (0, 0).
+    if (!position || position.latitude == null || position.longitude == null) return null;
+    const latitude = Number(position.latitude);
+    const longitude = Number(position.longitude);
+    const reference = getReferenceLocation();
+    if (
+        !Number.isFinite(latitude) || !Number.isFinite(longitude)
+        || !reference || !Number.isFinite(reference.latitude) || !Number.isFinite(reference.longitude)
+    ) {
+        return null;
+    }
+    return calculateDistanceMeters(reference.latitude, reference.longitude, latitude, longitude);
+}
+
 function computeDisplayNodes() {
-    const allNodes = nodeCache;
-    if (showFavorites && showIgnored) return allNodes.filter(n => n.favorite && n.ignored);
-    if (showFavorites) return allNodes.filter(n => n.favorite && !n.ignored);
-    if (showIgnored) return allNodes.filter(n => n.ignored);
-    return allNodes.filter(n => !n.ignored);
+    return window.MCViews.filterAndSortNodes(nodeCache, loadNodeFilterState(), {
+        now: Date.now() / 1000,
+        hasKnownKey: nodeHasKnownKey,
+        distance: nodeDistanceMeters,
+    });
+}
+
+const NODE_FILTER_LABEL_KEYS = {
+    favoritesOnly: 'nodes.filter_favorites_only',
+    ignoredOnly: 'nodes.filter_ignored_only',
+    hideOffline: 'nodes.filter_hide_offline',
+    directOnly: 'nodes.filter_direct_only',
+    hideInfrastructure: 'nodes.filter_hide_infrastructure',
+    knownKeyOnly: 'nodes.filter_known_key_only',
+};
+
+function refreshNodeListAfterFilterChange() {
+    saveNodeFilterState();
+    renderNodeFilterControls();
+    // Re-render from the already-loaded node cache (no refetch): the cards and
+    // the header count both derive from the filtered list.
+    const nodeCountEl = document.getElementById('nodeCount');
+    if (nodeCountEl) {
+        nodeCountEl.innerHTML = '🖥️ ' + escapeHtml(window.I18N.t('nodes.nodes_count', { count: computeDisplayNodes().length }));
+    }
+    renderSidebarNodeCards();
+}
+
+function renderNodeFilterControls() {
+    const state = loadNodeFilterState();
+    const count = window.MCViews.activeFilterCount(state);
+
+    const button = document.getElementById('nodeFiltersBtn');
+    if (button) {
+        button.classList.toggle('active', count > 0 || state.sort !== 'last_heard');
+        button.setAttribute('aria-expanded', document.getElementById('nodeFiltersPopover')?.hidden === false ? 'true' : 'false');
+    }
+    const badge = document.getElementById('nodeFiltersBadge');
+    if (badge) {
+        badge.textContent = count > 0 ? String(count) : '';
+        badge.hidden = count === 0;
+    }
+
+    const popover = document.getElementById('nodeFiltersPopover');
+    if (popover) {
+        popover.querySelectorAll('input[name="nodeSort"]').forEach(input => {
+            input.checked = input.value === state.sort;
+        });
+        popover.querySelectorAll('input[data-node-filter]').forEach(input => {
+            input.checked = Boolean(state[input.getAttribute('data-node-filter')]);
+        });
+    }
+
+    const chips = document.getElementById('nodeFilterChips');
+    if (chips) {
+        chips.innerHTML = window.MCViews.FILTER_FLAGS
+            .filter(flag => state[flag])
+            .map(flag => {
+                const label = escapeHtml(window.I18N.t(NODE_FILTER_LABEL_KEYS[flag]));
+                return `<button type="button" class="node-filter-chip" data-chat-action="node-filter-chip-remove" data-filter="${escapeHtml(flag)}" title="${escapeHtml(window.I18N.t('nodes.filter_chip_remove'))}">${label} <span aria-hidden="true">✕</span></button>`;
+            })
+            .join('');
+        chips.hidden = count === 0;
+    }
+}
+
+function setNodeFiltersPopoverOpen(open) {
+    const popover = document.getElementById('nodeFiltersPopover');
+    if (!popover) return;
+    popover.hidden = !open;
+    renderNodeFilterControls();
+}
+
+function toggleNodeFiltersPopover() {
+    const popover = document.getElementById('nodeFiltersPopover');
+    if (popover) setNodeFiltersPopoverOpen(popover.hidden);
+}
+
+function removeNodeFilterChip(flag) {
+    const state = loadNodeFilterState();
+    if (!window.MCViews.FILTER_FLAGS.includes(flag)) return;
+    state[flag] = false;
+    refreshNodeListAfterFilterChange();
+}
+
+function resetNodeFilters() {
+    nodeFilterState = window.MCViews.normalizeNodeFilters(null);
+    refreshNodeListAfterFilterChange();
+}
+
+function initializeNodeFilterControls() {
+    const popover = document.getElementById('nodeFiltersPopover');
+    if (popover) {
+        popover.addEventListener('change', event => {
+            const input = event.target;
+            const state = loadNodeFilterState();
+            if (input.name === 'nodeSort') {
+                state.sort = input.value;
+            } else if (input.hasAttribute('data-node-filter')) {
+                state[input.getAttribute('data-node-filter')] = input.checked;
+            } else {
+                return;
+            }
+            nodeFilterState = window.MCViews.normalizeNodeFilters(state);
+            refreshNodeListAfterFilterChange();
+        });
+    }
+    document.addEventListener('click', event => {
+        const open = document.getElementById('nodeFiltersPopover');
+        if (!open || open.hidden) return;
+        if (event.target.closest('#nodeFiltersPopover') || event.target.closest('#nodeFiltersBtn')) return;
+        setNodeFiltersPopoverOpen(false);
+    });
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') setNodeFiltersPopoverOpen(false);
+    });
+    renderNodeFilterControls();
 }
 
 // Applies the search term on top of computeDisplayNodes().
@@ -5463,13 +5642,11 @@ function renderSidebarNodeCards() {
         const slot = getNodeDetailSlot();
         if (slot && slot.parentNode) slot.parentNode.removeChild(slot);
         let message = `🔍 ${window.I18N.t('nodes.no_nodes_found')}`;
-        if (showFavorites && showIgnored) {
-            message = `⚑ ${window.I18N.t('nodes.no_favorite_ignored_nodes_found')}`;
-        } else if (showFavorites) {
-            message = `⚑ ${window.I18N.t('nodes.no_favorite_nodes_found')}`;
-        } else if (showIgnored) {
-            message = `🚫 ${window.I18N.t('nodes.no_ignored_nodes_found')}`;
+        const filters = loadNodeFilterState();
+        if (window.MCViews.activeFilterCount(filters) > 0) {
+            message = `🔍 ${window.I18N.t('nodes.no_nodes_match_filters')}`;
         }
+
         nodesList.innerHTML = `<div class="loading" style="padding: 16px;">${escapeHtml(message)}</div>`;
         nodeCardRenderCache = {};
         syncSelectedNodeCard();
@@ -5662,12 +5839,33 @@ function openChat(chatId, chatName, chatType, selectionSource = 'external') {
         setMapLayoutMode('off');
     }
 
+    // U1: the server resets a chat's unread count as soon as its messages are
+    // fetched, so the count that decides where the view lands (and the divider)
+    // must be read from the chat list NOW. Re-opening the chat that is already
+    // open keeps its state (the divider stays while the chat is open).
+    if (chatId !== currentChatId || chatViewState.chatId !== chatId) {
+        const listed = chatListCache.find(chat => chat.id === chatId);
+        const unreadCount = Math.max(0, Math.floor(Number(listed && listed.unread)) || 0);
+        chatViewState = {
+            chatId: chatId,
+            unreadCount: unreadCount,
+            anchorId: null,
+            pendingPlacement: true,
+            forceBottomOnce: false,
+        };
+        if (unreadCount > 0) {
+            // A cached first paint could be missing the newest unread messages.
+            delete messageCache[chatId];
+        }
+    }
+
     currentChatId = chatId;
     currentChatName = chatName || chatId;
     currentChatType = chatType || 'dm';
     if (currentChatType === 'dm') {
         nodeVisualSelectionCleared = false;
     }
+
     // PR 4 Finding 1: opening a chat becomes the shared store's selection, so
     // the same node/channel highlights across every workspace. A channel chat
     // is a `channel` target; a DM is a `node` target.
@@ -5886,6 +6084,7 @@ function buildReplyPayload(message) {
         node_id: String(message.node_id || ''),
         text: String(message.text || ''),
         time: String(message.time || ''),
+        ts: Number.isFinite(Number(message.ts)) ? Number(message.ts) : null,
         chat_id: String(message.chat_id || currentChatId || ''),
         chat_name: String(message.chat_name || currentChatName || '')
     };
@@ -5978,7 +6177,7 @@ function showMessageInfo() {
         [window.I18N.t('chat.chat_label'), message.chat_name || currentChatName || message.chat_id || '—'],
         [window.I18N.t('chat.chat_type_label'), message.chat_type || currentChatType || '—'],
         [window.I18N.t('chat.direction_label'), messageDirectionLabel(message)],
-        [window.I18N.t('chat.time_label'), message.time || '—'],
+        [window.I18N.t('chat.time_label'), formatChatTimestamp(message.ts, message.time) || '—'],
         [window.I18N.t('chat.message_id_label'), message.id || '—'],
         [window.I18N.t('chat.packet_id_label'), message.packet_id ?? '—']
     ];
@@ -6219,6 +6418,9 @@ function renderMessages(container, messages, chatId) {
     const signature = [
         normalizeMessageIdentity(activeLocalProfileId),
         normalizeMessageIdentity(activeLocalNodeId),
+        // The day changing (today -> yesterday labels) must repaint the bubbles.
+        new Date().toDateString(),
+        chatViewState.chatId === chatId ? `${chatViewState.anchorId || ''}:${chatViewState.unreadCount}` : '',
         ...messages.map(m =>
             [
                 m.id,
@@ -6230,6 +6432,7 @@ function renderMessages(container, messages, chatId) {
                 m.owner_node_id,
                 m.text,
                 m.time,
+                m.ts,
                 m.reply_to?.id,
                 m.reply_to?.packet_id,
                 m.reply_to?.text,
@@ -6245,6 +6448,33 @@ function renderMessages(container, messages, chatId) {
     }
     
     lastRenderedSignature[chatId] = signature;
+
+    // U1: decide where the view ends up BEFORE the DOM is replaced.
+    //   first render of an opened chat -> its first unread message (or bottom)
+    //   later renders                  -> bottom only if the user was already there
+    const viewState = chatViewState.chatId === chatId ? chatViewState : null;
+    const previousScrollTop = container.scrollTop;
+    const wasAtBottom = isMessagesScrolledToBottom(container);
+    let placement = wasAtBottom ? 'bottom' : 'keep';
+    if (viewState && viewState.forceBottomOnce) {
+        placement = 'bottom';
+        viewState.forceBottomOnce = false;
+    }
+    if (viewState && viewState.pendingPlacement && messages.length > 0) {
+        viewState.pendingPlacement = false;
+        const index = window.MCViews
+            ? window.MCViews.firstUnreadIndex(messages.length, viewState.unreadCount)
+            : -1;
+        viewState.anchorId = index >= 0 && messages[index] && messages[index].id
+            ? String(messages[index].id)
+            : null;
+        placement = viewState.anchorId ? 'anchor' : 'bottom';
+    }
+    if (viewState && viewState.anchorId && !messages.some(m => m && String(m.id) === viewState.anchorId)) {
+        // The anchored message was deleted - the divider has nothing to point at.
+        viewState.anchorId = null;
+    }
+
     renderedMessagesById = new Map(
         messages
             .filter(message => message && message.id)
@@ -6266,7 +6496,7 @@ function renderMessages(container, messages, chatId) {
             const isSystem = msg.kind === 'system' || msg.sender === 'SYSTEM ERROR';
             const sender = escapeHtml(msg.sender || window.I18N.t('nodes.unknown_node'));
             const text = escapeHtml(msg.text || '');
-            const time = escapeHtml(msg.time || '');
+            const time = escapeHtml(formatChatTimestamp(msg.ts, msg.time));
 
             const messageId = escapeHtml(String(msg.id || ''));
             const replyBlock = buildReplyBlockHtml(msg);
@@ -6279,8 +6509,12 @@ function renderMessages(container, messages, chatId) {
                         aria-haspopup="menu">⋮</button>
             ` : '';
 
+            const unreadDivider = (viewState && viewState.anchorId && String(msg.id) === viewState.anchorId)
+                ? `<div class="unread-divider" id="unreadDivider" role="separator"><span>${escapeHtml(window.I18N.t('chat.unread_divider', { count: viewState.unreadCount }))}</span></div>`
+                : '';
+
             if (isSystem) {
-                return `
+                return unreadDivider + `
                     <div class="message system" data-message-id="${messageId}">
                         <div class="bubble">
                             ${actionsButton}
@@ -6327,7 +6561,7 @@ function renderMessages(container, messages, chatId) {
                 }
             }
 
-            return `
+            return unreadDivider + `
                 <div class="message ${isMe ? 'me' : 'rx'}" data-message-id="${messageId}">
                     <div class="bubble">
                         ${actionsButton}
@@ -6338,14 +6572,54 @@ function renderMessages(container, messages, chatId) {
                     </div>
                 </div>
             `;
-        }).join('');
+        }).join('') + `<div class="messages-jump-anchor"><button type="button" class="messages-jump-bottom" data-chat-action="messages-jump-bottom" title="${escapeHtml(window.I18N.t('chat.jump_to_latest'))}" aria-label="${escapeHtml(window.I18N.t('chat.jump_to_latest'))}">↓</button></div>`;
     }
-    
-    initializeMessageActions();
 
-    setTimeout(() => {
+    initializeMessageActions();
+    bindMessagesScrollWatcher(container);
+
+    if (placement === 'anchor') {
+        const placeAtDivider = () => {
+            const divider = container.querySelector('#unreadDivider');
+            if (!divider) return;
+            container.scrollTop += divider.getBoundingClientRect().top - container.getBoundingClientRect().top - 12;
+            updateMessagesJumpButton(container);
+        };
+        placeAtDivider();
+        setTimeout(placeAtDivider, 50);
+    } else if (placement === 'bottom') {
         container.scrollTop = container.scrollHeight;
-    }, 50);
+        setTimeout(() => {
+            container.scrollTop = container.scrollHeight;
+            updateMessagesJumpButton(container);
+        }, 50);
+    } else {
+        container.scrollTop = previousScrollTop;
+    }
+    updateMessagesJumpButton(container);
+}
+
+// U1: "at the bottom" = within a few lines of it; only then do new incoming
+// messages keep the view pinned to the latest one.
+const MESSAGES_BOTTOM_THRESHOLD_PX = 48;
+
+function isMessagesScrolledToBottom(container) {
+    // A container that has not been laid out yet (or holds only a placeholder)
+    // counts as "at the bottom" so the very first paint lands on the latest message.
+    if (!container || container.clientHeight === 0) return true;
+    return container.scrollHeight - container.scrollTop - container.clientHeight <= MESSAGES_BOTTOM_THRESHOLD_PX;
+}
+
+function updateMessagesJumpButton(container) {
+    const button = container && container.querySelector('.messages-jump-bottom');
+    if (!button) return;
+    button.classList.toggle('visible', !isMessagesScrolledToBottom(container));
+}
+
+function bindMessagesScrollWatcher(container) {
+    if (!container || container.dataset.jumpWatcherBound === '1') return;
+    container.dataset.jumpWatcherBound = '1';
+    container.addEventListener('scroll', () => updateMessagesJumpButton(container), { passive: true });
 }
 
 function invalidateCache(chatId) {
@@ -6618,6 +6892,7 @@ function buildOptimisticMessage(clientId, chatId, chatType, chatName, text, repl
         owner_profile_id: activeLocalProfileId || '',
         text: text,
         time: TimeFormatter.formatTime(new Date()),
+        ts: Math.floor(Date.now() / 1000),
         chat_id: chatId,
         chat_type: chatType,
         chat_name: chatName,
@@ -6635,7 +6910,9 @@ async function submitOutgoingMessage(chatId, chatType, chatName, text, replyTo) 
     }
     pendingOptimisticMessages[chatId].set(clientId, tempMsg);
 
-    // Paint the bubble before any network round trip happens.
+    // Paint the bubble before any network round trip happens. The user's own
+    // send always scrolls to it, wherever they were in the history.
+    if (chatViewState.chatId === chatId) chatViewState.forceBottomOnce = true;
     renderChatIfActive(chatId);
     loadChatList();
 
@@ -12358,21 +12635,8 @@ async function init() {
     if (statusEl) statusEl.innerHTML = `⏳ ${escapeHtml(window.I18N.t('common.loading'))}`;
     
     try {
-        // Загружаем настройки из localStorage
-        const savedShowIgnored = localStorage.getItem('mesh_show_ignored');
-        if (savedShowIgnored === 'true') {
-            showIgnored = true;
-            const checkbox = document.getElementById('showIgnoredToggle');
-            if (checkbox) checkbox.checked = true;
-        }
-        
-        const savedShowFavorites = localStorage.getItem('mesh_show_favorites');
-        if (savedShowFavorites === 'true') {
-            showFavorites = true;
-            const checkbox = document.getElementById('showFavoritesToggle');
-            if (checkbox) checkbox.checked = true;
-        }
-        
+        initializeNodeFilterControls();
+
         // Загружаем все данные параллельно с таймаутами
         console.log('[INIT] Loading data in parallel...');
         

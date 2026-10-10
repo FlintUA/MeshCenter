@@ -403,6 +403,7 @@ def ingest_received_text(
             # when reply_to is None, so a reply is never silently
             # indistinguishable from a plain message.
             reply_id=event.reply_id,
+            rx_time=event.rx_time,
         )
     _count("text_stored")
 

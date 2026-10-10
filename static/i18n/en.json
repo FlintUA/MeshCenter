@@ -531,7 +531,10 @@
     "delete_all_dm_confirm": "Delete ALL Direct Message chats?\n\nThis will delete all DM chats and their messages.\nThe LongFast channel will remain.\n\nThis action cannot be undone!",
     "delete_all_dm_confirm2": "Are you sure?\n\nAll DM chats and messages will be permanently deleted!\n\nThis action cannot be undone!",
     "deleted_dm_count": "Deleted {count} DM chats",
-    "yes_delete_everything": "Yes, Delete Everything!"
+    "yes_delete_everything": "Yes, Delete Everything!",
+    "date_yesterday": "yesterday",
+    "unread_divider": "Unread messages ({count})",
+    "jump_to_latest": "Jump to latest message"
   },
   "camera": {
     "live_camera": "Live Camera",
@@ -1427,7 +1430,24 @@
     "type_label": "Type",
     "hide_map": "Hide Map",
     "node_label": "Node",
-    "selected_label": "Selected"
+    "selected_label": "Selected",
+    "filters_button_title": "Sort and filters",
+    "sort_heading": "Sort",
+    "sort_last_heard": "Last heard",
+    "sort_name": "Name A–Z",
+    "sort_distance": "Distance",
+    "sort_hops": "Hops",
+    "sort_favorites_first": "Favorites first",
+    "filters_heading": "Filters",
+    "filter_favorites_only": "Favorites only",
+    "filter_ignored_only": "Ignored only",
+    "filter_hide_offline": "Hide offline (not heard for 2 h)",
+    "filter_direct_only": "Heard directly only (0 hops)",
+    "filter_hide_infrastructure": "Hide infrastructure (routers, repeaters)",
+    "filter_known_key_only": "Known key only",
+    "filters_reset": "Reset",
+    "filter_chip_remove": "Remove this filter",
+    "no_nodes_match_filters": "No nodes match the active filters"
   },
   "activity": {
     "card_title": "Activity",

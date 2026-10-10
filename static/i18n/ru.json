@@ -531,7 +531,10 @@
     "delete_all_dm_confirm": "Удалить ВСЕ чаты личных сообщений?\n\nБудут удалены все чаты личных сообщений и их сообщения.\nКанал LongFast останется.\n\nЭто действие нельзя отменить!",
     "delete_all_dm_confirm2": "Вы уверены?\n\nВсе чаты личных сообщений и сообщения будут удалены безвозвратно!\n\nЭто действие нельзя отменить!",
     "deleted_dm_count": "Удалено чатов личных сообщений: {count}",
-    "yes_delete_everything": "Да, удалить всё!"
+    "yes_delete_everything": "Да, удалить всё!",
+    "date_yesterday": "вчера",
+    "unread_divider": "Непрочитанные сообщения ({count})",
+    "jump_to_latest": "К последнему сообщению"
   },
   "camera": {
     "live_camera": "Камера в реальном времени",
@@ -1427,7 +1430,24 @@
     "type_label": "Тип",
     "hide_map": "Скрыть карту",
     "node_label": "Узел",
-    "selected_label": "Выбран"
+    "selected_label": "Выбран",
+    "filters_button_title": "Сортировка и фильтры",
+    "sort_heading": "Сортировка",
+    "sort_last_heard": "Последняя активность",
+    "sort_name": "Имя А–Я",
+    "sort_distance": "Расстояние",
+    "sort_hops": "Хопы",
+    "sort_favorites_first": "Сначала избранные",
+    "filters_heading": "Фильтры",
+    "filter_favorites_only": "Только избранные",
+    "filter_ignored_only": "Только игнорируемые",
+    "filter_hide_offline": "Скрыть офлайн (не слышно более 2 ч)",
+    "filter_direct_only": "Только напрямую (0 хопов)",
+    "filter_hide_infrastructure": "Скрыть инфраструктуру (роутеры, репитеры)",
+    "filter_known_key_only": "Только с известным ключом",
+    "filters_reset": "Сбросить",
+    "filter_chip_remove": "Убрать этот фильтр",
+    "no_nodes_match_filters": "Нет узлов, подходящих под активные фильтры"
   },
   "activity": {
     "card_title": "Активность",

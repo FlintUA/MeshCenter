@@ -49,7 +49,7 @@ INDEX_HTML = REPO_ROOT / 'templates' / 'index.html'
 I18N_JS = REPO_ROOT / 'static' / 'i18n.js'
 
 # The single canonical cache-busting token for the current frontend release.
-CURRENT_VERSION = '20261005-h2d-notif-delegation'
+CURRENT_VERSION = '20261010-u1-messages-filters'
 
 # Browser assets changed in the current release. Every entry must be referenced
 # in index.html with CURRENT_VERSION (and, for i18n.js, its CATALOG_VERSION must
@@ -58,6 +58,8 @@ CURRENT_VERSION = '20261005-h2d-notif-delegation'
 CURRENT_ASSETS = {
     'static/i18n.js',
     'static/chat.js',
+    'static/chat-views.js',
+    'static/style-part4.css',
 }
 
 # `<link rel="stylesheet" href="{{ url_for('static', filename='X') }}?v=TOKEN">`

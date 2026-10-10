@@ -427,6 +427,12 @@ If a channel is missing or marked as unavailable, configure it on the radio with
 
 Select a conversation under `Direct Messages`, or select a node in the right panel and open its chat. Delivery depends on radio reachability and the mesh route.
 
+### Message times and unread messages
+
+Every message shows when it was received or sent: just the time for today (`18:36`), `yesterday 18:36`, the day and month for earlier this year (`08.10 18:36`) and the full date for older messages. The same format is used for the last-message time in the chat list. The format follows the interface language. Messages stored before this feature existed only have a time of day and are shown as before.
+
+When you open a chat that has unread messages, MeshCenter scrolls to the first unread one and shows an `Unread messages (N)` divider above it. The divider stays while the chat is open and disappears once you switch to another chat. A round `↓` button appears whenever you are not at the bottom and takes you back to the latest message. New incoming messages scroll the view only if you were already at the bottom; messages you send always scroll to the bottom.
+
 ### Replies and message actions
 
 Use the action button on a message to:
@@ -440,7 +446,7 @@ Deleting or clearing a message removes only the local stored copy. It cannot rec
 
 ### Favorites and ignored nodes
 
-Favorites make important contacts easier to find. Ignored nodes are hidden from the normal list but can be displayed from the Tools filters. Ignoring a node changes local presentation and does not reconfigure the remote radio.
+Favorites make important contacts easier to find. Ignored nodes are hidden from the normal node list and are shown only with the `Ignored only` filter (see [Sorting and filtering the node list](#sorting-and-filtering-the-node-list)). The Tools tab still shows how many favorites and ignored nodes you have. Ignoring a node changes local presentation and does not reconfigure the remote radio.
 
 ## 7. Files (MCAttach)
 
@@ -496,6 +502,15 @@ Use `Rescan Network` when recently heard nodes do not appear. The Tools tab also
 - Restart the Meshtastic listener
 
 Remote node actions can request telemetry, position or traceroute information. A request may fail when the node is offline, sleeping, out of range or not supported by its firmware configuration.
+
+### Sorting and filtering the node list
+
+The `⚙` button next to the node search opens the sort and filter menu; a badge on the button shows how many filters are active, and each active filter also appears as a chip under the search box (click a chip to remove it). Your choices are remembered in this browser.
+
+- **Sort** (one at a time): last heard (default), name A–Z, distance (nodes without a position come last), hops, favorites first.
+- **Filters** (all active filters must match): favorites only, ignored only, hide offline (not heard for more than 2 hours), heard directly only (0 hops), hide infrastructure (nodes with the ROUTER, ROUTER_LATE or REPEATER role), known key only (nodes whose file-transfer key is already known).
+
+Ignored nodes are hidden by default; turn on `Ignored only` to see them. Channels are never filtered, and the search box works together with the filters.
 
 ### Working with multiple radios
 

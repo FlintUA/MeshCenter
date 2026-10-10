@@ -531,7 +531,10 @@
     "delete_all_dm_confirm": "Видалити ВСІ чати особистих повідомлень?\n\nБудуть видалені всі чати особистих повідомлень та їхні повідомлення.\nКанал LongFast залишиться.\n\nЦю дію не можна скасувати!",
     "delete_all_dm_confirm2": "Ви впевнені?\n\nУсі чати особистих повідомлень та повідомлення будуть видалені безповоротно!\n\nЦю дію не можна скасувати!",
     "deleted_dm_count": "Видалено чатів особистих повідомлень: {count}",
-    "yes_delete_everything": "Так, видалити все!"
+    "yes_delete_everything": "Так, видалити все!",
+    "date_yesterday": "вчора",
+    "unread_divider": "Непрочитані повідомлення ({count})",
+    "jump_to_latest": "До останнього повідомлення"
   },
   "camera": {
     "live_camera": "Камера в реальному часі",
@@ -1427,7 +1430,24 @@
     "type_label": "Тип",
     "hide_map": "Приховати карту",
     "node_label": "Вузол",
-    "selected_label": "Вибрано"
+    "selected_label": "Вибрано",
+    "filters_button_title": "Сортування та фільтри",
+    "sort_heading": "Сортування",
+    "sort_last_heard": "Остання активність",
+    "sort_name": "Назва А–Я",
+    "sort_distance": "Відстань",
+    "sort_hops": "Хопи",
+    "sort_favorites_first": "Спочатку обрані",
+    "filters_heading": "Фільтри",
+    "filter_favorites_only": "Лише обрані",
+    "filter_ignored_only": "Лише ігноровані",
+    "filter_hide_offline": "Сховати офлайн (не чути понад 2 год)",
+    "filter_direct_only": "Лише напряму (0 хопів)",
+    "filter_hide_infrastructure": "Сховати інфраструктуру (роутери, репітери)",
+    "filter_known_key_only": "Лише з відомим ключем",
+    "filters_reset": "Скинути",
+    "filter_chip_remove": "Прибрати цей фільтр",
+    "no_nodes_match_filters": "Немає вузлів, що відповідають активним фільтрам"
   },
   "activity": {
     "card_title": "Активність",

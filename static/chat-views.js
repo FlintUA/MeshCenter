@@ -311,17 +311,14 @@
         return { left: left, top: top, maxHeight: availH };
     }
 
-    // How far to scroll a list so an item becomes visible: 0 when it already is,
-    // 'nearest' edge (with a small margin) when it is close, centered when it is
-    // more than a viewport away. All values are in the same coordinate space.
-    function scrollDeltaForItem(itemTop, itemBottom, viewTop, viewBottom) {
-        if (itemTop >= viewTop && itemBottom <= viewBottom) return 0;
-        const viewHeight = viewBottom - viewTop;
-        const gap = itemTop >= viewBottom ? itemTop - viewBottom
-            : (itemBottom <= viewTop ? viewTop - itemBottom : 0);
-        if (gap > viewHeight) return (itemTop + itemBottom) / 2 - (viewTop + viewBottom) / 2;
-        if (itemTop < viewTop) return itemTop - viewTop - 8;
-        return itemBottom - viewBottom + 8;
+    // A "scroll the entry into view" request that was already issued: is its
+    // smooth scroll still under way? Then a second pass (after a re-render) must
+    // leave it alone instead of restarting it. In progress = started recently
+    // and the list has actually moved since it started.
+    function followScrollInProgress(follow, nowMs, scrollTop) {
+        if (!follow || !follow.scrolled) return false;
+        if (nowMs - follow.scrolledAt > 1500) return false;
+        return Math.abs(scrollTop - follow.startTop) > 1;
     }
 
     // Single vs double click from successive click events. Markers get rebuilt
@@ -404,7 +401,7 @@
         nodeActionItems: nodeActionItems,
         referenceLocationItems: referenceLocationItems,
         placeContextMenu: placeContextMenu,
-        scrollDeltaForItem: scrollDeltaForItem,
+        followScrollInProgress: followScrollInProgress,
         classifyNodeClick: classifyNodeClick,
         createLongPressDetector: createLongPressDetector,
         chatListFollowAction: chatListFollowAction,

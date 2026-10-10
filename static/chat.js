@@ -5013,9 +5013,12 @@ function centerElementInContainerIfNeeded(element, container, forceCenter = fals
             elementCenterWithinContainer - (container.clientHeight / 2)
         );
 
+        // Smooth unless the user asked for reduced motion.
+        const reduceMotion = typeof window.matchMedia === 'function'
+            && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
         container.scrollTo({
             top: targetScrollTop,
-            behavior: 'smooth'
+            behavior: reduceMotion ? 'auto' : 'smooth'
         });
     }
 
@@ -5086,7 +5089,7 @@ function flushPendingSynchronizedScroll() {
 // list to scroll (the old selectNode(...,'nodes') call that did is gone), so
 // the entry got highlighted (syncSelectedChatItems) but stayed off-screen.
 // Every selection change now registers a one-shot "follow" request: the entry
-// is scrolled into view now (nearest edge, or centered when far) and once more
+// is scrolled into view now (same smooth, centered helper as the other direction) and once more
 // after the next chat-list render (a re-render or a not-yet-rendered entry
 // must not lose it); after that, or after 2.5 s, polls leave the list alone.
 // An entry that does not exist (a node without a DM) is simply never scrolled to.
@@ -5105,17 +5108,6 @@ function findChatListEntry(chatId) {
     return null;
 }
 
-function scrollContainerToShowItem(container, item) {
-    const c = container.getBoundingClientRect();
-    if (c.height <= 0) return false;   // list not laid out / hidden: nothing to scroll
-    const r = item.getBoundingClientRect();
-    const delta = window.MCViews.scrollDeltaForItem(r.top, r.bottom, c.top, c.bottom);
-    if (!delta) return false;
-    // Instant, never smooth: an in-flight smooth scroll is what re-renders cancel.
-    container.scrollTo({ top: Math.max(0, container.scrollTop + delta), behavior: 'instant' });
-    return true;
-}
-
 function ensureChatListFollow(afterRender = false) {
     if (!chatListFollow) return;
     const found = findChatListEntry(chatListFollow.id);
@@ -5124,8 +5116,14 @@ function ensureChatListFollow(afterRender = false) {
         chatListFollow, Date.now(), Boolean(found), visible, CHAT_LIST_FOLLOW_TTL_MS
     );
     if (action === 'scroll') {
-        scrollContainerToShowItem(found.container, found.item);
-        chatListFollow.scrolled = true;
+        // The same helper (smooth, centered) the chat list -> node list direction
+        // uses. The second pass must not restart a smooth scroll that is under way.
+        if (!window.MCViews.followScrollInProgress(chatListFollow, Date.now(), found.container.scrollTop)) {
+            chatListFollow.startTop = found.container.scrollTop;
+            chatListFollow.scrolledAt = Date.now();
+            centerElementInContainerIfNeeded(found.item, found.container);
+            chatListFollow.scrolled = true;
+        }
         if (afterRender) chatListFollow = null;
     } else if (action === 'done') {
         if (afterRender || chatListFollow.scrolled) chatListFollow = null;

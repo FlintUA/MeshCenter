@@ -127,7 +127,7 @@ def _telemetry(srv, *, sender=REMOTE, kind="device", metrics=None, radio=None, p
 
 
 def _stored(srv):
-    return [{k: v for k, v in m.items() if k not in ("id", "time")} for m in srv.messages]
+    return [{k: v for k, v in m.items() if k not in ("id", "time", "ts")} for m in srv.messages]
 
 
 # --- eligibility -------------------------------------------------------------------

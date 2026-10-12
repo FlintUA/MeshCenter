@@ -431,7 +431,7 @@ Select a conversation under `Direct Messages`, or select a node in the right pan
 
 Every message shows when it was received or sent: just the time for today (`18:36`), `yesterday 18:36`, the day and month for earlier this year (`08.10 18:36`) and the full date for older messages. The same format is used for the last-message time in the chat list. The format follows the interface language. Messages stored before this feature existed only have a time of day and are shown as before.
 
-When you open a chat that has unread messages, MeshCenter scrolls to the first unread one and shows an `Unread messages (N)` divider above it. The divider stays while the chat is open and disappears once you switch to another chat. A round `↓` button appears whenever you are not at the bottom and takes you back to the latest message. New incoming messages scroll the view only if you were already at the bottom; messages you send always scroll to the bottom.
+When you open a chat that has unread messages, MeshCenter scrolls to the first unread one and shows an `Unread messages (N)` divider above it. The divider stays while the chat is open and disappears once you switch to another chat. A round `↓` button appears whenever you are not at the bottom and takes you back to the latest message. New incoming messages scroll the view only if you were already at the bottom; messages you send always scroll to the bottom. A chat is marked read when you open it: the page tells the server explicitly (it is saved before the unread badge clears, so a restart never brings an old count back). Just having a chat open does not rewrite anything on the radio computer.
 
 ### Finding the sender's node
 

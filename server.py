@@ -2271,10 +2271,42 @@ def update_chat_last_message(chat_id, text, time_str, ts=None):
             chats[chat_id].pop("last_ts", None)
         save_chats()
 
+def mark_chat_read(chat_id):
+    """Set a chat's unread count to 0 and persist it BEFORE reporting success.
+
+    Returns (changed, ok):
+      (False, True)  - unknown chat, or already 0: nothing to do, NO write;
+      (True,  True)  - was > 0, now 0 and saved to disk;
+      (False, False) - the write failed: the old count is restored in memory so
+                       memory and disk agree (the chat is still unread).
+    """
+    with state_lock:
+        chat = chats.get(chat_id)
+        if not chat:
+            return False, True
+        previous = chat.get("unread", 0)
+        if not previous:
+            return False, True
+        chat["unread"] = 0
+        if save_chats():
+            return True, True
+        chat["unread"] = previous
+        return False, False
+
+
 def reset_unread(chat_id):
-    if chat_id in chats:
-        chats[chat_id]["unread"] = 0
-        save_chats()
+    """Mark a chat read as a side effect of another action (a send). A failed
+    write must never fail that action: the count is restored (see
+    mark_chat_read) and a warning is logged."""
+    changed, ok = mark_chat_read(chat_id)
+    if not ok:
+        print(f"[CHATS] Could not persist 'read' for {chat_id}; unread count restored", flush=True)
+        log_system_event(
+            "Could not save chat read state", "WARNING",
+            f"chat {chat_id}: write to chats.json failed; unread count restored",
+            source="chats",
+        )
+    return ok
 
 # ===== TELEMETRY FUNCTIONS =====
 def _float_or_none(value):
@@ -6305,6 +6337,7 @@ register_chat_routes(
     ensure_chat,
     add_message,
     reset_unread,
+    mark_chat_read,
     get_node_info,
     save_nodes,
     now,

@@ -5940,9 +5940,11 @@ function openChat(chatId, chatName, chatType, selectionSource = 'external') {
         setMapLayoutMode('off');
     }
 
-    // U1: the server resets a chat's unread count as soon as its messages are
-    // fetched, so the count that decides where the view lands (and the divider)
-    // must be read from the chat list NOW. Re-opening the chat that is already
+    // U1: the unread count that decides where the view lands (and the divider)
+    // is read from the chat list NOW. Since P2 fetching a chat's messages no
+    // longer resets it - the page marks the chat read afterwards with an
+    // explicit POST (maybeMarkChatRead) - but the count is still captured here
+    // first, before that POST can clear it. Re-opening the chat that is already
     // open keeps its state (the divider stays while the chat is open).
     if (chatId !== currentChatId || chatViewState.chatId !== chatId) {
         const listed = chatListCache.find(chat => chat.id === chatId);
@@ -7041,6 +7043,7 @@ async function loadChatMessages(chatId, options = {}) {
         }
 
         renderMessages(container, mergeOptimisticMessages(chatId, messages), chatId);
+        maybeMarkChatRead(chatId, messages, data.chat_info && data.chat_info.unread);
 
     } catch (error) {
         if (error && error.name === 'AbortError') {
@@ -7073,6 +7076,59 @@ async function loadChatMessages(chatId, options = {}) {
         if (currentMessageAbortController === controller) {
             currentMessageAbortController = null;
         }
+    }
+}
+
+// P2: reading is explicit. GET /api/messages never marks a chat read; after a
+// successful load of the open chat we POST /api/messages/mark_read, but only
+// when needed (the chat list still shows unread, or a newer incoming message
+// arrived), one request at a time per chat, and not again for 30 s after a
+// failure (the badge simply stays, which is then the true state).
+const chatMarkReadState = {};
+
+function maybeMarkChatRead(chatId, messages, serverUnread) {
+    // Hidden tab: nothing to mark - the visibilitychange reload does it later.
+    if (document.hidden || currentChatId !== chatId) return;
+    const views = window.MCViews;
+    // The unread count the server just returned with these messages (chat_info)
+    // is fresher than the chat list's 10 s-old copy - a list response that was
+    // already in flight when a mark-read finished would otherwise bring the old
+    // count back and cause one pointless extra POST. The list entry is the fallback.
+    const listed = chatListCache.find(chat => chat.id === chatId);
+    const knownUnread = Number.isFinite(Number(serverUnread)) ? Number(serverUnread) : (listed && listed.unread);
+    const decision = views.decideMarkRead(
+        chatMarkReadState[chatId] || views.newMarkReadState(),
+        {
+            unread: knownUnread,
+            newestRxKey: views.newestIncomingKey(messages),
+            now: Date.now(),
+        }
+    );
+    chatMarkReadState[chatId] = decision.state;
+    if (decision.mark) markChatRead(chatId, views.newestIncomingKey(messages));
+}
+
+async function markChatRead(chatId, newestRxKey) {
+    const views = window.MCViews;
+    chatMarkReadState[chatId] = views.markReadStarted(chatMarkReadState[chatId] || views.newMarkReadState());
+    try {
+        const response = await fetch('/api/messages/mark_read', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: chatId }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.ok) {
+            throw new Error(data.error_code || `HTTP ${response.status}`);
+        }
+        chatMarkReadState[chatId] = views.markReadSucceeded(chatMarkReadState[chatId], newestRxKey);
+        // Only now (confirmed and persisted) does the badge go.
+        const listed = chatListCache.find(chat => chat.id === chatId);
+        if (listed) listed.unread = 0;
+        if (data.changed) loadChatList();
+    } catch (error) {
+        console.warn('[CHAT] mark-read failed, not retrying this chat for 30 s:', error && error.message);
+        chatMarkReadState[chatId] = views.markReadFailed(chatMarkReadState[chatId], Date.now());
     }
 }
 

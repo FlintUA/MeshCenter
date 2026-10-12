@@ -41,6 +41,7 @@ def register_chat_routes(
     ensure_chat,
     add_message,
     reset_unread,
+    mark_chat_read,
     get_node_info,
     save_nodes,
     now,
@@ -447,11 +448,8 @@ def register_chat_routes(
                         or "SYSTEM" in m.get("sender", "")
                     ]
 
-                if chat_id in chats:
-                    chats[chat_id]["unread"] = 0
-                    save_chats()
-
-                chat_info = chats.get(chat_id, {})
+                # Read-only: GET never changes unread state (see mark_read below).
+                chat_info = dict(chats.get(chat_id, {}))
 
             return jsonify({
                 "chat_id": chat_id,
@@ -467,6 +465,28 @@ def register_chat_routes(
             "nodes": get_nodes_list()
         })
 
+
+    @app.route("/api/messages/mark_read", methods=["POST"])
+    @handle_errors
+    def api_mark_chat_read():
+        """Mark a chat read. POST (so _enforce_csrf applies) and persisted
+        before it is confirmed; GET /api/messages no longer does this."""
+        data = request.get_json(force=True, silent=True)
+        chat_id = str(data.get("chat_id", "")).strip() if isinstance(data, dict) else ""
+
+        if not chat_id or not (is_valid_node_id(chat_id) or is_channel_chat_id(chat_id)):
+            return jsonify({"ok": False, "error": "Invalid chat_id", "error_code": "invalid_chat_id"}), 400
+
+        changed, ok = mark_chat_read(chat_id)
+        if not ok:
+            return jsonify({
+                "ok": False,
+                "error": "Could not save - storage write failed",
+                "error_code": "storage_write_failed",
+            }), 500
+        if not changed:
+            return jsonify({"ok": True, "changed": False})
+        return jsonify({"ok": True, "changed": True, "unread": 0})
 
     @app.route("/api/messages/delete", methods=["POST"])
     @handle_errors

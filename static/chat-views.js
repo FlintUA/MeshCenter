@@ -397,7 +397,66 @@
         return entryFullyVisible ? 'done' : 'scroll';
     }
 
+    // ---------------- Mark-as-read decisions (P2) ----------------
+    // GET /api/messages no longer marks anything read; the page asks explicitly
+    // (POST /api/messages/mark_read) - but only when there is something to mark,
+    // never on every 2 s poll, once at a time per chat, and not again for a
+    // while after a failure. Pure state transitions so they can be tested.
+
+    const MARK_READ_BACKOFF_MS = 30000;
+
+    function newMarkReadState() {
+        // lastKey: key of the newest incoming message already accounted for
+        // (null until the first load of the chat); inFlight: one request per chat.
+        return { lastKey: null, inFlight: false, backoffUntil: 0 };
+    }
+
+    // The key of the newest incoming (kind "rx") message, '' when there is none.
+    function newestIncomingKey(messages) {
+        const list = Array.isArray(messages) ? messages : [];
+        for (let i = list.length - 1; i >= 0; i -= 1) {
+            const m = list[i];
+            if (m && m.kind === 'rx') return String(m.id || m.packet_id || i);
+        }
+        return '';
+    }
+
+    // -> { mark: boolean, state: newState }. input: { unread, newestRxKey, now }
+    function decideMarkRead(state, input) {
+        const s = Object.assign(newMarkReadState(), state || {});
+        const unread = Math.max(0, Math.floor(Number(input.unread)) || 0);
+        const key = String(input.newestRxKey || '');
+        if (s.inFlight) return { mark: false, state: s };
+        if (input.now < s.backoffUntil) return { mark: false, state: s };
+        if (unread > 0) return { mark: true, state: s };
+        if (s.lastKey === null) {
+            // First load of a chat that is already read: just remember where we are.
+            return { mark: false, state: Object.assign({}, s, { lastKey: key }) };
+        }
+        if (key && key !== s.lastKey) return { mark: true, state: s };
+        return { mark: false, state: s };
+    }
+
+    function markReadStarted(state) {
+        return Object.assign({}, state, { inFlight: true });
+    }
+
+    function markReadSucceeded(state, newestRxKey) {
+        return Object.assign({}, state, { inFlight: false, lastKey: String(newestRxKey || ''), backoffUntil: 0 });
+    }
+
+    function markReadFailed(state, now) {
+        return Object.assign({}, state, { inFlight: false, backoffUntil: now + MARK_READ_BACKOFF_MS });
+    }
+
     const api = {
+        newMarkReadState: newMarkReadState,
+        newestIncomingKey: newestIncomingKey,
+        decideMarkRead: decideMarkRead,
+        markReadStarted: markReadStarted,
+        markReadSucceeded: markReadSucceeded,
+        markReadFailed: markReadFailed,
+        MARK_READ_BACKOFF_MS: MARK_READ_BACKOFF_MS,
         nodeActionItems: nodeActionItems,
         referenceLocationItems: referenceLocationItems,
         placeContextMenu: placeContextMenu,

@@ -469,4 +469,61 @@ test('follow scroll: a smooth scroll that is moving is left alone; a stalled or 
     assert.equal(V.followScrollInProgress(null, 1300, 400), false);
 });
 
+// ------------------------------------------------ P2: mark-as-read decisions
+const rx = (id) => ({ id, kind: 'rx' });
+const me = (id) => ({ id, kind: 'me' });
+
+test('mark-read: newest incoming key ignores own and system messages', () => {
+    assert.equal(V.newestIncomingKey([rx('a'), me('b'), { id: 's', kind: 'system' }]), 'a');
+    assert.equal(V.newestIncomingKey([me('x')]), '');
+    assert.equal(V.newestIncomingKey(null), '');
+});
+
+test('mark-read: unread > 0 -> mark', () => {
+    const d = V.decideMarkRead(V.newMarkReadState(), { unread: 3, newestRxKey: 'a', now: 1000 });
+    assert.equal(d.mark, true);
+});
+
+test('mark-read: already read and nothing new -> never mark (first load only records a baseline)', () => {
+    let d = V.decideMarkRead(V.newMarkReadState(), { unread: 0, newestRxKey: 'a', now: 1000 });
+    assert.equal(d.mark, false);
+    assert.equal(d.state.lastKey, 'a');
+    for (let t = 3000; t <= 61000; t += 2000) {       // a minute of 2 s polls
+        d = V.decideMarkRead(d.state, { unread: 0, newestRxKey: 'a', now: t });
+        assert.equal(d.mark, false, `poll at ${t}`);
+    }
+});
+
+test('mark-read: a newer incoming message -> mark; an own message does not', () => {
+    const base = V.decideMarkRead(V.newMarkReadState(), { unread: 0, newestRxKey: 'a', now: 1000 }).state;
+    assert.equal(V.decideMarkRead(base, { unread: 0, newestRxKey: 'b', now: 3000 }).mark, true);
+    assert.equal(V.decideMarkRead(base, { unread: 0, newestRxKey: 'a', now: 3000 }).mark, false);
+    assert.equal(V.decideMarkRead(base, { unread: 0, newestRxKey: '', now: 3000 }).mark, false);
+});
+
+test('mark-read: after a confirmed mark the same message does not trigger another POST', () => {
+    let s = V.markReadStarted(V.newMarkReadState());
+    s = V.markReadSucceeded(s, 'b');
+    assert.equal(V.decideMarkRead(s, { unread: 0, newestRxKey: 'b', now: 5000 }).mark, false);
+    assert.equal(V.decideMarkRead(s, { unread: 0, newestRxKey: 'c', now: 5000 }).mark, true);
+});
+
+test('mark-read: parallel calls are deduplicated (one request in flight per chat)', () => {
+    const first = V.decideMarkRead(V.newMarkReadState(), { unread: 2, newestRxKey: 'a', now: 1000 });
+    assert.equal(first.mark, true);
+    const inFlight = V.markReadStarted(first.state);
+    for (let i = 0; i < 5; i += 1) {
+        assert.equal(V.decideMarkRead(inFlight, { unread: 2, newestRxKey: 'a', now: 1000 + i }).mark, false);
+    }
+});
+
+test('mark-read: after a failure, 30 s of back-off, then it may try again', () => {
+    const failed = V.markReadFailed(V.markReadStarted(V.newMarkReadState()), 10000);
+    assert.equal(failed.inFlight, false);
+    assert.equal(V.MARK_READ_BACKOFF_MS, 30000);
+    assert.equal(V.decideMarkRead(failed, { unread: 2, newestRxKey: 'a', now: 10001 }).mark, false);
+    assert.equal(V.decideMarkRead(failed, { unread: 2, newestRxKey: 'a', now: 39999 }).mark, false);
+    assert.equal(V.decideMarkRead(failed, { unread: 2, newestRxKey: 'a', now: 40000 }).mark, true);
+});
+
 console.log(`test_chat_views.mjs: ${passed} tests passed`);

@@ -7043,7 +7043,7 @@ async function loadChatMessages(chatId, options = {}) {
         }
 
         renderMessages(container, mergeOptimisticMessages(chatId, messages), chatId);
-        maybeMarkChatRead(chatId, messages);
+        maybeMarkChatRead(chatId, messages, data.chat_info && data.chat_info.unread);
 
     } catch (error) {
         if (error && error.name === 'AbortError') {
@@ -7086,15 +7086,20 @@ async function loadChatMessages(chatId, options = {}) {
 // failure (the badge simply stays, which is then the true state).
 const chatMarkReadState = {};
 
-function maybeMarkChatRead(chatId, messages) {
+function maybeMarkChatRead(chatId, messages, serverUnread) {
     // Hidden tab: nothing to mark - the visibilitychange reload does it later.
     if (document.hidden || currentChatId !== chatId) return;
     const views = window.MCViews;
+    // The unread count the server just returned with these messages (chat_info)
+    // is fresher than the chat list's 10 s-old copy - a list response that was
+    // already in flight when a mark-read finished would otherwise bring the old
+    // count back and cause one pointless extra POST. The list entry is the fallback.
     const listed = chatListCache.find(chat => chat.id === chatId);
+    const knownUnread = Number.isFinite(Number(serverUnread)) ? Number(serverUnread) : (listed && listed.unread);
     const decision = views.decideMarkRead(
         chatMarkReadState[chatId] || views.newMarkReadState(),
         {
-            unread: listed && listed.unread,
+            unread: knownUnread,
             newestRxKey: views.newestIncomingKey(messages),
             now: Date.now(),
         }

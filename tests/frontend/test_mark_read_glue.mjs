@@ -81,6 +81,17 @@ await test('opening a chat with unread POSTs once, with the chat id, and clears 
     assert.equal(sandbox.loadChatListCalls, 1);
 });
 
+await test('fresh server unread (chat_info) wins over a stale chat-list copy', async () => {
+    const { sandbox, calls } = build({ respond: () => okResponse() });
+    sandbox.maybeMarkChatRead('!a', [rx('m1')], 2);
+    await settle();
+    sandbox.chatListCache[0].unread = 2;                 // a stale list response lands after the POST
+    sandbox._now += 2000;
+    sandbox.maybeMarkChatRead('!a', [rx('m1')], 0);      // the messages response says: already read
+    await settle();
+    assert.equal(calls.length, 1);
+});
+
 await test('a minute of 2 s polls with nothing new sends no further POST', async () => {
     const { sandbox, calls } = build({ respond: () => okResponse() });
     sandbox.maybeMarkChatRead('!a', [rx('m1')]);

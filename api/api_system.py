@@ -78,7 +78,9 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
 
     @app.route("/api/system/action", methods=["POST"])
     def api_system_action():
-        data = request.get_json(silent=True) or {}
+        data = _json_object_or_none()
+        if data is None:
+            return jsonify(_INVALID_BODY[0]), 400
         action = str(data.get("action") or "").strip()
 
         allowed = {

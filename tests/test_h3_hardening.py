@@ -160,7 +160,7 @@ def test_wifi_accepts_good_ssid(client, route):
     assert client.calls == [(route, "Home WiFi-5G")]
 
 
-@pytest.mark.parametrize("path", ["/api/system/wifi/connect", "/api/system/wifi/forget", "/api/schedules", "/api/timers"])
+@pytest.mark.parametrize("path", ["/api/system/action", "/api/system/wifi/connect", "/api/system/wifi/forget", "/api/schedules", "/api/timers"])
 @pytest.mark.parametrize("body", ["[1,2]", "not json", '"str"'])
 def test_non_object_json_body_is_400_not_500(client, path, body):
     r = client.post(path, data=body, content_type="application/json")

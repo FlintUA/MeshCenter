@@ -4,7 +4,7 @@ import time
 
 from flask import jsonify, request
 
-from meshsrv import error_reporting, network_config
+from meshsrv import error_reporting, network_config, runtime_env
 from system_log import get_system_events, log_system_event
 from utils.helpers import get_device_model
 
@@ -66,6 +66,11 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         label = labels[action]
         time.sleep(1.0)
 
+        if action == "restart_meshcenter" and runtime_env.is_container():
+            # No systemd in a container - see runtime_env.request_self_restart().
+            runtime_env.request_self_restart()
+            return
+
         try:
             subprocess.run(command, check=True, capture_output=True, text=True, timeout=20)
         except Exception as exc:
@@ -89,6 +94,9 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
 
         if action not in allowed:
             return jsonify({"ok": False, "error": "Unsupported system action"}), 400
+
+        if action in ("reboot", "shutdown") and not runtime_env.capabilities()["can_reboot_host"]:
+            return jsonify(runtime_env.refusal("can_reboot_host")), 403
 
         device_model = get_device_model()
         detail = "Requested from MeshCenter web interface"
@@ -208,6 +216,24 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         except Exception:
             pass
 
+        result["runtime"] = runtime_env.capabilities()
+        if runtime_env.is_container():
+            # Inside a container hostname / OS / root-fs usage / model /
+            # thermal zone describe the container image, not the machine the
+            # user thinks of as "the host" - never present them as such.
+            # uptime / load / RAM come from the non-namespaced /proc and are
+            # the HOST's values; the UI labels them as host-observed.
+            for key in ("hostname", "os", "model", "cpu_temp"):
+                result[key] = None
+            result["disk_total_gb"] = result["disk_used_gb"] = result["disk_free_gb"] = None
+            try:
+                disk = shutil.disk_usage(os.environ.get("MESHCENTER_DATA_DIR", "/data"))
+                result["disk_total_gb"] = round(disk.total / (1024 ** 3), 1)
+                result["disk_used_gb"] = round(disk.used / (1024 ** 3), 1)
+                result["disk_free_gb"] = round(disk.free / (1024 ** 3), 1)
+            except Exception:
+                pass
+
         return jsonify(result)
 
     @app.route("/api/system/top-processes")
@@ -223,6 +249,11 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         background loop, matching the "diagnostics you look at occasionally"
         budget this endpoint is for (see the frontend's on-open-only polling).
         """
+        if runtime_env.is_container():
+            # psutil only sees this container's processes - "system-wide"
+            # would be a lie here.
+            return jsonify(runtime_env.refusal("has_host_metrics")), 403
+
         import psutil
 
         SAMPLE_WINDOW_S = 0.35
@@ -264,6 +295,8 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
 
     @app.route("/api/system/wifi/scan")
     def api_system_wifi_scan():
+        if not runtime_env.capabilities()["can_manage_wifi"]:
+            return jsonify(runtime_env.refusal("can_manage_wifi")), 403
         result = {"ok": True, "networks": []}
         try:
             scan_result = network_config.scan()
@@ -348,6 +381,8 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
 
     @app.route("/api/system/wifi/connect", methods=["POST"])
     def api_system_wifi_connect():
+        if not runtime_env.capabilities()["can_manage_wifi"]:
+            return jsonify(runtime_env.refusal("can_manage_wifi")), 403
         data = _json_object_or_none()
         if data is None:
             return jsonify(_INVALID_BODY[0]), 400
@@ -370,6 +405,8 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
 
     @app.route("/api/system/wifi/forget", methods=["POST"])
     def api_system_wifi_forget():
+        if not runtime_env.capabilities()["can_manage_wifi"]:
+            return jsonify(runtime_env.refusal("can_manage_wifi")), 403
         data = _json_object_or_none()
         if data is None:
             return jsonify(_INVALID_BODY[0]), 400
@@ -384,6 +421,10 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
 
     @app.route("/api/system/network")
     def api_system_network():
+        if not runtime_env.capabilities()["can_manage_wifi"]:
+            # Also skips the `ping 8.8.8.8` reachability probe, and the
+            # bridge-network IP it would otherwise show as "the" address.
+            return jsonify(runtime_env.refusal("can_manage_wifi")), 403
         result = {"ssid": None, "signal_percent": None, "rssi_dbm": None, "ip": None, "gateway": None, "internet": False}
         try:
             result["ssid"] = subprocess.check_output(["iwgetid", "-r"], text=True).strip()

@@ -113,6 +113,8 @@ CORE_WHITELIST=(
 #     added, since nothing else in the closure happened to pull it in)
 #   meshsrv.node_time_sync -> meshsrv.time_service -> hardware.rtc_service
 #     -> hardware.i2c_service
+#   meshsrv.time_service -> meshsrv.runtime_env (Docker support: container-mode
+#     clock trust / TZ; stdlib only)
 # All of the above are MIT/stdlib-only (no meshtastic import, no native/
 # GPL dependency at module level - hardware/i2c_service.py and
 # rtc_service.py only shell out via subprocess) - confirmed by direct
@@ -137,6 +139,7 @@ ADAPTER_WHITELIST=(
     meshsrv/node_time_sync.py
     meshsrv/serial_port_supervisor.py
     meshsrv/serial_reconnect.py
+    meshsrv/runtime_env.py
     meshsrv/time_service.py
     hardware/__init__.py
     hardware/rtc_service.py

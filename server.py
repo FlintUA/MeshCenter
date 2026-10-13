@@ -84,8 +84,10 @@ from meshsrv import inbound_worker as inbound_worker_module
 from meshsrv.adapter_ipc_client import AdapterIPCTransport, AdapterSupervisor
 from meshsrv.transport_router import TransportRouter
 from meshsrv.schedule_engine import start as start_schedule_engine
+from meshsrv import schedule_engine as _schedule_engine_module
 from meshsrv.attachments import mca_runtime
 from meshsrv import update_service
+from meshsrv import runtime_env
 from api.api_camera import register_camera_routes
 from api.api_camera_manager import register_camera_manager_routes
 from api.api_chat import register_chat_routes
@@ -229,6 +231,13 @@ def resolve_app_version(project_dir, fallback="dev"):
     except Exception as error:
         print(f"[VERSION] git describe --always failed: {error}", flush=True)
 
+    # A container image has no .git (excluded by .dockerignore); the build
+    # bakes the version into MESHCENTER_VERSION. Consulted only after git, so
+    # a native checkout never reaches it.
+    baked = os.environ.get(runtime_env.VERSION_ENV, "").strip()
+    if baked:
+        return baked[1:] if baked.startswith("v") else baked
+
     return fallback
 
 APP_VERSION = resolve_app_version(PROJECT_DIR)
@@ -309,6 +318,7 @@ if not os.path.exists(DATA_DIR):
 # profile happens to be active.
 UPDATE_CHECK_FILE = os.path.join(DATA_DIR, "update_check.json")
 update_service.configure(UPDATE_CHECK_FILE)
+_schedule_engine_module.configure_storage(DATA_DIR)
 
 # Persistent identity of this MeshCenter installation. This stage only
 # normalizes and stores accepted identity data; it does not switch radios.
@@ -1009,6 +1019,15 @@ register_system_routes(app, get_cpu_temperature=lambda: read_cpu_temperature(), 
 register_cpu_history_routes(app, CPU_HISTORY_FILE)
 register_updates_routes(app, resolve_version=lambda: APP_VERSION, project_dir=PROJECT_DIR, handle_errors=handle_errors)
 register_attachments_routes(app, handle_errors)
+
+
+@app.route("/healthz", methods=["GET"])
+def healthz():
+    """Liveness for container HEALTHCHECK / monitors. Unauthenticated (listed
+    in api_auth's _EXEMPT_PATHS), GET only, independent of radio state and of
+    any I/O, and returns nothing but a constant - no version, no paths, no
+    node data. Radio status stays on the authenticated /api/radio_health."""
+    return jsonify({"status": "ok"})
 
 # Constructing DisplayManager (and the driver it wraps) never touches
 # SPI/GPIO by itself - only display_manager.start(), called later from the
@@ -6446,7 +6465,10 @@ register_weather_routes(
     app,
     weather_manager,
     resolve_weather_location,
-    secrets_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "weather_secrets.py"),
+    secrets_path=os.path.join(
+        os.environ.get(runtime_env.CONFIG_DIR_ENV, "").strip() or os.path.dirname(os.path.abspath(__file__)),
+        "weather_secrets.py",
+    ),
 )
 
 register_node_tools_routes(
@@ -6656,6 +6678,7 @@ def index():
         "index.html",
         app_version=APP_VERSION,
         ui_language=ui_language,
+        runtime_capabilities=json.dumps(runtime_env.capabilities()),
     )
 
 @app.route("/api/sensors")
@@ -6904,6 +6927,11 @@ def api_devices_dashboard():
 def _restart_meshcenter_after_profile_switch():
     """Restart the service after the activation response reaches the browser."""
     time.sleep(1.2)
+    if runtime_env.is_container():
+        # No systemd in a container: SIGTERM this gunicorn worker, the
+        # master respawns a fresh one (see runtime_env.request_self_restart).
+        runtime_env.request_self_restart()
+        return
     try:
         subprocess.run(
             ["sudo", "-n", "/usr/bin/systemctl", "restart", "meshcenter.service"],

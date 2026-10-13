@@ -39,7 +39,7 @@ MIN_PASSWORD_LENGTH = 12
 # it is the only page a not-yet-configured instance can show (see
 # needs_setup()) - once setup is done the route itself redirects away.
 _EXEMPT_PATH_PREFIXES = ("/static/",)
-_EXEMPT_PATHS = ("/login", "/setup")
+_EXEMPT_PATHS = ("/login", "/setup", "/healthz")
 
 # Project-wide CSRF (docs/attachments/internal-rest-api.md §2.3): one
 # session-bound token, minted with secrets, sent back as an X-CSRF-Token

@@ -16,7 +16,17 @@ import logging
 # No timestamp/PID in the format - journald (StandardOutput=journal in
 # deploy/meshcenter.service) already stamps every line, so repeating that
 # here would just duplicate it in `journalctl` output.
-logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+#
+# Container mode (MESHCENTER_RUNTIME=container, no journald): `docker logs`
+# only timestamps lines if asked, and the log driver may not at all, so the
+# format carries its own time and PID.
+import os as _os
+
+if _os.environ.get("MESHCENTER_RUNTIME", "").strip().lower() == "container":
+    _LOG_FORMAT = "%(asctime)s [%(process)d] %(levelname)s %(name)s: %(message)s"
+else:
+    _LOG_FORMAT = "%(levelname)s %(name)s: %(message)s"
+logging.basicConfig(level=logging.INFO, format=_LOG_FORMAT)
 
 from server import app, start_runtime
 

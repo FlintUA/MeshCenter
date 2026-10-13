@@ -16,6 +16,7 @@ from __future__ import annotations
 from flask import jsonify
 
 from hardware import hardware_config, i2c_service, rtc_service
+from meshsrv import runtime_env
 
 DEFAULT_RTC_MODEL = "ds3231"
 
@@ -43,6 +44,8 @@ def register_hardware_i2c_routes(app, handle_errors, data_dir: str):
     @app.route("/api/hardware/i2c/enable", methods=["POST"])
     @handle_errors
     def api_hardware_i2c_enable():
+        if not runtime_env.capabilities()["can_edit_hardware_config"]:
+            return jsonify(runtime_env.refusal("can_edit_hardware_config")), 403
         result = hardware_config.enable_i2c(data_dir)
         if not result.get("ok"):
             return jsonify({"ok": False, "error": result.get("reason", "enable-i2c failed")}), 500
@@ -70,6 +73,8 @@ def register_hardware_i2c_routes(app, handle_errors, data_dir: str):
     @app.route("/api/hardware/rtc/configure", methods=["POST"])
     @handle_errors
     def api_hardware_rtc_configure():
+        if not runtime_env.capabilities()["can_edit_hardware_config"]:
+            return jsonify(runtime_env.refusal("can_edit_hardware_config")), 403
         result = hardware_config.configure_rtc(data_dir, DEFAULT_RTC_MODEL)
         if not result.get("ok"):
             return jsonify({"ok": False, "error": result.get("reason", "configure-rtc failed")}), 500

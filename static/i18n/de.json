@@ -828,6 +828,7 @@
     "connection_disconnected": "Getrennt"
   },
   "system": {
+    "container_mode_notice": "Läuft in einem Container. Host-Funktionen (WLAN, Netzwerk, Neustart, Herunterfahren, Updates, Hardware-Einrichtung) sind deaktiviert. Uptime, Last und RAM sind Werte des Hosts; der Speicher zeigt das Datenvolume. Zum Aktualisieren das Image neu bauen.",
     "title": "System",
     "subtitle": "Geräte- und Netzwerkstatus",
     "close": "System schließen",

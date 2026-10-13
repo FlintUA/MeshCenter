@@ -12,19 +12,34 @@ from meshsrv.time_service import is_trusted, get_status as get_time_status
 from meshsrv.notification_service import push_notification
 
 SCHEDULES_FILE = Path('data/schedules.json')
+# Pre-DK1 location: CWD-relative, only correct when DATA_DIR happened to be
+# <cwd>/data. Kept as a READ fallback so an existing file is never orphaned.
+LEGACY_SCHEDULES_FILE = Path('data/schedules.json')
 _lock          = threading.Lock()
 _running       = False
 
 DAY_MAP = {0: 'mon', 1: 'tue', 2: 'wed', 3: 'thu', 4: 'fri', 5: 'sat', 6: 'sun'}
 
 
+def configure_storage(data_dir) -> None:
+    """Point schedules.json at the configured DATA_DIR (called once by
+    server.py). With the default layout (DATA_DIR == <cwd>/data) this is the
+    very same path as before."""
+    global SCHEDULES_FILE
+    SCHEDULES_FILE = Path(data_dir) / 'schedules.json'
+
+
 def _load() -> list:
-    if not SCHEDULES_FILE.exists():
+    source = SCHEDULES_FILE
+    if not source.exists() and LEGACY_SCHEDULES_FILE.exists():
+        # Read-only fallback; the next _save() writes to SCHEDULES_FILE.
+        source = LEGACY_SCHEDULES_FILE
+    if not source.exists():
         SCHEDULES_FILE.parent.mkdir(parents=True, exist_ok=True)
         SCHEDULES_FILE.write_text('[]')
         return []
     try:
-        data = json.loads(SCHEDULES_FILE.read_text())
+        data = json.loads(source.read_text())
         return [_normalize(r) for r in data] if isinstance(data, list) else []
     except Exception as e:
         print(f"[Schedule] Load error: {e}", flush=True)

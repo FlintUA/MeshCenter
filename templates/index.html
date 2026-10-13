@@ -5,12 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="app-version" content="{{ app_version }}">
     <meta name="csrf-token" content="{{ csrf_token }}">
+    <meta name="runtime-capabilities" content="{{ runtime_capabilities }}">
     <title>MeshCenter</title>
     <!-- MeshCenter build: stage2c7-4-unified-popovers-20260725 -->
     <link rel="stylesheet" href="{{ url_for('static', filename='style-part1.css') }}?v=20260917-nodecard-optionc-followup">
     <link rel="stylesheet" href="{{ url_for('static', filename='style-part2.css') }}?v=20260917-nodecard-optionc-followup">
     <link rel="stylesheet" href="{{ url_for('static', filename='style-part3.css') }}?v=20260917-nodecard-optionc-followup">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part4.css') }}?v=20261012-p2-mark-read">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part4.css') }}?v=20261013-docker-support">
     <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=20260917-nodecard-optionc-followup">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -793,6 +794,8 @@
                         </div>
                     </div>
 
+                    <div id="containerModeNotice" class="system-card" style="display:none;"></div>
+
                     <div class="system-layout">
 
                         <!-- ================= LEFT COLUMN ================= -->
@@ -800,7 +803,7 @@
                         <div class="system-left-column">
 
                             <!-- Network -->
-                            <div class="system-card">
+                            <div class="system-card" data-runtime-hide="wifi">
                                 <div class="system-card-title">🌐 <span data-i18n="system.network">Network</span></div>
 
                                 <div class="system-row">
@@ -847,7 +850,7 @@
 
                             <!-- Wi-Fi Manager -->
 
-                            <div class="system-card">
+                            <div class="system-card" data-runtime-hide="wifi">
 
                                 <div class="system-card-title">
                                     📶 <span data-i18n="system.wifi_manager">Wi-Fi Manager</span>
@@ -2403,7 +2406,8 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="/static/chart.umd.min.js"></script>
-<script src="/static/i18n.js?v=20261012-p2-mark-read"></script>
+<script src="/static/i18n.js?v=20261013-docker-support"></script>
+<script src="/static/runtime-caps.js?v=20261013-docker-support"></script>
 <script>
     // Server already resolved "auto" (stored ui.language, or an
     // Accept-Language guess) to a concrete locale for <html lang> above —
@@ -2413,17 +2417,17 @@
     // weather.js is untouched until those call I18N.t()/plural() directly.
     window.I18N.init("{{ ui_language }}").then(() => window.I18N.applyStaticDom());
 </script>
-<script src="{{ url_for('static', filename='csrf.js') }}?v=20261012-p2-mark-read"></script>
+<script src="{{ url_for('static', filename='csrf.js') }}?v=20261013-docker-support"></script>
 <script src="{{ url_for('static', filename='chat-emoji.js') }}?v=20260821-domain-split"></script>
 <script src="{{ url_for('static', filename='chat-photo.js') }}?v=20260821-domain-split"></script>
 <script src="{{ url_for('static', filename='chat-telemetry.js') }}?v=20261002-h1b-telemetry-correctness"></script>
-<script src="{{ url_for('static', filename='chat-camera.js') }}?v=20261012-p2-mark-read"></script>
-<script src="{{ url_for('static', filename='chat-map.js') }}?v=20261012-p2-mark-read"></script>
+<script src="{{ url_for('static', filename='chat-camera.js') }}?v=20261013-docker-support"></script>
+<script src="{{ url_for('static', filename='chat-map.js') }}?v=20261013-docker-support"></script>
 <script src="{{ url_for('static', filename='chat-updates-security.js') }}?v=20261001-h1a2-auth-version"></script>
 <script src="{{ url_for('static', filename='targets.js') }}?v=20260911-pr4-shared-target-model"></script>
-<script src="/static/files.js?v=20261012-p2-mark-read"></script>
-<script src="{{ url_for('static', filename='chat-views.js') }}?v=20261012-p2-mark-read"></script>
-<script src="/static/chat.js?v=20261012-p2-mark-read"></script>
+<script src="/static/files.js?v=20261013-docker-support"></script>
+<script src="{{ url_for('static', filename='chat-views.js') }}?v=20261013-docker-support"></script>
+<script src="/static/chat.js?v=20261013-docker-support"></script>
 <script src="/static/media.js?v=20260818-xss-fix-delete-onclick"></script>
 <script src="/static/weather.js?v=20260815-weather-provider"></script>
 

@@ -4,7 +4,7 @@ import time
 
 from flask import jsonify
 
-from meshsrv import update_service
+from meshsrv import runtime_env, update_service
 
 
 def register_updates_routes(app, resolve_version, project_dir, handle_errors):
@@ -36,11 +36,15 @@ def register_updates_routes(app, resolve_version, project_dir, handle_errors):
     @app.route("/api/updates/preflight")
     @handle_errors
     def api_updates_preflight():
+        if not runtime_env.capabilities()["can_self_update"]:
+            return jsonify(runtime_env.refusal("can_self_update")), 403
         return jsonify(update_service.git_preflight(project_dir))
 
     @app.route("/api/updates/apply", methods=["POST"])
     @handle_errors
     def api_updates_apply():
+        if not runtime_env.capabilities()["can_self_update"]:
+            return jsonify(runtime_env.refusal("can_self_update")), 403
         preflight = update_service.git_preflight(project_dir)
         if not preflight.get("ok"):
             return jsonify({

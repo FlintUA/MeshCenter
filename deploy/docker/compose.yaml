@@ -1,0 +1,42 @@
+# MeshCenter on Docker (Synology Container Manager or any Docker host).
+# Place next to this file: ./config  ./data  and .env (from .env.example).
+# Build locally from a checkout of the repository:
+#   docker compose build   (context is the repository root, see below)
+name: meshcenter
+
+services:
+  meshcenter:
+    container_name: meshcenter
+    image: meshcenter:${MESHCENTER_VERSION:-dev}
+    build:
+      # Compose-file location is deploy/docker/ in the repo; when you copy
+      # this file to /volume2/docker/meshcenter/, point `context` at the
+      # checkout (e.g. /volume2/docker/meshcenter/src).
+      context: ../..
+      args:
+        MESHCENTER_VERSION: ${MESHCENTER_VERSION:-dev}
+        PUID: ${PUID:-1026}
+        PGID: ${PGID:-100}
+    user: "${PUID:-1026}:${PGID:-100}"
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      TZ: ${TZ:-UTC}
+      MESHCENTER_TRUST_HOST_CLOCK: ${MESHCENTER_TRUST_HOST_CLOCK:-0}
+      MESHCENTER_INSTANCE_NAME: ${MESHCENTER_INSTANCE_NAME:-}
+    volumes:
+      - ./config:/config
+      - ./data:/data
+    hostname: meshcenter
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:5000/healthz', timeout=4).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 150s

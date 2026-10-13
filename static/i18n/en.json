@@ -828,6 +828,7 @@
     "connection_disconnected": "Disconnected"
   },
   "system": {
+    "container_mode_notice": "Running in a container. Host-level controls (Wi-Fi, network, reboot, shutdown, updates, hardware setup) are disabled. Uptime, load and RAM shown here are the host's; disk shows the data volume. To update, rebuild the image.",
     "title": "System",
     "subtitle": "Device and network status",
     "close": "Close System",

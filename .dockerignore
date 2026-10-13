@@ -10,6 +10,9 @@
 venv
 **/venv
 data
+deploy/docker/data
+deploy/docker/config
+deploy/docker/.env
 config.py
 weather_secrets.py
 *.log

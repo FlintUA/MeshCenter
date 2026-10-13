@@ -12,9 +12,12 @@ APP_PORT = 5000
 
 # The radio is TCP-only in the container and is configured in the web UI
 # (Node Manager); these are only the bootstrap placeholders the app expects.
+# LOCAL_NODE_ID must be syntactically valid ("!" + 8 hex digits) or the
+# profile store refuses to start; !00000000 means "no radio accepted yet" and
+# creates an empty placeholder profile, left alone once you accept your radio.
 MESHTASTIC_CMD = ""            # empty = use the adapter venv's CLI
 MESHTASTIC_PORT = "/dev/ttyACM0"
-LOCAL_NODE_ID = "!xxxxxxxx"
+LOCAL_NODE_ID = "!00000000"
 LOCAL_NODE_NAME = "My Meshtastic"
 INSTANCE_NAME = os.environ.get("MESHCENTER_INSTANCE_NAME", "")
 
@@ -29,8 +32,8 @@ CHANNEL_CHAT_ID = "channel"
 CHANNEL_CHAT_NAME = "LongFast"
 MCA_CONTROL_CHANNEL_INDEX = None
 
-KNOWN_NODES = {"!xxxxxxxx": "My Node"}
-KNOWN_NODE_INFO = {"!xxxxxxxx": {"short_name": "MYND", "hw_model": "RAK4631"}}
+KNOWN_NODES = {"!00000000": "My Node"}
+KNOWN_NODE_INFO = {"!00000000": {"short_name": "MYND", "hw_model": "RAK4631"}}
 
 # API keys live in /config/weather_secrets.py (written by the web UI).
 try:

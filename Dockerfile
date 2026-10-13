@@ -39,7 +39,7 @@ ENV MESHCENTER_RUNTIME=container \
     PIP_NO_CACHE_DIR=1 \
     HOME=/data/.home \
     TZ=UTC \
-    PATH=/opt/core-venv/bin:/usr/local/bin:/usr/bin:/bin
+    PATH=/opt/core-venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Debian point-release pins break rebuilds; only tini and tzdata are installed.
 # hadolint ignore=DL3008
@@ -72,7 +72,13 @@ RUN ! /opt/core-venv/bin/python -c "import meshtastic" 2>/dev/null \
  && /app/adapters/meshtastic/venv/bin/python -c "import sys; sys.exit(1 if '/config' in sys.path else 0)" \
  && /opt/core-venv/bin/python -c "import sys; sys.exit(0 if sys.path[-1] == '/config' else 1)" \
  && test -x /app/adapters/meshtastic/venv/bin/meshtastic \
- && chmod 0755 /app/deploy/docker/entrypoint.sh
+ && chmod 0755 /app/deploy/docker/entrypoint.sh \
+ && test ! -e /app/data \
+ && test ! -e /app/deploy/docker/data \
+ && test ! -e /app/deploy/docker/config \
+ && test ! -e /app/deploy/docker/.env \
+ && test ! -e /app/config.py \
+ && test ! -e /app/weather_secrets.py
 
 USER ${PUID}:${PGID}
 EXPOSE 5000

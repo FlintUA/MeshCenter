@@ -1,9 +1,8 @@
 # MeshCenter on Docker
 
-> **Status: first implementation, not yet run on a real Docker host.** The
-> image was written and statically checked (tests, compose/Dockerfile review)
-> but has not been built or started yet — that is the next stage. There is
-> **no public image**; you build it yourself from this repository.
+> **Status:** built and smoke-tested with Docker Desktop (linux/amd64) against
+> an unreachable and a fake TCP radio; **not yet run on the Synology NAS**.
+> There is **no public image**; you build it yourself from this repository.
 
 ## What is supported
 
@@ -87,9 +86,12 @@ radio **by TCP**, enter the node's IP and port (default 4403) and accept it.
 The service restarts itself (the container keeps running). Enable Wi-Fi/TCP on
 the node first and give it a fixed IP or DHCP reservation.
 
+Before you accept a radio, MeshCenter shows an empty placeholder profile
+`00000000` (the "no radio yet" ID in `config.py`); it is left alone afterwards.
+
 If the radio is unreachable MeshCenter still starts and shows it as
-disconnected; it keeps retrying in the background. Startup can take up to
-about 80 seconds in that case before the web page answers — the container
+disconnected; it keeps retrying in the background. Startup takes about
+40 seconds in that case (measured) before the web page answers — the container
 health check allows for it.
 
 ## Time

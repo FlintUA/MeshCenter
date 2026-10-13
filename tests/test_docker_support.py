@@ -185,6 +185,18 @@ def test_host_operations_refused_in_container(server_module, container, monkeypa
     assert payload["error_code"] == "not_available_in_container"
 
 
+def test_saved_wifi_list_never_queried_in_container(server_module, container, monkeypatch):
+    from meshsrv import network_config
+
+    def boom(*_a, **_k):
+        pytest.fail("network_config was called in container mode")
+
+    monkeypatch.setattr(network_config, "list_wifi_connections", boom)
+    monkeypatch.setattr(network_config, "scan", boom)
+    client = _csrf_client(server_module)
+    assert client.get("/api/system/wifi/scan").status_code == 403
+
+
 def test_system_info_in_container_hides_container_identity(server_module, container):
     payload = server_module.app.test_client().get("/api/system/info").get_json()
     for key in ("hostname", "os", "model", "cpu_temp"):
@@ -338,6 +350,10 @@ def test_config_template_has_everything_server_requires_and_auth_on(monkeypatch,
                  "HISTORY_FILE", "NODES_FILE", "SENSORS_FILE", "CHATS_FILE", "MAX_HISTORY_MESSAGES",
                  "CHANNEL_CHAT_ID", "CHANNEL_CHAT_NAME", "KNOWN_NODES", "KNOWN_NODE_INFO"):
         assert name in ns, name
+    from storage.profile_manager import ProfileManager
+    # The placeholder must be a valid profile node ID, or Core exits at import
+    # (found live on the first container run).
+    assert ProfileManager.profile_id_from_node_id(ns["LOCAL_NODE_ID"]) == "00000000"
     assert ns["AUTH_ENABLED"] is True
     assert ns["AUTH_PASSWORD_HASH"] == ""
     assert ns["APP_HOST"] == "0.0.0.0"
@@ -362,6 +378,8 @@ def test_dockerfile_isolation_and_runtime_settings():
     assert "PYTHONDONTWRITEBYTECODE=1" in text and "HOME=/data/.home" in text
     assert "tini" in text and "HEALTHCHECK" in text and "/healthz" in text
     assert "ENTRYPOINT" in text and "USER ${PUID}:${PGID}" in text
+    for path in ("/app/data", "/app/deploy/docker/data", "/app/deploy/docker/config"):
+        assert f"test ! -e {path}" in text, path
 
 
 def test_entrypoint_cannot_override_workers_or_chown():
@@ -389,6 +407,11 @@ def test_compose_is_locked_down():
 
 def test_dockerignore_excludes_secrets_and_state_but_keeps_runtime():
     lines = {ln.strip() for ln in _read(".dockerignore").splitlines() if ln.strip() and not ln.startswith("#")}
+    for needed in ("deploy/docker/data", "deploy/docker/config", "deploy/docker/.env"):
+        assert needed in lines, needed
+    gitignore = _read(".gitignore").splitlines()
+    for needed in ("deploy/docker/data/", "deploy/docker/config/", "deploy/docker/.env"):
+        assert needed in gitignore, needed
     for needed in (".git", "data", "config.py", "weather_secrets.py", ".env", "relay-server", "*.db", "**/venv"):
         assert needed in lines, needed
     for runtime_dir in ("static", "templates", "adapters", "meshsrv", "api", "storage", "deploy"):

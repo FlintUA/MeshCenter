@@ -290,6 +290,8 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
             return jsonify(error_reporting.internal_error_payload(error_id)), 500
 
     def get_saved_wifi_names():
+        if not runtime_env.capabilities()["can_manage_wifi"]:
+            return set()
         result = network_config.list_wifi_connections()
         return result.get("ssids", set()) if result.get("ok") else set()
 

@@ -53,3 +53,8 @@ Thumbs.db
 # was previously only excluded by this machine's personal global gitignore,
 # not the repo itself, so a clone on another machine had no protection)
 .claude/settings.local.json
+
+# Docker runtime state created by running compose from deploy/docker/
+deploy/docker/data/
+deploy/docker/config/
+deploy/docker/.env

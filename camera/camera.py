@@ -344,6 +344,15 @@ def init_camera():
     """Initialize camera through Picamera2."""
     global CAMERA_AVAILABLE, CAMERA_MODEL, picam2
 
+    from meshsrv import runtime_env
+
+    if runtime_env.is_container():
+        # No camera hardware in a container (hardware_io off): one line, not a
+        # failed import + traceback-flavoured "Init error" on every start.
+        print("[CAMERA] INFO: camera disabled in container", flush=True)
+        CAMERA_AVAILABLE = False
+        return False
+
     print("[CAMERA] 🔍 Initializing...", flush=True)
 
     try:

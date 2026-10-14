@@ -11,7 +11,7 @@
 | Platform | `linux/amd64` only (tested target: Synology DS920+, DSM 7.3, Container Manager) |
 | Radio link | **Meshtastic over TCP (Wi-Fi/Ethernet) only** |
 | Radios | exactly one |
-| Network | bridge, port 5000 |
+| Network | bridge, container port 5000 (publish it on any free host port, e.g. `5080:5000` on DSM) |
 
 One image, one container, two processes inside: MeshCenter Core (gunicorn,
 always one worker) and the Meshtastic adapter. The adapter has its own Python
@@ -33,7 +33,10 @@ because they would describe the container; disk shows the data volume. The
 
 A Meshtastic node accepts **one** TCP client. While MeshCenter is connected,
 the Meshtastic phone app or a second MeshCenter cannot use that node's TCP
-port (and vice versa). Stop the container (`docker compose stop`) to free it.
+port (and vice versa) - **one TCP client per radio**. Stop the container
+(`docker compose stop`) to free it, or use the phone app only while MeshCenter
+is stopped. Inside one MeshCenter instance there is never more than one
+connection: a reconnect always closes the old session first.
 
 ## Layout on the NAS
 
@@ -51,6 +54,19 @@ MeshCenter keeps (`system_events.jsonl`, per-profile `nodes_debug.log`) live
 inside `data/`.
 
 ## Install on Synology (Container Manager)
+
+DSM itself listens on port 5000 (and 5001), so **publish MeshCenter on another
+host port** - the examples use `5080:5000` (host 5080 → container 5000). The
+`ports:` line of `compose.yaml` is the only place to change.
+
+Docker commands on DSM need root: run `sudo -i` once after logging in over SSH
+(or prefix every command with `sudo`). All commands below assume a root shell.
+
+There are two ways to get the image onto the NAS:
+
+* **Build on the NAS** from a checkout (steps below), or
+* **Build elsewhere and copy it** - no source tree and no `build:` section on the
+  NAS (see "Install from a saved image").
 
 1. In File Station create `/volume2/docker/meshcenter/` with `config/` and
    `data/` inside.
@@ -70,7 +86,28 @@ inside `data/`.
    sudo docker compose up -d
    ```
    (Container Manager → Project → Create, pointing at that folder, does the same.)
-6. Open `http://<nas-ip>:5000/` .
+6. Open `http://<nas-ip>:5080/` (or whichever host port you published).
+
+### Install from a saved image (`docker save` / `docker load`)
+
+On a machine that has the source (any OS with Docker, `--platform linux/amd64`
+for a DS920+):
+
+```bash
+docker build --platform linux/amd64 --build-arg MESHCENTER_VERSION=dk2 -t meshcenter:dk2 .
+docker save meshcenter:dk2 | gzip > meshcenter-dk2.tar.gz
+```
+
+Copy the file to the NAS (File Station or `scp`), then as root on the NAS:
+
+```bash
+gunzip -c meshcenter-dk2.tar.gz | docker load
+```
+
+Use a `compose.yaml` **without** a `build:` section and with
+`image: meshcenter:dk2` (the tag you loaded), then `docker compose up -d`.
+`config/` and `data/` are never touched by an image change. To update later:
+load the new image, change the `image:` tag, `docker compose up -d`.
 
 ### First start: set the password now
 
@@ -84,15 +121,44 @@ The radio's address is stored in MeshCenter's own profile data, not in an
 environment variable. In the web UI open **Node Manager**, choose to detect a
 radio **by TCP**, enter the node's IP and port (default 4403) and accept it.
 The service restarts itself (the container keeps running). Enable Wi-Fi/TCP on
-the node first and give it a fixed IP or DHCP reservation.
+the node first and **give it a DHCP reservation (or a fixed IP) in your router**:
+MeshCenter reconnects to the stored address, so a radio that comes back under a
+different IP is simply never found.
 
 Before you accept a radio, MeshCenter shows an empty placeholder profile
-`00000000` (the "no radio yet" ID in `config.py`); it is left alone afterwards.
+`00000000` (the "no radio yet" ID in `config.py`). Once a real radio is accepted
+the untouched placeholder node and profile are hidden/removed (a placeholder
+that holds messages is never deleted).
 
-If the radio is unreachable MeshCenter still starts and shows it as
-disconnected; it keeps retrying in the background. Startup takes about
-40 seconds in that case (measured) before the web page answers — the container
-health check allows for it.
+### MCAttach: set your private channel index
+
+MCAttach (file transfer) must never send its control traffic on the public
+primary channel, so MeshCenter has **no default** for it. Open
+`config/config.py` and set `MCA_CONTROL_CHANNEL_INDEX` to the index (0-7) of
+your *private* channel - the position shown in the Meshtastic app's channel
+list (channel 0 is the primary, `1` is the first secondary, ...):
+
+```python
+MCA_CONTROL_CHANNEL_INDEX = 1   # e.g. your private secondary channel
+```
+
+Restart the container afterwards. While it is `None`, MCAttach is fail-closed:
+every transfer is refused with "MCA control channel index None is invalid", and
+a WARNING is logged at every start.
+
+### If the radio goes away
+
+MeshCenter keeps trying **forever** while the active radio is TCP: after a drop
+(power cut, Wi-Fi gone, radio reboot, NAS or router restart) it retries 30 s,
+60 s, 2 min, 4 min and then every 5 minutes, re-checks that it is the same
+radio and reconnects on its own - no container restart needed. The header chip
+and Node Manager show "Reconnecting… (attempt N, next in X s)"; **Reconnect**
+(Node Manager) tries immediately and restarts the schedule. A radio that
+answers as a *different* node stays refused (see Node Manager) until you accept it.
+
+If the radio is unreachable at start MeshCenter still starts and shows it as
+disconnected. Startup takes about 40 seconds in that case (measured) before the
+web page answers — the container health check allows for it.
 
 ## Time
 
@@ -115,12 +181,18 @@ share it as a public folder.
 ## Day to day
 
 ```bash
-sudo docker compose stop            # free the radio's TCP slot
-sudo docker compose start
-sudo docker compose restart
-sudo docker compose logs -f --timestamps meshcenter
-sudo docker compose ps              # shows (healthy)
+docker compose stop                 # free the radio's TCP slot
+docker compose start
+docker compose restart
+docker compose logs -f --timestamps meshcenter
+docker compose ps                   # shows (healthy)
 ```
+
+**Shutting the NAS down:** you do not need to `docker compose stop` first.
+The container uses `restart: unless-stopped`: it stops with Docker when DSM
+shuts down and comes back with it on the next boot. (Do *not* stop it by hand
+before a shutdown - an explicitly stopped container stays stopped after the
+reboot.)
 
 "Restart MeshCenter" in the System page restarts the service inside the
 container; so does accepting a different radio profile.
@@ -148,7 +220,9 @@ newer version migrated it).
 |---|---|
 | Exits at once, "not writable" | `data/` and `config/` ownership vs `PUID`/`PGID` |
 | Unhealthy for ~2 minutes after start | normal if the radio is unreachable; see Connect the radio |
-| Radio never connects | node's TCP enabled? IP/port right? another client holding the single slot? |
+| Radio never connects | node's TCP enabled? IP/port right? another client holding the single slot (phone app, second MeshCenter)? |
+| "Reconnecting…" for a long time | radio powered/on Wi-Fi? still at the same IP (DHCP reservation)? it retries every 5 minutes at most |
+| MCAttach "control channel index None" | set `MCA_CONTROL_CHANNEL_INDEX` (see above) |
 | Schedules never fire | `MESHCENTER_TRUST_HOST_CLOCK` / host time |
 | Wrong times | `TZ` in `.env` |
 | "not available in a container" | a host-only feature, see the disabled list |

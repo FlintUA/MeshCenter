@@ -215,6 +215,15 @@ class TransportRouter(RadioTransport):
             refresh = getattr(self._active, "refresh_connection_info", None)
             if refresh is None:
                 return False
+            if getattr(getattr(self._active, "transport_type", None), "value", None) == "serial":
+                # DK2: this refresh exists for tcp/bluetooth links only the
+                # adapter can see die. For a serial IPC transport it would run
+                # the serial-port claim (pause --listen, wait for the port:
+                # 8 s and `utility_missing` in a container) under this very
+                # lock - what made a TCP-only host's boot transport restore
+                # fail with BUSY while the router still sat on its serial
+                # default. Nothing to refresh there; serial state is Core's.
+                return False
             try:
                 refresh(timeout=timeout)
                 return True

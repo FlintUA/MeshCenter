@@ -81,6 +81,7 @@ from meshsrv.radio_transport import (
 )
 from meshsrv import inbound_events
 from meshsrv import inbound_worker as inbound_worker_module
+from meshsrv import tcp_link_supervisor as tcp_link_supervisor_module
 from meshsrv.adapter_ipc_client import AdapterIPCTransport, AdapterSupervisor
 from meshsrv.transport_router import TransportRouter
 from meshsrv.schedule_engine import start as start_schedule_engine
@@ -88,6 +89,11 @@ from meshsrv import schedule_engine as _schedule_engine_module
 from meshsrv.attachments import mca_runtime
 from meshsrv import update_service
 from meshsrv import runtime_env
+if runtime_env.is_container():
+    # Whole-line stdout so `docker logs` never shows two threads' prints glued
+    # together (see meshsrv/line_atomic_stdout.py).
+    from meshsrv import line_atomic_stdout
+    line_atomic_stdout.install()
 from api.api_camera import register_camera_routes
 from api.api_camera_manager import register_camera_manager_routes
 from api.api_chat import register_chat_routes
@@ -203,6 +209,13 @@ def resolve_app_version(project_dir, fallback="dev"):
     instead of a version number after such a tag was created locally for a
     deploy rollback point.
     """
+    # A container image has no .git: when the build baked a version in, there
+    # is nothing to ask git (and no `git` binary to log a failure about).
+    if runtime_env.is_container():
+        baked_version = os.environ.get(runtime_env.VERSION_ENV, "").strip()
+        if baked_version:
+            return baked_version[1:] if baked_version.startswith("v") else baked_version
+
     try:
         result = subprocess.run(
             ["git", "describe", "--tags", "--abbrev=0", "--match", "v[0-9]*"],
@@ -272,13 +285,51 @@ except RuntimeError as error:
 # SystemExit pre-empting all of that already-designed-for degradation
 # from ever running - not fixed by continuing to raise here, only by
 # not raising.
+def _radio_link_label(radio, serial_port, *, prefix, port_prefix):
+    """Startup-banner text for the radio link: the TCP endpoint for a TCP
+    profile, the serial port otherwise (the persisted legacy `port` of a TCP
+    profile is a serial leftover and must not be shown as its connection)."""
+    try:
+        normalized = normalize_radio_record(dict(radio or {}))
+    except Exception:
+        normalized = {}
+    if normalized.get("transport") == "tcp":
+        endpoint = normalized.get("endpoint") or {}
+        host = str(endpoint.get("host") or "").strip()
+        return f"{prefix}tcp {host or '(not set)'}:{endpoint.get('port') or 4403}"
+    return f"{port_prefix}{(radio or {}).get('port') or serial_port}"
+
+
+def _accepted_transport_at_import():
+    """The accepted radio's transport, read straight from instance.json before
+    the instance manager exists (this runs at import, ahead of it). The
+    container is TCP-only by construction. Anything unreadable -> "serial",
+    i.e. the historical behaviour."""
+    if runtime_env.is_container():
+        return "tcp"
+    try:
+        with open(os.path.join(DATA_DIR, "instance.json"), encoding="utf-8") as handle:
+            return normalize_radio_record((json.load(handle) or {}).get("radio") or {}).get("transport", "serial")
+    except Exception:
+        return "serial"
+
+
 try:
-    MESHTASTIC_PORT = resolve_serial_port(MESHTASTIC_PORT)
-    print(
-        f"[INIT] Meshtastic CLI resolved: {MESHTASTIC_CMD}; "
-        f"serial port: {MESHTASTIC_PORT}",
-        flush=True,
-    )
+    if _accepted_transport_at_import() == "tcp":
+        # DK2: a TCP radio has no serial port to resolve - printing the
+        # "SERIAL PORT NOT FOUND ... degraded" banner for it was just noise.
+        print(
+            f"[INIT] Meshtastic CLI resolved: {MESHTASTIC_CMD}; radio transport: tcp "
+            "(no serial port needed)",
+            flush=True,
+        )
+    else:
+        MESHTASTIC_PORT = resolve_serial_port(MESHTASTIC_PORT)
+        print(
+            f"[INIT] Meshtastic CLI resolved: {MESHTASTIC_CMD}; "
+            f"serial port: {MESHTASTIC_PORT}",
+            flush=True,
+        )
 except RuntimeError as error:
     print("=" * 60, flush=True)
     print(f"⚠️  MESHTASTIC SERIAL PORT NOT FOUND: {error}", flush=True)
@@ -365,7 +416,7 @@ try:
         f"hostname={INSTANCE_IDENTITY.get('hostname', '')} | "
         f"radio={saved_radio.get('long_name') or 'Unknown'} "
         f"({saved_radio.get('node_id') or 'unknown'}) | "
-        f"port={saved_radio.get('port') or MESHTASTIC_PORT}",
+        f"{_radio_link_label(saved_radio, MESHTASTIC_PORT, prefix='endpoint=', port_prefix='port=')}",
         flush=True,
     )
 except Exception as error:
@@ -446,7 +497,16 @@ RADIO_IDENTITY_RESULT = {
 # can't meaningfully delay boot even in the worst case.
 TCP_IDENTITY_BOOT_RETRY_DELAYS_S = (2.0, 4.0)
 
-def verify_radio_identity():
+# DK2: ONE re-entrant lock for every TCP (re)connect/probe - the boot-time
+# identity check, the background TcpLinkSupervisor and the Reconnect button
+# all go through verify_radio_identity()/the supervisor's attempt, so startup
+# and recovery can never run two probes (two clients on the radio's single
+# slot) at once. Re-entrant because the supervisor's attempt holds it while
+# calling verify_radio_identity().
+tcp_link_lock = threading.RLock()
+
+
+def verify_radio_identity(retry=True):
     """Probe the configured radio once and persist read-only verification
     state. Transport-aware (Radio TCP Transport, part 2): a serial-
     configured accepted radio is probed exactly as before, via the
@@ -470,9 +530,10 @@ def verify_radio_identity():
     transport = accepted_radio["transport"]
     if transport == "tcp":
         endpoint = accepted_radio["endpoint"]
-        result, output = detect_tcp_radio_identity(
-            tcp_ipc_transport, endpoint.get("host", ""), endpoint.get("port", 0), timeout=25
-        )
+        with tcp_link_lock:
+            result, output = detect_tcp_radio_identity(
+                tcp_ipc_transport, endpoint.get("host", ""), endpoint.get("port", 0), timeout=25
+            )
         # Only retry a transport-level failure (never reached ANY radio -
         # IDENTITY_DETECTION_ERROR is set before compare_radio_identity()
         # ever runs, see this function's own comparison below). A
@@ -481,7 +542,7 @@ def verify_radio_identity():
         # this loop immediately on the first attempt - retrying that would
         # mask a real identity mismatch behind transient-looking retry
         # logic, which must never happen (fail-closed stays fail-closed).
-        for delay in TCP_IDENTITY_BOOT_RETRY_DELAYS_S:
+        for delay in (TCP_IDENTITY_BOOT_RETRY_DELAYS_S if retry else ()):
             if not is_transient_identity_failure(result):
                 break
             print(
@@ -490,9 +551,10 @@ def verify_radio_identity():
                 flush=True,
             )
             time.sleep(delay)
-            result, output = detect_tcp_radio_identity(
-                tcp_ipc_transport, endpoint.get("host", ""), endpoint.get("port", 0), timeout=25
-            )
+            with tcp_link_lock:
+                result, output = detect_tcp_radio_identity(
+                    tcp_ipc_transport, endpoint.get("host", ""), endpoint.get("port", 0), timeout=25
+                )
     elif transport == "serial":
         result, output = detect_radio_identity(MESHTASTIC_CMD, MESHTASTIC_PORT, timeout=25)
     else:
@@ -3344,8 +3406,43 @@ def seed_nodes_from_transport(transport, timeout=15):
         print(f"[TRANSPORT] TCP node seed: imported {imported}, updated {updated}", flush=True)
     return imported + updated
 
+# The container template's bootstrap radio ("!00000000" = "no radio accepted
+# yet"). It is only a placeholder: once a real radio is the accepted one it must
+# not stay behind as a phantom node/chat next to it.
+PLACEHOLDER_NODE_ID = "!00000000"
+PLACEHOLDER_PROFILE_ID = "00000000"
+
+
+def placeholder_radio_active():
+    return LOCAL_NODE_ID == PLACEHOLDER_NODE_ID
+
+
+def prune_placeholder_node():
+    """Drop the auto-created placeholder node and chat once a real radio is
+    accepted. Only an untouched placeholder is removed (never seen on the air,
+    no messages); anything with real data stays."""
+    if placeholder_radio_active():
+        return
+    removed = False
+    with state_lock:
+        node = nodes.get(PLACEHOLDER_NODE_ID)
+        if node is not None and not node.get("last_seen"):
+            del nodes[PLACEHOLDER_NODE_ID]
+            removed = True
+        chat = chats.get(PLACEHOLDER_NODE_ID)
+        if chat is not None and not chat.get("last_message") and not chat.get("unread"):
+            del chats[PLACEHOLDER_NODE_ID]
+            removed = True
+    if removed:
+        save_nodes()
+        save_chats()
+        print("[INIT] Removed the placeholder node (!00000000) - a real radio is accepted", flush=True)
+
+
 def ensure_known_nodes():
     for node_id, name in KNOWN_NODES.items():
+        if node_id == PLACEHOLDER_NODE_ID and not placeholder_radio_active():
+            continue
 
         with state_lock:
             old = nodes.get(node_id, {})
@@ -5174,7 +5271,7 @@ def resolve_paused_recovery_status(status, now_ts):
     return status, False
 
 
-def process_listener_autorecovery(status, listener_running, now_ts, escalated_from_paused=False):
+def process_listener_autorecovery(status, listener_running, now_ts, escalated_from_paused=False, active_transport="serial"):
     """
     Restart the Meshtastic listener after a persistent LISTENER_DOWN state.
 
@@ -5195,7 +5292,15 @@ def process_listener_autorecovery(status, listener_running, now_ts, escalated_fr
       genuine crash and a stuck-PAUSED thrash draw from the same 3-per-
       30-minutes budget, not two independent ones.
     - recovery is cancelled if the listener returns before the delay expires.
+
+    DK2: a no-op unless the active transport is serial - the serial `--listen`
+    subprocess this restarts does not exist for TCP/Bluetooth, and with
+    `listener=False` permanently true there, an enabled setting used to push
+    the serial release path every cycle.
     """
+    if active_transport != "serial":
+        return
+
     state = listener_recovery_state
 
     with state_lock:
@@ -5942,6 +6047,97 @@ def process_identity_recovery(active_transport, now_ts):
     threading.Thread(target=_do_identity_retry, daemon=True).start()
 
 
+# ---------------------------------------------------------------------
+# DK2: TCP link supervisor - the single, unbounded recovery path for a TCP
+# radio (see meshsrv/tcp_link_supervisor.py). Replaces process_identity_
+# recovery()/process_transport_autorecovery() for TCP (both still serve
+# Bluetooth / stay callable directly); radio_health_worker() no longer
+# calls them for TCP.
+# ---------------------------------------------------------------------
+def _tcp_profile_active():
+    accepted = normalize_radio_record(dict(instance_manager.get().get("radio", {})))
+    return accepted.get("transport") == "tcp"
+
+
+def _tcp_identity_refused():
+    return RADIO_IDENTITY_RESULT.get("status") in IDENTITY_REFUSED_STATUSES
+
+
+def _tcp_auto_reconnect_enabled():
+    with state_lock:
+        return bool((settings.get("tcp_ble_autorecovery") or {}).get("enabled", True))
+
+
+def _tcp_link_connected():
+    """True when the TCP link is healthy or someone else is mid-operation.
+    The router lock being busy (a switch/send in flight) reads as CONNECTING
+    and is deliberately NOT treated as dead - the supervisor must never fight
+    an operation already working on the connection."""
+    info = transport_router.get_connection_info()
+    if info.state == ConnectionState.CONNECTING:
+        return True
+    if info.descriptor is None or info.descriptor.type != ConnectionType.TCP:
+        # The router is not on TCP (boot identity failure left it on its
+        # serial default): nothing to refresh, certainly not dead-or-alive.
+        return False
+    # Pull the adapter's own view (a link it knows is dead stays cached
+    # CONNECTED until refreshed), then judge.
+    if refresh_non_serial_connection_state("tcp"):
+        info = transport_router.get_connection_info()
+    if info.state == ConnectionState.CONNECTING:
+        return True
+    if info.state != ConnectionState.CONNECTED:
+        return False
+    return RADIO_IDENTITY_RESULT.get("status") == "MATCH"
+
+
+def tcp_link_attempt():
+    """ONE reconnect attempt, used by the background loop and the Reconnect
+    button alike: close the old session (single client slot - the probe must
+    never be a second client while a half-open session still holds it),
+    re-probe identity, and on MATCH restore the transport reusing the probe's
+    connection, exactly as boot does. Never touches serial release / lsof /
+    /dev/tty*. Returns an OUTCOME_* string."""
+    accepted = normalize_radio_record(INSTANCE_IDENTITY.get("radio", {}))
+    if accepted.get("transport") != "tcp":
+        return tcp_link_supervisor_module.OUTCOME_STOP
+
+    try:
+        tcp_ipc_transport.disconnect(timeout=10)
+    except Exception as error:
+        tcp_link_supervisor.set_error(f"closing the old session failed: {error}")
+        return tcp_link_supervisor_module.OUTCOME_RETRY
+
+    verify_radio_identity(retry=False)
+    status = RADIO_IDENTITY_RESULT.get("status")
+    if status in IDENTITY_REFUSED_STATUSES:
+        return tcp_link_supervisor_module.OUTCOME_STOP
+    if status != "MATCH":
+        tcp_link_supervisor.set_error(RADIO_IDENTITY_RESULT.get("error") or "radio did not answer")
+        return tcp_link_supervisor_module.OUTCOME_RETRY
+
+    restore_active_transport(accepted, True)
+    if _tcp_link_connected():
+        return tcp_link_supervisor_module.OUTCOME_CONNECTED
+    tcp_link_supervisor.set_error("connected for the identity check but could not restore the transport")
+    return tcp_link_supervisor_module.OUTCOME_RETRY
+
+
+def _tcp_link_event(title, level, details):
+    log_system_event(title=title, level=level, details=details, source="recovery")
+
+
+tcp_link_supervisor = tcp_link_supervisor_module.TcpLinkSupervisor(
+    is_tcp_profile=_tcp_profile_active,
+    identity_refused=_tcp_identity_refused,
+    link_connected=_tcp_link_connected,
+    attempt=tcp_link_attempt,
+    lock=tcp_link_lock,
+    on_event=_tcp_link_event,
+    auto_enabled=_tcp_auto_reconnect_enabled,
+)
+
+
 def compute_radio_health_status(
     *,
     active_transport,
@@ -5951,6 +6147,7 @@ def compute_radio_health_status(
     packet_age,
     transport_state,
     awaiting_identity=False,
+    tcp_link=None,
 ):
     """Pure status/level/reason/recommendation decision for
     radio_health_worker() - split out the same way
@@ -6053,6 +6250,33 @@ def compute_radio_health_status(
     conn_state = str(transport_state.get("state") or "disconnected").upper()
     address = transport_state.get("address")
     via = f"{active_transport} ({address})" if address else active_transport
+
+    if active_transport == "tcp":
+        # DK2: a router that is not actually on TCP (a boot-time identity
+        # failure leaves it on its serial default) must never read as a live
+        # TCP link, whatever state that other transport reports.
+        if conn_state == "CONNECTED" and transport_state.get("type") not in (None, "tcp"):
+            conn_state = "DISCONNECTED"
+        # The supervisor owns recovery: say so (with the schedule) instead of
+        # a bare DISCONNECTED/ERROR that suggests nobody is working on it.
+        if (
+            conn_state not in ("CONNECTED", "CONNECTING")
+            and tcp_link
+            and tcp_link.get("state") in ("waiting", "attempting")
+        ):
+            if tcp_link.get("state") == "attempting":
+                reason = f"Reconnecting via {via} (attempt {tcp_link.get('attempt')})"
+            else:
+                reason = (
+                    f"Reconnecting via {via} (attempt {tcp_link.get('attempt')}, "
+                    f"next in {tcp_link.get('next_in_s')} s)"
+                )
+            return (
+                "RECONNECTING",
+                "WARNING",
+                reason,
+                "No action required - MeshCenter keeps retrying automatically. Use Reconnect to retry now.",
+            )
 
     if conn_state == "CONNECTED":
         return (
@@ -6189,6 +6413,8 @@ def radio_health_worker():
                     transport_router, LOCAL_NODE_ID, listener_supervisor
                 )
 
+            tcp_link_status = tcp_link_supervisor.status() if active_transport == "tcp" else None
+
             with state_lock:
                 listener_running = bool(
                     radio_health.get("listener_running", False)
@@ -6225,6 +6451,7 @@ def radio_health_worker():
                     packet_age=packet_age,
                     transport_state=transport_state,
                     awaiting_identity=listener_supervisor.owns_recovery(),
+                    tcp_link=tcp_link_status,
                 )
 
                 previous_status = radio_health.get("status")
@@ -6233,6 +6460,7 @@ def radio_health_worker():
                 radio_health["level"] = level
                 radio_health["status_reason"] = reason
                 radio_health["recommendation"] = recommendation
+                radio_health["reconnect"] = tcp_link_status
 
                 radio_health["last_check"] = now_ts
                 radio_health["last_check_time"] = now()
@@ -6277,15 +6505,20 @@ def radio_health_worker():
                 listener_running=listener_running,
                 now_ts=now_ts,
                 escalated_from_paused=escalated_from_paused,
-            )
-
-            process_transport_autorecovery(
-                status=status,
                 active_transport=active_transport,
-                now_ts=now_ts,
             )
 
-            process_identity_recovery(active_transport, now_ts)
+            # DK2: TCP is healed by tcp_link_supervisor (unbounded, one path);
+            # these two bounded mechanisms keep serving Bluetooth and reset
+            # their own state for everything else.
+            if active_transport != "tcp":
+                process_transport_autorecovery(
+                    status=status,
+                    active_transport=active_transport,
+                    now_ts=now_ts,
+                )
+
+                process_identity_recovery(active_transport, now_ts)
 
             # H2-C Phase 2: detects a hung-but-alive listener subprocess
             # (the Meshtastic library noticed its own disconnect and
@@ -6783,6 +7016,10 @@ def api_devices_dashboard():
         # Properly hiding those buttons for non-serial transports is
         # PR 3's UI work, not this one's.
         state = transport_state.get("state") or "disconnected"
+        # DK2: a router still on its serial default (TCP identity not yet
+        # verified) must not paint a TCP card "connected".
+        if active_transport == "tcp" and state == "connected" and transport_state.get("type") not in (None, "tcp"):
+            state = "disconnected"
         # ConnectionInfo.connected_since (meshsrv/radio_transport.py) is a
         # raw time.time()-style Unix-seconds float, not the ISO-8601
         # string the serial branch above builds and the frontend's
@@ -6812,6 +7049,7 @@ def api_devices_dashboard():
             "connected_since": transport_connected_since,
             "type": active_transport,
             "address": transport_state.get("address"),
+            "reconnect": tcp_link_supervisor.status() if active_transport == "tcp" else None,
         }
 
     profile_metadata = {}
@@ -6851,6 +7089,15 @@ def api_devices_dashboard():
             profile_radio = dict(metadata.get("radio", {}))
             profile_id = metadata.get("profile_id") or entry.name
             active = profile_id == identity.get("active_profile_id", "")
+            if (
+                not active
+                and profile_id == PLACEHOLDER_PROFILE_ID
+                and not _json_item_count(os.path.join(entry.path, "messages.json"))
+            ):
+                # The auto-created bootstrap profile of the container template,
+                # never used: not worth a card next to the real radio. A
+                # placeholder profile that holds messages is user data - shown.
+                continue
             profiles.append({
                 "profile_id": profile_id,
                 "active": active,
@@ -7906,6 +8153,35 @@ def api_radio_connection_release():
     }), (200 if ok else 409)
 
 
+@app.route("/api/meshtastic/reconnect_now", methods=["POST"])
+@handle_errors
+def api_meshtastic_reconnect_now():
+    """DK2: the Reconnect button for a TCP radio. Resets the supervisor's
+    backoff and makes it attempt right away (identity re-probe if needed ->
+    connect, reusing the probe connection); the attempt itself runs on the
+    supervisor's own thread, so this returns at once with the live schedule.
+    The endpoint comes from the accepted profile, never from
+    settings.meshtastic (empty in a container). Refused for non-TCP radios
+    and fail-closed for a radio whose identity was refused."""
+    transport = current_radio_transport()
+    if transport != "tcp":
+        return jsonify({
+            "ok": False,
+            "error": "Reconnect-now is only applicable to TCP connections",
+            "error_code": "reconnect_not_applicable",
+            "transport": transport,
+        }), 409
+    if _tcp_identity_refused():
+        return jsonify({
+            "ok": False,
+            "error": "The radio at this endpoint is not the accepted radio - use Node Manager to onboard it",
+            "error_code": "identity_mismatch",
+            "identity_status": RADIO_IDENTITY_RESULT.get("status"),
+        }), 409
+    status = tcp_link_supervisor.trigger_now()
+    return jsonify({"ok": True, "reconnect": status})
+
+
 @app.route("/api/radio_connection/reconnect", methods=["POST"])
 @handle_errors
 def api_radio_connection_reconnect():
@@ -8917,6 +9193,7 @@ def start_runtime():
     load_nodes()
     load_sensors_data()
     load_chats()
+    prune_placeholder_node()
     ensure_known_nodes()
     normalize_unknown_nodes()
     if not (identity_match and active_transport == "serial"):
@@ -8966,6 +9243,8 @@ def start_runtime():
     camera.load_camera_settings()    # <--- вызов через модуль
     
     for node_id in KNOWN_NODES:
+        if node_id == PLACEHOLDER_NODE_ID and not placeholder_radio_active():
+            continue
         if node_id not in chats:
             ensure_chat(node_id, KNOWN_NODES[node_id], force=True)
     save_chats()
@@ -9057,6 +9336,19 @@ def start_runtime():
     # nothing to do with whether previously-queued work can advance.
     # Best-effort like every other block here - a failure to start the MCA
     # worker must not prevent the rest of start_runtime() from coming up.
+    if MCA_CONTROL_CHANNEL_INDEX is None:
+        # DK2: MCAttach is always on once the service starts, and an unset
+        # index fails closed ("MCA control channel index None is invalid") -
+        # say so at startup, in every runtime mode, not only at the first
+        # transfer. No default is invented: the right channel is the
+        # user's own private channel.
+        _mca_warning = (
+            "MCA_CONTROL_CHANNEL_INDEX is not set in config.py - MCAttach file "
+            "transfers will be refused (fail-closed) until it is set to the index "
+            "(0-7) of your private channel. See config.example.py / docs/Docker_Installation.md."
+        )
+        print(f"[MCA] WARNING: {_mca_warning}", flush=True)
+        log_system_event("MCAttach control channel not configured", "WARNING", _mca_warning, source="mca")
     try:
         mca_runtime.start_attachments_service(DATA_DIR, transport_router, MCA_CONTROL_CHANNEL_INDEX)
     except Exception as e:
@@ -9079,6 +9371,7 @@ def start_runtime():
     # TCP/Bluetooth.
     if should_start_health_worker(identity_status, active_transport):
         threading.Thread(target=radio_health_worker, daemon=True).start()
+
 
     # TCP inbound (text + waypoints): polls the adapter's receive queue. Started
     # for every transport and gated per tick (see inbound_eligibility()), so it
@@ -9140,6 +9433,14 @@ def start_runtime():
         )
 
     restore_active_transport(accepted_radio, identity_match)
+
+    # DK2: the TCP link supervisor idles unless the accepted radio is TCP (and
+    # not identity-refused); started for every transport so a live profile
+    # switch to TCP needs no restart. Deliberately AFTER the boot restore
+    # above: the boot probe and the supervisor must never overlap (they also
+    # share tcp_link_lock), and a supervisor that looked at the router before
+    # it was switched would be judging its serial default.
+    tcp_link_supervisor.start()
 
     threading.Thread(target=cpu_history_worker, args=(CPU_HISTORY_FILE,), daemon=True).start()
 
@@ -9232,7 +9533,7 @@ def start_runtime():
         f"    Host: {banner_hostname}\n"
         f"    URL: http://{APP_HOST}:{APP_PORT}\n"
         f"    Radio: {banner_radio_name}\n"
-        f"    Port: {MESHTASTIC_PORT}\n"
+        f"    {_radio_link_label(INSTANCE_IDENTITY.get('radio', {}), MESHTASTIC_PORT, prefix='Endpoint: ', port_prefix='Port: ')}\n"
         f"    Identity: {identity_status}\n"
         f"    Camera: {'Available' if camera.CAMERA_AVAILABLE else 'Unavailable'}\n"
         f"    Video: {camera.VIDEO_CONFIG['resolution']} @ {camera.VIDEO_CONFIG['fps']}fps {camera.VIDEO_CONFIG['quality']}%\n"

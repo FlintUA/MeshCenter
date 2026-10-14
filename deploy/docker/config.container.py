@@ -30,6 +30,15 @@ CHATS_FILE = f"{DATA_DIR}/chats.json"
 MAX_HISTORY_MESSAGES = 1000
 CHANNEL_CHAT_ID = "channel"
 CHANNEL_CHAT_NAME = "LongFast"
+# MCAttach (file transfer) control channel - REQUIRED for MCAttach, no default.
+# Set this to the index (0-7) of your PRIVATE Meshtastic channel, e.g. 1 for a
+# secondary channel such as "Flint-pvt". Channel 0 is normally the public
+# primary channel: MCAttach key/transfer control must never be sent there, so
+# MeshCenter does not guess. While this is None MCAttach is fail-closed and
+# every transfer is refused with "MCA control channel index None is invalid"
+# (a WARNING is also logged at startup). Edit /config/config.py and restart
+# the container after changing it. See docs/Docker_Installation.md,
+# "MCAttach: set your private channel index".
 MCA_CONTROL_CHANNEL_INDEX = None
 
 KNOWN_NODES = {"!00000000": "My Node"}

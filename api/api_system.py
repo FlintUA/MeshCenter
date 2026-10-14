@@ -223,8 +223,10 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
             # user thinks of as "the host" - never present them as such.
             # uptime / load / RAM come from the non-namespaced /proc and are
             # the HOST's values; the UI labels them as host-observed.
-            for key in ("hostname", "os", "model", "cpu_temp"):
+            for key in ("hostname", "os", "model"):
                 result[key] = None
+            if not result["runtime"]["has_cpu_temp"]:
+                result["cpu_temp"] = None
             result["disk_total_gb"] = result["disk_used_gb"] = result["disk_free_gb"] = None
             try:
                 disk = shutil.disk_usage(os.environ.get("MESHCENTER_DATA_DIR", "/data"))

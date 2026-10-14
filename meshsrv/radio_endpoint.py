@@ -48,7 +48,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Mapping, Optional
 
-from meshsrv.radio_transport import ConnectionDescriptor, ConnectionType, RadioTransport
+from meshsrv.radio_transport import ConnectionDescriptor, ConnectionState, ConnectionType, RadioTransport
 
 # The Meshtastic radio's own default TCP port. Intentionally duplicated
 # from adapters/meshtastic/tcp_transport.py's own DEFAULT_TCP_PORT rather
@@ -170,6 +170,19 @@ def descriptor_from_radio_record(radio: Optional[Mapping]) -> ConnectionDescript
     return endpoint_descriptor(normalized["transport"], normalized["endpoint"])
 
 
+def _never_connected(transport: RadioTransport) -> bool:
+    """True for a transport that has no descriptor and is not connected - the
+    state of an IPC transport nothing ever connected (see
+    adapter_ipc_client._adapter_unavailable_info()). Anything that ever
+    connected, even if it later failed, keeps its descriptor and is still
+    disconnected normally."""
+    try:
+        info = transport.get_connection_info()
+    except Exception:
+        return False
+    return info.descriptor is None and info.state != ConnectionState.CONNECTED
+
+
 def build_transport_connect_new(
     transport_type: str,
     *,
@@ -214,10 +227,19 @@ def build_transport_connect_new(
     overridden by whatever was current when this builder ran.
     """
 
-    def _disconnect_others(target: RadioTransport) -> None:
+    def _disconnect_others(target: RadioTransport, *, skip_never_connected: bool = False) -> None:
         for other in (serial_transport, ble_transport, tcp_transport):
-            if other is not target:
-                other.disconnect(timeout=disconnect_timeout)
+            if other is target:
+                continue
+            if skip_never_connected and _never_connected(other):
+                # DK2: a TCP-only deployment (the container, or any host whose
+                # accepted radio is TCP) never opened serial/BLE. A disconnect
+                # to the serial IPC transport still runs the serial-port
+                # claim - wait_serial_release() on a device that was never
+                # opened (8 s + `lsof` missing in the image), all under the
+                # router lock. Nothing to release, so nothing is called.
+                continue
+            other.disconnect(timeout=disconnect_timeout)
 
     if transport_type == "serial":
         def _connect_new():
@@ -255,7 +277,7 @@ def build_transport_connect_new(
 
     if transport_type == "tcp":
         def _connect_new():
-            _disconnect_others(tcp_transport)
+            _disconnect_others(tcp_transport, skip_never_connected=True)
             tcp_transport.connect(
                 ConnectionDescriptor(type=ConnectionType.TCP, address=f"{tcp_host}:{tcp_port}"),
                 force=True,

@@ -60,6 +60,9 @@ def capabilities() -> Dict[str, Any]:
         "can_self_update": not container,
         "can_edit_hardware_config": not container,
         "has_host_metrics": not container,
+        # The host's thermal zone is not "this machine's" temperature: hidden
+        # everywhere (System card via /api/system/info, and the footer) together.
+        "has_cpu_temp": not container,
         "hardware_io": not container,
         "trust_host_clock": trust_host_clock(),
     }

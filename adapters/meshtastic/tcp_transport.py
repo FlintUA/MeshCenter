@@ -129,6 +129,12 @@ _RECONNECT_JITTER_RATIO = 0.15
 # Never let jitter (or a pathologically small base delay) collapse a
 # reconnect attempt into a near-zero-delay retry - this is the actual
 # "no tight loop" enforcement, not just documentation.
+# DK2 half-open detection (see _enable_liveness_options()).
+_KEEPALIVE_IDLE_S = 30
+_KEEPALIVE_INTERVAL_S = 10
+_KEEPALIVE_PROBES = 3
+_TCP_USER_TIMEOUT_MS = 60_000
+
 _RECONNECT_MIN_DELAY_S = 0.5
 
 # reconnect()'s `timeout` is ONE budget for the whole call (initial
@@ -403,6 +409,8 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
         Missing attributes are treated as "no evidence of a problem", so
         a library version that renames them degrades to "trust READY"
         rather than to "always reconnect"."""
+        if getattr(interface, "_link_lost", False):
+            return False
         reader = getattr(interface, "_rxThread", None)
         if reader is not None and not reader.is_alive():
             return False
@@ -474,6 +482,14 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
         try:
             self._call_with_timeout(_do_close, timeout=timeout, what="close interface")
         except TransportError as error:
+            # DK2: close() can block on a half-open link; the single client
+            # slot must be released regardless, so close the raw socket here.
+            raw_socket = getattr(interface_to_close, "socket", None)
+            if raw_socket is not None:
+                try:
+                    raw_socket.close()
+                except Exception:
+                    pass
             # Own state is already correct (detached above) regardless -
             # this is purely "how long did the background close() take",
             # not a correctness signal, so it's logged, not re-raised.
@@ -534,7 +550,32 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
         # Connected with a bounded timeout; the library's reader thread does
         # blocking recv() on it, so it must be back to blocking mode.
         probe_socket.settimeout(None)
+        self._enable_liveness_options(probe_socket)
         return probe_socket
+
+    @staticmethod
+    def _enable_liveness_options(sock) -> None:
+        """DK2: make the kernel notice a half-open link (radio off Wi-Fi or
+        powered down without a RST) instead of leaving a silent, "connected"
+        socket behind forever. SO_KEEPALIVE probes (idle 30s, every 10s, 3
+        misses ~ 60s) fail the blocked recv() and end the reader thread, and
+        TCP_USER_TIMEOUT (60s) makes unacknowledged writes fail fast. Neither
+        depends on mesh traffic, so a quiet mesh cannot trigger them. Stdlib
+        socket options only; every option is best-effort and platform-guarded
+        (Linux has all of them), so an unsupported one never breaks connect()."""
+        def _try(level, name, value):
+            if name is None:
+                return
+            try:
+                sock.setsockopt(level, name, value)
+            except (OSError, AttributeError):
+                pass
+
+        _try(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        _try(socket.IPPROTO_TCP, getattr(socket, "TCP_KEEPIDLE", None), _KEEPALIVE_IDLE_S)
+        _try(socket.IPPROTO_TCP, getattr(socket, "TCP_KEEPINTVL", None), _KEEPALIVE_INTERVAL_S)
+        _try(socket.IPPROTO_TCP, getattr(socket, "TCP_KEEPCNT", None), _KEEPALIVE_PROBES)
+        _try(socket.IPPROTO_TCP, getattr(socket, "TCP_USER_TIMEOUT", None), _TCP_USER_TIMEOUT_MS)
 
     @staticmethod
     def _close_quietly(sock) -> None:
@@ -784,6 +825,26 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
                 else:
                     super().myConnect()
 
+            _link_lost = False
+
+            def _reconnect(self):
+                """DK2: the library's own silent self-healing is disabled.
+                On a socket error it closed the socket and re-dialled with a
+                blocking, timeout-less create_connection() from the reader
+                thread - a second client dialling a radio that holds one
+                slot, a reader thread that stays alive, and an interface
+                that kept reading CONNECTED for hours while the radio was
+                away (live, NAS 2026-10-14). Instead the interface is marked
+                lost and the reader exits, so _demote_if_dead_locked() sees
+                it at once and Core's single reconnect path (identity probe
+                -> connect -> reuse) takes over."""
+                self._link_lost = True
+                self._wantExit = True
+                try:
+                    self.isConnected.clear()
+                except Exception:
+                    pass
+
             def _waitConnected(self, timeout=30.0):
                 if self.noProto:
                     return
@@ -796,7 +857,7 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
                         reader_thread is not None
                         and reader_thread.ident is not None
                         and not reader_thread.is_alive()
-                        and not self._wantExit
+                        and (not self._wantExit or self._link_lost)
                     ):
                         raise RuntimeError(
                             "TCP reader thread exited before the connection "
@@ -1252,6 +1313,17 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
         if not local_node_id:
             raise ValueError("local radio node id is not known yet")
         channel = _plain_int(packet.get("channel"))
+        if channel is None and packet.get("pkiEncrypted") is True:
+            # DK2: a PKI-encrypted direct message is not sent on a channel
+            # (the firmware keys it to the recipient), so the packet carries no
+            # channel index at all - the protobuf default 0 is merely omitted,
+            # it does not mean "channel 0". Reporting 0 made every inbound MCA
+            # frame log a bogus "channel mismatch" against the configured
+            # private channel. None = "unknown", exactly what the serial parser
+            # reports for a line without a channel (extract_optional_channel_index).
+            channel_unknown = True
+        else:
+            channel_unknown = False
         return ReceivedTextEvent(
             from_node_id=f"!{from_num:08x}",
             to_node_id=_node_id_from_num(to_num),
@@ -1261,7 +1333,7 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
             packet_id=_plain_int_or_none_if_zero(packet.get("id")),
             from_num=from_num,
             to_num=to_num,
-            channel_index=0 if channel is None else channel,  # protobuf default 0 is omitted
+            channel_index=None if channel_unknown else (0 if channel is None else channel),  # protobuf default 0 is omitted
             reply_id=_plain_int_or_none_if_zero(decoded.get("replyId")),
             rx_time=_plain_int_or_none_if_zero(packet.get("rxTime")),
             rx_rssi=_plain_int_or_none_if_zero(packet.get("rxRssi")),

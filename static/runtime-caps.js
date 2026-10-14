@@ -26,13 +26,13 @@
         document.head.appendChild(style);
     }
 
+    // The text comes from the element's own data-i18n attribute: this script
+    // runs before the catalogs are fetched, so calling I18N.t() here printed the
+    // raw key. I18N.applyStaticDom() fills it once the catalog is loaded (and on
+    // every language change); this only reveals the card.
     function showNotice() {
         var notice = document.getElementById('containerModeNotice');
-        if (!notice) return;
-        notice.style.display = '';
-        if (window.I18N && typeof window.I18N.t === 'function') {
-            notice.textContent = window.I18N.t('system.container_mode_notice');
-        }
+        if (notice) notice.style.display = '';
     }
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', showNotice);

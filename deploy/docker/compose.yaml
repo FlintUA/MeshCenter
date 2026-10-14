@@ -2,6 +2,8 @@
 # Place next to this file: ./config  ./data  and .env (from .env.example).
 # Build locally from a checkout of the repository:
 #   docker compose build   (context is the repository root, see below)
+# No source on the host? Build elsewhere, `docker save`/`docker load` the image
+# and delete the whole `build:` block below (see docs/Docker_Installation.md).
 name: meshcenter
 
 services:
@@ -20,6 +22,8 @@ services:
     user: "${PUID:-1026}:${PGID:-100}"
     restart: unless-stopped
     ports:
+      # host:container. DSM itself uses 5000/5001 - on a Synology publish
+      # another host port, e.g. "5080:5000". The container side stays 5000.
       - "5000:5000"
     environment:
       TZ: ${TZ:-UTC}

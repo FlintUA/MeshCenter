@@ -161,3 +161,21 @@ def test_router_refresh_never_calls_a_serial_ipc_transport():
 
     tcp = FakeTcp()
     assert TransportRouter(tcp).refresh_connection_info() is True and tcp.refreshed == 1
+
+
+# ---- DK3: version label --------------------------------------------------------
+
+def test_a_non_version_label_never_claims_an_update_is_available():
+    from meshsrv import update_service
+    cache = {"latest_version": "1.10.0", "check_ok": True}
+    assert update_service.update_available("dk2", cache) is False      # the NAS false positive
+    assert update_service.update_available("dev", cache) is False
+    assert update_service.update_available("unknown", cache) is False
+    assert update_service.update_available("1.10.0-27-gabc1234", cache) is False   # ahead of a tag
+    assert update_service.update_available("1.9.0", cache) is True                  # genuinely behind
+    assert update_service.update_available("1.10.0", cache) is False
+
+
+def test_build_script_labels_the_image_with_git_describe():
+    script = (REPO / "deploy/docker/build.sh").read_text(encoding="utf-8")
+    assert "git describe --tags --always" in script and "MESHCENTER_VERSION=" in script

@@ -325,6 +325,12 @@ def serve_forever(dispatcher: _AdapterDispatcher, *, stdin=None, stdout=None) ->
         protocol_stdout.flush()
 
 
+def _tcp_log(message, level="INFO"):
+    # stderr only - stdout is the IPC channel. Core's stderr drain surfaces it
+    # (session lost/up lines with age, bytes, radio uptime - DK3).
+    print(f"[tcp-transport] {level}: {message}", file=sys.stderr, flush=True)
+
+
 def main() -> None:
     import argparse
 
@@ -345,7 +351,7 @@ def main() -> None:
         # - the real host/port are supplied per-connect() via the request's
         # descriptor (see TCPTransport.connect()'s own handling of this),
         # never needed at adapter-startup time.
-        tcp_transport=TCPTransport(host=""),
+        tcp_transport=TCPTransport(host="", on_log=_tcp_log),
     )
 
     serve_forever(dispatcher)

@@ -84,3 +84,135 @@ def test_ordinary_packets_keep_their_channel_semantics():
     assert _event(_packet()).channel_index == 0            # omitted default 0, not PKI
     assert _event(_packet(channel=1)).channel_index == 1
     assert _event(_packet(channel=2, pkiEncrypted=True)).channel_index == 2
+
+
+# ===========================================================================
+# DK3 - real-radio findings: the T-Beam closes API sessions on its own
+# ===========================================================================
+import inspect  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+
+from adapters.meshtastic.fake_radio_server import FakeMeshtasticTcpServer  # noqa: E402
+from meshsrv.radio_transport import ConnectionDescriptor, ConnectionState, ConnectionType, TransportError  # noqa: E402
+
+
+def _descriptor(port):
+    return ConnectionDescriptor(type=ConnectionType.TCP, address=f"127.0.0.1:{port}")
+
+
+def _wait(predicate, seconds):
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.02)
+    return predicate()
+
+
+def _live_timers():
+    return [t for t in threading.enumerate() if isinstance(t, threading.Timer) and t.is_alive()]
+
+
+def test_radio_fin_is_answered_by_our_close_within_two_seconds_and_state_is_not_connected():
+    logs = []
+    server = FakeMeshtasticTcpServer(complete_handshake=True)
+    transport = TCPTransport(host="127.0.0.1", port=server.port, on_log=lambda m, l="INFO": logs.append((l, m)))
+    try:
+        transport.connect(_descriptor(server.port), timeout=10.0)
+        assert _wait(lambda: server.active_connections == 1, 2)
+        assert server.drop_clients() == 1                      # the radio closes its side first
+        started = time.monotonic()
+        assert _wait(lambda: server.active_connections == 0, 2.0), "our FIN must answer the radio's within 2 s"
+        assert time.monotonic() - started < 2.0
+        assert _wait(lambda: transport.get_connection_info().state != ConnectionState.CONNECTED, 2.0), \
+            "never 'connected' while no session exists"
+        assert any("TCP session lost" in m and "age=" in m and "rx=" in m and "tx=" in m for _, m in logs), logs
+    finally:
+        transport.close()
+        server.shutdown()
+
+
+def test_failed_handshake_releases_the_radios_slot_immediately():
+    """DK3: a bare close() on a socket another thread is blocked reading kept the
+    connection (and the radio's single slot) until the radio gave up at 120 s."""
+    server = FakeMeshtasticTcpServer(complete_handshake=False)
+    transport = TCPTransport(host="127.0.0.1", port=server.port)
+    try:
+        with pytest.raises(TransportError):
+            transport.connect(_descriptor(server.port), timeout=6.0)
+        assert _wait(lambda: server.active_connections == 0, 2.0), "slot must be free right after the failure"
+    finally:
+        transport.close()
+        server.shutdown()
+
+
+def test_no_heartbeat_is_armed_or_sent_after_close():
+    server = FakeMeshtasticTcpServer(complete_handshake=True)
+    transport = TCPTransport(host="127.0.0.1", port=server.port)
+    try:
+        transport.connect(_descriptor(server.port), timeout=10.0)
+        interface = transport._interface
+        assert interface.heartbeatTimer is not None, "armed while the session is up"
+        transport.disconnect(timeout=10.0)
+        assert _wait(lambda: not _live_timers(), 2.0)
+        interface._startHeartbeat()                 # a late handshake completing after close()
+        assert not _live_timers(), "a closed interface must never re-arm the heartbeat"
+        assert interface.heartbeatTimer is None
+    finally:
+        transport.close()
+        server.shutdown()
+
+
+def test_uptime_going_backwards_is_logged_as_a_radio_reboot():
+    logs = []
+    transport = TCPTransport(host="127.0.0.1", on_log=lambda m, l="INFO": logs.append((l, m)))
+    transport._note_radio_uptime(5000, "at connect")
+    transport._note_radio_uptime(5100, "local telemetry")
+    assert not [m for _, m in logs if "REBOOTED" in m]
+    transport._note_radio_uptime(40, "at connect")
+    assert [m for l, m in logs if "REBOOTED" in m and l == "WARNING"]
+
+
+def test_installed_meshtastic_still_has_every_private_hook_the_adapter_relies_on():
+    """The adapter overrides/reads private members of a pinned third-party
+    library (meshtastic>=2.7.9,<2.8). A version bump that renames one must fail
+    HERE, in CI, not as a silent no-op on a user's radio."""
+    from meshtastic import NODELESS_WANT_CONFIG_ID
+    from meshtastic.mesh_interface import MeshInterface
+    from meshtastic.stream_interface import StreamInterface
+    from meshtastic.tcp_interface import TCPInterface
+
+    for owner, names in (
+        (TCPInterface, ("_reconnect", "myConnect", "_readBytes", "_writeBytes", "_socket_shutdown", "close")),
+        (StreamInterface, ("_waitConnected", "_sendToRadioImpl")),
+        (MeshInterface, ("_startHeartbeat", "sendHeartbeat", "_startConfig", "_connected", "_disconnected",
+                         "_handleFromRadio", "close")),
+    ):
+        for name in names:
+            assert callable(getattr(owner, name, None)), f"{owner.__name__}.{name} is gone"
+    assert NODELESS_WANT_CONFIG_ID == 69420
+    assert "noNodes" in inspect.signature(TCPInterface.__init__).parameters
+    source = inspect.getsource(MeshInterface.__init__)
+    for attribute in ("heartbeatTimer", "isConnected", "nodesByNum", "noNodes"):
+        assert f"self.{attribute}" in source, f"MeshInterface no longer sets {attribute}"
+    reconnect = inspect.getsource(TCPInterface._reconnect)
+    assert "myConnect" in reconnect, "the library's self-reconnect changed shape - re-check our override"
+
+
+def test_first_connect_asks_for_the_full_config_reconnects_for_config_only():
+    """Measured on the real T-Beam: 13999 B / 100 nodes -> 1187 B / own node only,
+    identity identical. Boot (first session in this process) still needs nodes."""
+    server = FakeMeshtasticTcpServer(complete_handshake=True)
+    transport = TCPTransport(host="127.0.0.1", port=server.port)
+    try:
+        transport.connect(_descriptor(server.port), timeout=10.0)
+        assert transport._interface.noNodes is False
+        assert server.accepted_want_config_id != 69420
+        transport.connect(_descriptor(server.port), force=True, timeout=10.0)
+        assert transport._interface.noNodes is True
+        assert _wait(lambda: server.accepted_want_config_id == 69420, 2.0), server.accepted_want_config_id
+        assert transport.get_connection_info().state == ConnectionState.CONNECTED
+    finally:
+        transport.close()
+        server.shutdown()

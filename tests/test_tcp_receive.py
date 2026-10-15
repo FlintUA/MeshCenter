@@ -86,7 +86,7 @@ class FakeInterface:
 
     instances = []
 
-    def __init__(self, hostname="", portNumber=4403, connectNow=True, my_node_num=LOCAL_NUM):
+    def __init__(self, hostname="", portNumber=4403, connectNow=True, my_node_num=LOCAL_NUM, noNodes=False):
         self.myInfo = types.SimpleNamespace(my_node_num=my_node_num) if my_node_num is not None else None
         self._rxThread = FakeReader()
         self.socket = None

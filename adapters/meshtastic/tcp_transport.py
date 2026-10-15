@@ -129,6 +129,35 @@ _RECONNECT_JITTER_RATIO = 0.15
 # Never let jitter (or a pathologically small base delay) collapse a
 # reconnect attempt into a near-zero-delay retry - this is the actual
 # "no tight loop" enforcement, not just documentation.
+def _hard_close_socket(sock) -> None:
+    """shutdown(SHUT_RDWR) THEN close(). On Linux a bare close() while another
+    thread is blocked in recv() on the same socket sends nothing: the kernel
+    keeps the connection until that recv() returns, so an abandoned handshake
+    held the radio's single API slot until the radio itself gave up (120 s,
+    measured on the T-Beam, DK3) and the radio ignored every SYN meanwhile.
+    shutdown() tears the connection down immediately and wakes the reader."""
+    if sock is None:
+        return
+    try:
+        sock.shutdown(socket.SHUT_RDWR)
+    except Exception:
+        pass
+    try:
+        sock.close()
+    except Exception:
+        pass
+
+
+# DK3: reconnects after the first session ask the radio for its config only
+# (want_config_id = NODELESS_WANT_CONFIG_ID = 69420, the library's
+# `noNodes=True`), skipping the NodeDB dump - Core already seeded nodes at the
+# first connect and the inbound NodeInfo/position/telemetry events keep them
+# fresh. Measured on the real T-Beam (firmware 2.7.15, 100-node DB): 13999 B ->
+# 1187 B (-91 %), 1.36 s -> 0.76 s, and node id / long name / hardware /
+# firmware identity come through identically. A reconnect that does NOT carry
+# the NodeDB is what the radio's lwIP is least likely to choke on.
+NODELESS_RECONNECT = True
+
 # DK2 half-open detection (see _enable_liveness_options()).
 _KEEPALIVE_IDLE_S = 30
 _KEEPALIVE_INTERVAL_S = 10
@@ -345,6 +374,8 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
             "malformed_events": 0,
         }
         self._last_overflow_log = float("-inf")
+        self._had_session = False          # a session reached READY at least once in this process
+        self._uptime_sample = None         # (wall time, radio uptime_seconds)
         # Bumps on every new physical connection. Observability only: the
         # safety check against writing radio A's events into radio B's profile
         # is the node id every event carries, not this.
@@ -419,6 +450,29 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
             return False
         return True
 
+    def _abandon_interface(self, interface) -> None:
+        """An interface whose handshake failed or timed out is no longer ours
+        but its reader thread and socket still are alive: tear it down for
+        real (hard socket close, heartbeat never armed or cancelled) so it
+        cannot hold the radio's slot or start the library's 5-minute heartbeat
+        later when a slow handshake finally completes."""
+        if interface is None:
+            return
+        try:
+            interface._mc_closed = True
+            interface._wantExit = True
+        except Exception:
+            pass
+        _hard_close_socket(getattr(interface, "socket", None))
+
+        def _close():
+            try:
+                interface.close()
+            except Exception:
+                pass
+
+        threading.Thread(target=_close, daemon=True, name="tcp-abandoned-close").start()
+
     def _detach_and_close_async(self, *, timeout: float) -> None:
         """Detaches self._interface and flips self._state to DISCONNECTED
         synchronously, under self._lock, BEFORE closing the detached
@@ -472,24 +526,14 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
             # immediately instead of waiting on it.
             reader_thread = getattr(interface_to_close, "_rxThread", None)
             if reader_thread is not None and reader_thread.is_alive():
-                raw_socket = getattr(interface_to_close, "socket", None)
-                if raw_socket is not None:
-                    try:
-                        raw_socket.close()
-                    except Exception:
-                        pass
+                _hard_close_socket(getattr(interface_to_close, "socket", None))
 
         try:
             self._call_with_timeout(_do_close, timeout=timeout, what="close interface")
         except TransportError as error:
             # DK2: close() can block on a half-open link; the single client
             # slot must be released regardless, so close the raw socket here.
-            raw_socket = getattr(interface_to_close, "socket", None)
-            if raw_socket is not None:
-                try:
-                    raw_socket.close()
-                except Exception:
-                    pass
+            _hard_close_socket(getattr(interface_to_close, "socket", None))
             # Own state is already correct (detached above) regardless -
             # this is purely "how long did the background close() take",
             # not a correctness signal, so it's logged, not re-raised.
@@ -579,10 +623,7 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
 
     @staticmethod
     def _close_quietly(sock) -> None:
-        try:
-            sock.close()
-        except Exception:
-            pass
+        _hard_close_socket(sock)
 
     def _classify_socket_error(self, exc: BaseException) -> Optional[TransportError]:
         """Shared classifier for a raw socket-layer exception, used both
@@ -826,6 +867,70 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
                     super().myConnect()
 
             _link_lost = False
+            _mc_closed = False
+
+            def _mc_init_tracking(self):
+                if getattr(self, "_mc_tracking", False):
+                    return
+                self._mc_tracking = True
+                self._mc_created_at = time.time()
+                self._mc_rx_bytes = 0
+                self._mc_tx_bytes = 0
+                self._mc_hb_lock = threading.Lock()
+
+            def _readBytes(self, length):
+                self._mc_init_tracking()
+                data = super()._readBytes(length)
+                if data:
+                    self._mc_rx_bytes += len(data)
+                return data
+
+            def _writeBytes(self, b):
+                self._mc_init_tracking()
+                super()._writeBytes(b)
+                self._mc_tx_bytes += len(b)
+
+            def _startHeartbeat(self):
+                """The library's own re-arms its timer before sending and has no
+                notion of a closed interface: an interface abandoned mid-
+                handshake (or closed in the narrow window between the timer
+                firing and re-arming) kept heartbeating every 5 minutes into a
+                dead socket forever (BrokenPipe in the log, NAS 2026-10-14).
+                Same cadence, but nothing is armed or sent once closed/lost."""
+                self._mc_init_tracking()
+
+                def callback():
+                    with self._mc_hb_lock:
+                        if self._mc_closed or self._wantExit or self._link_lost:
+                            self.heartbeatTimer = None
+                            return
+                        timer = threading.Timer(300, callback)
+                        timer.daemon = True
+                        self.heartbeatTimer = timer
+                        timer.start()
+                    try:
+                        self.sendHeartbeat()
+                    except Exception:
+                        pass
+
+                callback()
+
+            def close(self):
+                self._mc_init_tracking()
+                with self._mc_hb_lock:
+                    self._mc_closed = True
+                    timer, self.heartbeatTimer = getattr(self, "heartbeatTimer", None), None
+                    if timer is not None:
+                        timer.cancel()
+                try:
+                    super().close()
+                finally:
+                    # The library's close() already shuts the socket down and
+                    # closes it; only a reader thread STILL blocked in recv()
+                    # means it did not take effect - then force it.
+                    reader = getattr(self, "_rxThread", None)
+                    if reader is not None and reader.is_alive() and reader is not threading.current_thread():
+                        _hard_close_socket(getattr(self, "socket", None))
 
             def _reconnect(self):
                 """DK2: the library's own silent self-healing is disabled.
@@ -838,10 +943,23 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
                 lost and the reader exits, so _demote_if_dead_locked() sees
                 it at once and Core's single reconnect path (identity probe
                 -> connect -> reuse) takes over."""
+                self._mc_init_tracking()
+                if self._link_lost:
+                    return
                 self._link_lost = True
                 self._wantExit = True
                 try:
                     self.isConnected.clear()
+                except Exception:
+                    pass
+                # Answer the radio's FIN (or a failed send) at once: our own
+                # FIN goes out in milliseconds, not whenever Core next polls -
+                # the radio keeps its slot tied up until we do.
+                from_reader = threading.current_thread() is getattr(self, "_rxThread", None)
+                _hard_close_socket(getattr(self, "socket", None))
+                try:
+                    owner._log_session_lost(self, "the radio closed the connection" if from_reader
+                                            else "a send on the connection failed")
                 except Exception:
                     pass
 
@@ -873,7 +991,8 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
                 if self.failure:
                     raise self.failure
 
-        return _FailFastTCPInterface(hostname=self._host, portNumber=self._port, connectNow=True)
+        extra = {"noNodes": True} if self._use_nodeless_config() else {}
+        return _FailFastTCPInterface(hostname=self._host, portNumber=self._port, connectNow=True, **extra)
 
     # ------------------------------------------------------------------
     # RadioTransport - connection lifecycle
@@ -1000,8 +1119,9 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
         try:
             interface = self._call_with_timeout(_do_sync, timeout=remaining, what="connect() protocol sync")
         except TransportError as error:
-            self._pending_interface = None
+            abandoned, self._pending_interface = self._pending_interface, None
             self._close_quietly(connected_socket)
+            self._abandon_interface(abandoned)
             error = self._finalize_sync_error(error)
             with self._lock:
                 self._state = _TcpState.ERROR
@@ -1039,6 +1159,13 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
             self._connected_since = time.time()
             self._last_error = None
             self._connection_generation += 1
+            self._had_session = True
+        self._note_radio_uptime(self._radio_uptime(interface), "at connect")
+        self._on_log(
+            f"TCP session up: radio uptime {self._uptime_sample[1] if self._uptime_sample else 'unknown'}s, "
+            f"config {'nodeless' if getattr(interface, 'noNodes', False) else 'full'}",
+            "INFO",
+        )
         if displaced is not None and displaced is not interface:
             # Defensive only - _connect_lock plus the detach above mean
             # nothing should still be attached here, but silently
@@ -1126,6 +1253,46 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
     def _jittered_delay(base_delay: float) -> float:
         jitter = base_delay * random.uniform(-_RECONNECT_JITTER_RATIO, _RECONNECT_JITTER_RATIO)
         return max(_RECONNECT_MIN_DELAY_S, base_delay + jitter)
+
+    def _use_nodeless_config(self) -> bool:
+        return bool(NODELESS_RECONNECT and self._had_session)
+
+    def _radio_uptime(self, interface):
+        try:
+            my_num = getattr(getattr(interface, "myInfo", None), "my_node_num", None)
+            node = (getattr(interface, "nodesByNum", None) or {}).get(my_num) or {}
+            value = (node.get("deviceMetrics") or {}).get("uptimeSeconds")
+            return int(value) if value is not None else None
+        except Exception:
+            return None
+
+    def _note_radio_uptime(self, uptime, source) -> None:
+        """Track the radio's own uptime_seconds so a link drop can be told apart
+        from a radio reboot: an uptime lower than the previous sample plus the
+        wall time since is a reboot."""
+        if uptime is None:
+            return
+        now = time.time()
+        previous = self._uptime_sample
+        self._uptime_sample = (now, uptime)
+        if previous is not None:
+            prev_wall, prev_uptime = previous
+            if uptime + 5 < prev_uptime:
+                self._on_log(
+                    f"TCP radio REBOOTED between samples (uptime {prev_uptime}s -> {uptime}s, {source})", "WARNING"
+                )
+
+    def _log_session_lost(self, interface, cause: str) -> None:
+        age = time.time() - getattr(interface, "_mc_created_at", time.time())
+        sample = self._uptime_sample
+        uptime = (
+            f"radio uptime ~{int(sample[1] + (time.time() - sample[0]))}s" if sample is not None else "radio uptime unknown"
+        )
+        self._on_log(
+            f"TCP session lost: {cause}; age={age:.0f}s rx={getattr(interface, '_mc_rx_bytes', 0)}B "
+            f"tx={getattr(interface, '_mc_tx_bytes', 0)}B; {uptime}",
+            "WARNING",
+        )
 
     def adopt_endpoint(self, descriptor: ConnectionDescriptor) -> None:
         """Core re-supplies the endpoint on reconnect (ipc_server.py's
@@ -1478,6 +1645,11 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
         local_node_id = self._local_node_id(interface)
         if not local_node_id:
             raise ValueError("local radio node id is not known yet")
+        if kind == "device" and f"!{from_num:08x}" == local_node_id:
+            try:
+                self._note_radio_uptime(int(metrics.get("uptimeSeconds")), "local telemetry")
+            except (TypeError, ValueError):
+                pass
         channel = _plain_int(packet.get("channel"))
         return ReceivedTelemetryEvent(
             sender_id=f"!{from_num:08x}",

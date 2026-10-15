@@ -107,7 +107,7 @@ class _FakeTCPInterface:
     construct_exception = None
     rx_thread_survives_close = False
 
-    def __init__(self, hostname, portNumber=DEFAULT_TCP_PORT, connectNow=True):
+    def __init__(self, hostname, portNumber=DEFAULT_TCP_PORT, connectNow=True, noNodes=False):
         if _FakeTCPInterface.construct_delay_s:
             time.sleep(_FakeTCPInterface.construct_delay_s)
         if _FakeTCPInterface.construct_exception is not None:

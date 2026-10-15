@@ -94,18 +94,18 @@ On a machine that has the source (any OS with Docker, `--platform linux/amd64`
 for a DS920+):
 
 ```bash
-docker build --platform linux/amd64 --build-arg MESHCENTER_VERSION=dk2 -t meshcenter:dk2 .
-docker save meshcenter:dk2 | gzip > meshcenter-dk2.tar.gz
+deploy/docker/build.sh              # builds meshcenter:<git describe>, e.g. meshcenter:1.10.0-27-gabc1234
+docker save meshcenter:1.10.0-27-gabc1234 | gzip > meshcenter.tar.gz   # use the tag build.sh printed
 ```
 
 Copy the file to the NAS (File Station or `scp`), then as root on the NAS:
 
 ```bash
-gunzip -c meshcenter-dk2.tar.gz | docker load
+gunzip -c meshcenter.tar.gz | docker load
 ```
 
 Use a `compose.yaml` **without** a `build:` section and with
-`image: meshcenter:dk2` (the tag you loaded), then `docker compose up -d`.
+`image: meshcenter:<the tag you loaded>`, then `docker compose up -d`.
 `config/` and `data/` are never touched by an image change. To update later:
 load the new image, change the `image:` tag, `docker compose up -d`.
 
@@ -149,12 +149,34 @@ a WARNING is logged at every start.
 ### If the radio goes away
 
 MeshCenter keeps trying **forever** while the active radio is TCP: after a drop
-(power cut, Wi-Fi gone, radio reboot, NAS or router restart) it retries 30 s,
-60 s, 2 min, 4 min and then every 5 minutes, re-checks that it is the same
-radio and reconnects on its own - no container restart needed. The header chip
-and Node Manager show "Reconnecting… (attempt N, next in X s)"; **Reconnect**
-(Node Manager) tries immediately and restarts the schedule. A radio that
-answers as a *different* node stays refused (see Node Manager) until you accept it.
+(power cut, Wi-Fi gone, radio reboot, NAS or router restart) it waits about
+25 s for the radio to release its connection, then retries after 30 s, 60 s, 90 s
+and then every 2 minutes, re-checks that it is the same radio and reconnects on
+its own - no container restart needed. A session only counts as recovered once
+it has stayed up for 20 s. The header chip and Node Manager show "Reconnecting…
+(attempt N, next in X s)"; **Reconnect** (Node Manager) tries immediately and
+restarts the schedule. A radio that answers as a *different* node stays refused
+(see Node Manager) until you accept it.
+
+### Radio behaviour you may see ("Link resets")
+
+A Meshtastic node serves **one** TCP client, and the T-Beam (ESP32, firmware
+2.7.15) is known to close that session **by itself**, at irregular intervals
+(roughly 1-8 minutes while idle, measured with a packet capture - the radio
+sends the FIN; MeshCenter never resets a healthy connection). Right after such a
+close it may close new sessions about a second after the config download for a
+minute or two, and ignore new connections for up to ~2 minutes. MeshCenter
+answers every close within a second, waits, and reconnects without piling on;
+Node Manager shows how many "Link resets" happened in the last hour. They are
+the radio's doing, not a MeshCenter fault. Messages that arrive while no session
+exists may be missed (the radio does not hold them for a TCP client), and a send
+attempted in that gap fails with "not connected".
+
+If Node Manager says the radio *"may be in use by another client"*, something
+else is connecting to the same radio (the Meshtastic phone app, a second
+MeshCenter, a script): the radio drops the older client whenever a new one
+connects, so the two keep evicting each other. Close the other client; MeshCenter
+backs off to one attempt per 2 minutes while that is the case.
 
 If the radio is unreachable at start MeshCenter still starts and shows it as
 disconnected. Startup takes about 40 seconds in that case (measured) before the
@@ -205,8 +227,10 @@ authenticated pages/API (`/api/radio_health`, Settings → Meshtastic Radio).
 
 ## Update, roll back, back up
 
-*Update:* `git -C src pull`, bump `MESHCENTER_VERSION` in `.env`, then
-`sudo docker compose build && sudo docker compose up -d`.
+*Update:* `git -C src pull`, set `MESHCENTER_VERSION` in `.env` to the output of
+`git -C src describe --tags --always` (a real version label, never a name like
+`dk2` - that is not a release number and used to raise a false "update available"),
+then `sudo docker compose build && sudo docker compose up -d`.
 *Roll back:* images are tagged `meshcenter:<MESHCENTER_VERSION>`; set the
 previous version in `.env` and `up -d` again (restore `data/` from a backup if a
 newer version migrated it).

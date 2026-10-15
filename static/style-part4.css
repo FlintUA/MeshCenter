@@ -1592,6 +1592,48 @@ html[data-theme="dark"] .identity-error { color: #fca5a5; }
     gap: 8px;
 }
 
+.node-manager-notice {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin: 0 0 12px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--mc-border, #d8e0ea);
+    background: var(--mc-surface-alt, rgba(148, 163, 184, 0.12));
+    font-size: 13px;
+}
+
+.node-manager-notice--error {
+    border-color: #c62828;
+}
+
+.node-manager-notice-text {
+    flex: 1;
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+}
+
+.node-manager-notice-close {
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.node-manager-contention-note {
+    margin: 8px 0 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: #946316;
+}
+
+html[data-theme="dark"] .node-manager-contention-note {
+    color: var(--mc-warning);
+}
+
 .node-connections-empty {
     margin: 0;
     font-size: 12px;

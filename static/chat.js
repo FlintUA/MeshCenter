@@ -11027,6 +11027,7 @@ function renderNodeManagerConnectionCard(connection, radio, connectionLabel, can
                 ${targetRow}
                 <div><dt>${escapeHtml(window.I18N.t('waypoints.status'))}</dt><dd>${escapeHtml(connectionLabel)}</dd></div>
                 <div><dt>${escapeHtml(window.I18N.t('node_manager.connected_since'))}</dt><dd>${formatDeviceDashboardDate(connection.connected_since)}</dd></div>
+                ${type === 'tcp' && connection.reconnect ? `<div><dt>${escapeHtml(window.I18N.t('node_manager.link_resets_label'))}</dt><dd>${escapeHtml(String(connection.reconnect.link_losses_1h ?? 0))}</dd></div>` : ''}
             `,
             connectionActionsHtml: `
                 <div class="device-action-row">
@@ -11034,6 +11035,9 @@ function renderNodeManagerConnectionCard(connection, radio, connectionLabel, can
                         onclick="reconnectActiveTransport('${type}'); setTimeout(() => loadNodeManagerDashboard(), 1800);"
                         ${canReconnect ? '' : 'disabled'}>${escapeHtml(window.I18N.t('node_manager.reconnect'))}</button>
                 </div>
+                ${type === 'tcp' && connection.reconnect && connection.reconnect.contention
+                    ? `<p class="node-manager-contention-note">${escapeHtml(window.I18N.t('node_manager.radio_contention'))}</p>`
+                    : ''}
             `,
         };
     }
@@ -11333,6 +11337,7 @@ async function loadNodeManagerDashboard(showFeedback = false) {
 
         container.dataset.loaded = '1';
         container.innerHTML = `
+            ${renderNodeManagerNotice()}
             <section class="node-profile-selector-section">
                 <div class="node-manager-section-heading">
                     <div>
@@ -11540,6 +11545,32 @@ function updateNodeManagerDiscoveryTransport() {
     if (searchBtn) searchBtn.disabled = selected === 'bluetooth';
 }
 
+// DK3: errors from the radio discovery / accept / activate flows used to be a
+// native window.alert() (modal, unthemed, blocks the page, lost on re-render).
+// They are kept here and rendered as an in-app notice at the top of the Node
+// Manager, which survives loadNodeManagerDashboard()'s re-render until dismissed.
+let nodeManagerNotice = null;
+
+function setNodeManagerNotice(message, level = 'error') {
+    nodeManagerNotice = message ? { message: String(message), level } : null;
+}
+
+function dismissNodeManagerNotice() {
+    nodeManagerNotice = null;
+    document.getElementById('nodeManagerNotice')?.remove();
+}
+
+function renderNodeManagerNotice() {
+    if (!nodeManagerNotice) return '';
+    return `
+        <div id="nodeManagerNotice" class="node-manager-notice node-manager-notice--${escapeHtml(nodeManagerNotice.level)}" role="alert">
+            <span class="node-manager-notice-text">${escapeHtml(nodeManagerNotice.message)}</span>
+            <button type="button" class="node-manager-notice-close"
+                aria-label="${escapeHtml(window.I18N.t('node_manager.notice_dismiss'))}"
+                onclick="dismissNodeManagerNotice()">&times;</button>
+        </div>`;
+}
+
 async function runNodeManagerDiscovery() {
     const selected = document.querySelector('input[name="nodeManagerDiscoveryTransport"]:checked')?.value || 'usb';
     if (selected === 'bluetooth') return; // guarded by the disabled Search button too - see this section's own docstring
@@ -11606,7 +11637,7 @@ async function detectAndAddNodeManagerRadio(tcpEndpoint) {
         await showNodeManagerDiscoveryResult(data, isTcp);
     } catch (error) {
         console.error('[NODE MANAGER] Radio detection failed:', error);
-        window.alert(error.message || String(error));
+        setNodeManagerNotice(error.message || String(error));
         showToast(window.I18N.t('node_manager.radio_not_added'), 'error');
         await loadNodeManagerDashboard();
     }
@@ -11741,7 +11772,7 @@ async function confirmNodeManagerDiscoveryCreateProfile() {
         waitForNodeManagerProfile(accepted.profile_id);
     } catch (error) {
         console.error('[NODE MANAGER] Create profile failed:', error);
-        window.alert(error.message || String(error));
+        setNodeManagerNotice(error.message || String(error));
         showToast(window.I18N.t('node_manager.radio_not_added'), 'error');
         await loadNodeManagerDashboard();
     }
@@ -11832,7 +11863,7 @@ async function activateNodeManagerProfile(profileId) {
         waitForNodeManagerProfile(cleanProfileId, 60000);
     } catch (error) {
         console.error('[NODE MANAGER] Profile activation failed:', error);
-        window.alert(error.message || String(error));
+        setNodeManagerNotice(error.message || String(error));
         showToast(window.I18N.t('node_manager.radio_profile_not_changed'), 'error');
         await loadNodeManagerDashboard();
     } finally {

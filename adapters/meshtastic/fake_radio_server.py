@@ -159,6 +159,7 @@ class FakeMeshtasticTcpServer:
         self._outbound: "queue.Queue[bytes]" = queue.Queue()
         self.active_connections = 0
         self.max_concurrent_connections = 0
+        self._live_conns: list = []
         self._stop_requested = threading.Event()
         self._thread = threading.Thread(target=self._serve, daemon=True, name="fake-meshtastic-tcp-server")
         self._thread.start()
@@ -199,11 +200,14 @@ class FakeMeshtasticTcpServer:
             self.real_connections += 1
             self.active_connections += 1
             self.max_concurrent_connections = max(self.max_concurrent_connections, self.active_connections)
+            self._live_conns.append(conn)
         try:
             self._drive_handshake(conn, payload)
         finally:
             with self._count_lock:
                 self.active_connections -= 1
+                if conn in self._live_conns:
+                    self._live_conns.remove(conn)
             with contextlib.suppress(Exception):
                 conn.close()
 
@@ -358,6 +362,18 @@ class FakeMeshtasticTcpServer:
             portnums_pb2.PortNum.TELEMETRY_APP, telemetry.SerializeToString(),
             from_num=from_num, to_num=0xFFFFFFFF, packet_id=packet_id, channel=channel,
         ))
+
+    def drop_clients(self) -> int:
+        """Behave like the real T-Beam closing its API session on its own: send
+        FIN (shutdown write side) to every connected client and keep the socket
+        open until the CLIENT closes - the radio is the active closer (DK3
+        capture). Returns how many clients were dropped."""
+        with self._count_lock:
+            conns = list(self._live_conns)
+        for conn in conns:
+            with contextlib.suppress(OSError):
+                conn.shutdown(socket.SHUT_WR)
+        return len(conns)
 
     def shutdown(self) -> None:
         self._stop_requested.set()

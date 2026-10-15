@@ -1,14 +1,17 @@
 """TcpLinkSupervisor - the ONE place a TCP radio link is (re)established.
 
-DK2. Before this, healing a dropped TCP link was spread over three bounded,
-partly overlapping mechanisms (process_identity_recovery's 6 attempts,
-process_transport_autorecovery's 3-per-30-min, and a Reconnect button that
-went through the serial release path). After roughly 20 minutes of the radio
-being away they all gave up and only `docker restart` recovered.
+DK2 introduced it; DK3 retuned it against the real T-Beam (ESP32, firmware
+2.7.15). What the capture showed (docs/Docker_Installation.md, "Radio
+behaviour"): the radio closes its API session on its own, at random, and after a
+close it tends to refuse new sessions for a while (a new session closed ~1 s
+after the config dump, then SYNs ignored for 1-2 minutes). So this module does
+not fight that: it keeps trying forever, but never faster than the radio can
+take, never counts a session that dies within seconds as a recovery, and says so
+when the pattern looks like another client holding the radio's single slot.
 
-This module is deliberately small, stdlib-only and free of server.py globals:
-everything it needs is injected, so the schedule, the single-flight rule and
-the state machine are unit-testable with a fake clock.
+This module is stdlib-only and free of server.py globals: everything it needs is
+injected, so the schedule, the single-flight rule and the state machine are
+unit-testable with a fake clock.
 
 States
   IDLE        link healthy, or nothing to heal (not a TCP profile, identity
@@ -19,11 +22,21 @@ States
 Rules
   * Unbounded: while the active profile is TCP and identity is not
     MISMATCH/NOT_FOUND, attempts continue forever. Only the delay is capped.
-  * Delays: 30, 60, 120, 240, then 300 s (+-10 % jitter, never below 1 s).
-  * `trigger_now()` (the Reconnect button) resets the backoff and makes the
-    next tick attempt immediately; it never starts a second concurrent attempt.
+  * After a link that was up goes down, wait HOLD_OFF_S (25 s) before the first
+    attempt - the radio needs that long to release its slot. A radio never
+    reached since boot is tried at once. Later attempts back off 30/60/90/120 s
+    (cap 120 s), +-10 % jitter.
+  * A link only counts as recovered after it has stayed up UP_THRESHOLD_S (20 s).
+    Until then the failure counter is NOT reset, so a radio that accepts a
+    session and drops it a second later cannot make us hammer it ("attempt 6
+    right after a success" in the DK2 NAS log).
+  * Three or more sessions that die within UP_THRESHOLD_S inside five minutes
+    flag `contention` ("the radio may be in use by another client") and put the
+    delay floor at the cap.
+  * `trigger_now()` (the Reconnect button) resets the backoff and attempts on
+    the next tick, hold-off skipped; it never starts a second concurrent attempt.
   * One attempt at a time, enforced by `lock` - the same RLock the boot-time
-    identity probe takes, so startup and the supervisor cannot overlap.
+    identity probe takes.
   * `attempt()` returns "connected", "retry" (transient failure) or "stop"
     (identity refused - fail closed, stop until something changes).
 """
@@ -32,9 +45,15 @@ from __future__ import annotations
 import random
 import threading
 import time
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 
-BACKOFF_DELAYS_S = (30, 60, 120, 240, 300)
+HOLD_OFF_S = 25
+BACKOFF_DELAYS_S = (30, 60, 90, 120)   # after the 1st, 2nd, ... failed attempt; last value is the cap
+MAX_DELAY_S = BACKOFF_DELAYS_S[-1]
+UP_THRESHOLD_S = 20
+CONTENTION_CLOSES = 3
+CONTENTION_WINDOW_S = 300
+LOSS_HISTORY_S = 3600
 JITTER_RATIO = 0.10
 TICK_INTERVAL_S = 5.0
 
@@ -80,9 +99,14 @@ class TcpLinkSupervisor:
 
         self._mutex = threading.Lock()  # guards the fields below only
         self._state = STATE_IDLE
-        self._attempts = 0            # failed attempts since the link was last healthy
+        self._attempts = 0            # failed attempts / unstable sessions since the link was last stable
         self._next_at: Optional[float] = None
         self._last_error = ""
+        self._up_since: Optional[float] = None   # when the current session was first seen up
+        self._probation = False       # up, but not yet for UP_THRESHOLD_S
+        self._ever_up = False         # a session has been up at least once in this process
+        self._quick_closes: List[float] = []
+        self._losses: List[float] = []
         self._force = False
         self._wake = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -95,6 +119,7 @@ class TcpLinkSupervisor:
             next_in = None
             if self._state == STATE_WAITING and self._next_at is not None:
                 next_in = max(0, int(round(self._next_at - now)))
+            self._prune_locked(now)
             return {
                 "state": self._state,
                 # The attempt being made now / due next ("attempt 3, next in 12 s"
@@ -103,6 +128,9 @@ class TcpLinkSupervisor:
                 "failed_attempts": self._attempts,
                 "next_in_s": next_in,
                 "last_error": self._last_error,
+                "contention": self._contention_locked(now),
+                "link_losses_1h": len(self._losses),
+                "up_for_s": int(now - self._up_since) if self._up_since is not None else None,
             }
 
     def is_recovering(self) -> bool:
@@ -118,10 +146,12 @@ class TcpLinkSupervisor:
     def trigger_now(self) -> dict:
         """Reconnect button: reset backoff, attempt on the next tick - even if
         the link looks healthy (an explicit user request forces a fresh
-        session). Safe to call while an attempt is already running (then it
-        only resets the counter - the running attempt is never duplicated)."""
+        session), hold-off skipped. Safe to call while an attempt is already
+        running (then it only resets the counter - the running attempt is never
+        duplicated)."""
         with self._mutex:
             self._attempts = 0
+            self._quick_closes.clear()
             self._force = True
             if self._state != STATE_ATTEMPTING:
                 self._state = STATE_WAITING
@@ -153,7 +183,7 @@ class TcpLinkSupervisor:
         """One scheduling decision (also called directly by tests)."""
         if not self._is_tcp_profile() or self._identity_refused():
             with self._mutex:
-                self._reset_locked()
+                self._reset_all_locked()
             return
 
         with self._mutex:
@@ -162,31 +192,101 @@ class TcpLinkSupervisor:
             # Automatic reconnect switched off in Settings: only an explicit
             # Reconnect (forced) acts.
             with self._mutex:
-                self._reset_locked()
+                self._reset_all_locked()
             return
-        if not forced and self._link_connected():
-            with self._mutex:
-                if self._state != STATE_IDLE:
-                    self._on_event("TCP link restored", "OK", f"after {self._attempts} failed attempt(s)")
-                self._reset_locked()
+
+        connected = self._link_connected()
+        now = self._clock()
+        if connected and not forced:
+            self._note_up(now)
             return
+        if not connected:
+            self._note_down(now)
 
         with self._mutex:
             if self._state == STATE_IDLE and not forced:
-                # First sight of a dead link: attempt soon, not after a full wait.
+                # First sight of a dead link (never reached since boot): try at
+                # once; a link that WAS up already got its hold-off in _note_down.
                 self._state = STATE_WAITING
-                self._next_at = self._clock()
+                self._next_at = now
                 self._on_event(
                     "TCP link down - reconnecting",
                     "WARNING",
                     "background reconnect will keep trying until the radio answers",
                 )
-            if self._state != STATE_WAITING or self._clock() < (self._next_at or 0):
+            if self._state != STATE_WAITING or now < (self._next_at or 0):
                 return
             self._state = STATE_ATTEMPTING
 
         self._run_attempt()
 
+    # ---------------------------------------------------------- link bookkeeping
+    def _note_up(self, now: float) -> None:
+        with self._mutex:
+            if self._up_since is None:
+                self._up_since = now
+                self._ever_up = True
+            if self._state != STATE_IDLE and self._state != STATE_ATTEMPTING:
+                # A session is up (someone else connected it, or our attempt did):
+                # nothing left to schedule, but the failure counter stays until
+                # the session has proven itself.
+                self._state = STATE_IDLE
+                self._next_at = None
+            if self._probation and now - self._up_since >= UP_THRESHOLD_S:
+                self._on_event("TCP link restored", "OK", f"stable after {self._attempts} failed attempt(s)")
+                self._probation = False
+                self._attempts = 0
+                self._last_error = ""
+            elif not self._probation and self._attempts:
+                # Up without our attempt (e.g. adapter-side recovery): same rule.
+                self._probation = True
+
+    def _note_down(self, now: float) -> None:
+        with self._mutex:
+            if self._up_since is None:
+                return
+            up_for = now - self._up_since
+            self._up_since = None
+            self._probation = False
+            self._losses.append(now)
+            quick = up_for < UP_THRESHOLD_S
+            if quick:
+                self._quick_closes.append(now)
+                self._attempts += 1   # an unstable session is a failed attempt, not a recovery
+            else:
+                self._attempts = 0
+            self._prune_locked(now)
+            contention = self._contention_locked(now)
+            delay = float(HOLD_OFF_S) if not quick else self._delay_locked(now)
+            self._state = STATE_WAITING
+            self._next_at = now + delay
+            self._on_event(
+                "TCP link lost",
+                "WARNING",
+                f"session lasted {int(up_for)}s - "
+                + ("it dropped almost at once; " if quick else "")
+                + (
+                    "the radio may be in use by another client; "
+                    if contention
+                    else ""
+                )
+                + f"next attempt in {int(delay)}s",
+            )
+
+    def _prune_locked(self, now: float) -> None:
+        self._losses = [t for t in self._losses if now - t < LOSS_HISTORY_S]
+        self._quick_closes = [t for t in self._quick_closes if now - t < CONTENTION_WINDOW_S]
+
+    def _contention_locked(self, now: float) -> bool:
+        return len([t for t in self._quick_closes if now - t < CONTENTION_WINDOW_S]) >= CONTENTION_CLOSES
+
+    def _delay_locked(self, now: float) -> float:
+        delay = backoff_delay(self._attempts, rng=self._rng)
+        if self._contention_locked(now):
+            delay = max(delay, float(MAX_DELAY_S))
+        return delay
+
+    # ------------------------------------------------------------------ attempts
     def _run_attempt(self) -> None:
         with self.lock:
             try:
@@ -196,22 +296,30 @@ class TcpLinkSupervisor:
                 outcome = OUTCOME_RETRY
                 error = str(exc)
 
+        now = self._clock()
         with self._mutex:
             if outcome == OUTCOME_CONNECTED:
-                self._on_event("TCP link re-established", "OK", f"attempt {self._attempts + 1}")
-                self._reset_locked()
+                self._on_event("TCP link re-established", "OK", f"attempt {self._attempts + 1}; watching it for {UP_THRESHOLD_S}s")
+                self._state = STATE_IDLE
+                self._next_at = None
+                self._up_since = now
+                self._ever_up = True
+                self._probation = True
+                self._last_error = ""
             elif outcome == OUTCOME_STOP:
                 self._on_event("TCP reconnect stopped", "ERROR", "radio identity was refused - not retrying")
-                self._reset_locked()
+                self._reset_all_locked()
             else:
                 self._attempts += 1
                 self._last_error = error or self._last_error
-                delay = backoff_delay(self._attempts, rng=self._rng)
                 self._state = STATE_WAITING
-                self._next_at = self._clock() + delay
+                self._next_at = now + self._delay_locked(now)
 
-    def _reset_locked(self) -> None:
+    def _reset_all_locked(self) -> None:
         self._state = STATE_IDLE
         self._attempts = 0
         self._next_at = None
         self._last_error = ""
+        self._up_since = None
+        self._probation = False
+        self._quick_closes.clear()

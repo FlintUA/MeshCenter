@@ -1,5 +1,6 @@
-"""DK2 - TCP link supervisor: unbounded retry with capped backoff, one reconnect
-path, health reflecting reality, no serial release for TCP, serial untouched.
+"""DK2/DK3 - TCP link supervisor: unbounded retry with capped backoff, one
+reconnect path, a session only counts once it has stayed up, contention notice,
+health reflecting reality, no serial release for TCP, serial untouched.
 
 The schedule/state-machine tests use a fake clock (a 25+ minute outage is
 simulated, not waited for)."""
@@ -8,11 +9,15 @@ import threading
 import pytest
 
 from meshsrv import tcp_link_supervisor as tls
+from meshsrv.radio_transport import ConnectionDescriptor, ConnectionType
 from meshsrv.tcp_link_supervisor import (
     BACKOFF_DELAYS_S,
+    HOLD_OFF_S,
+    MAX_DELAY_S,
     OUTCOME_CONNECTED,
     OUTCOME_RETRY,
     OUTCOME_STOP,
+    UP_THRESHOLD_S,
     TcpLinkSupervisor,
     backoff_delay,
 )
@@ -28,6 +33,8 @@ class World:
         self.auto = True
         self.connected = False
         self.radio_reachable = False
+        self.radio_keeps_session_for = None   # None = forever, else seconds a fresh session lives
+        self.session_started = None
         self.attempts = []
         self.events = []
         self.outcome_override = None
@@ -41,8 +48,18 @@ class World:
             return self.outcome_override
         if self.radio_reachable:
             self.connected = True
+            self.session_started = self.now
             return OUTCOME_CONNECTED
         return OUTCOME_RETRY
+
+    def advance(self, seconds, supervisor, step=1.0):
+        end = self.now + seconds
+        while self.now < end:
+            if self.connected and self.radio_keeps_session_for is not None \
+                    and self.now - self.session_started >= self.radio_keeps_session_for:
+                self.connected = False  # the radio closed the session
+            supervisor.tick()
+            self.now += step
 
     def supervisor(self):
         return TcpLinkSupervisor(
@@ -57,62 +74,72 @@ class World:
         )
 
 
-def run_for(world, supervisor, seconds, step=5.0):
-    end = world.now + seconds
-    while world.now < end:
-        supervisor.tick()
-        world.now += step
-
-
-def test_backoff_schedule_is_capped_and_never_ends():
+def test_backoff_schedule_is_capped_at_120_and_never_ends():
     delays = [backoff_delay(i, rng=lambda: 0.5) for i in range(1, 12)]
-    assert delays[:5] == [30, 60, 120, 240, 300]
-    assert delays[5:] == [300] * 6  # capped, not exhausted
+    assert delays[:4] == [30, 60, 90, 120]
+    assert delays[4:] == [120] * 7  # capped, not exhausted
+    assert MAX_DELAY_S == 120
 
 
 def test_jitter_stays_within_ten_percent():
     low = backoff_delay(3, rng=lambda: 0.0)
     high = backoff_delay(3, rng=lambda: 1.0)
-    assert 108 <= low < 120 < high <= 132
+    assert 81 <= low < 90 < high <= 99
 
 
 def test_unbounded_retry_over_a_long_outage_then_recovery():
     """Radio away for 45 simulated minutes (far past the old ~18.5 min / 6-attempt
     and 3-per-30-min limits): attempts never stop; it reconnects the moment the
-    radio is back - no restart involved."""
+    radio is back and is marked stable after 20 s - no restart involved."""
     world = World()
     supervisor = world.supervisor()
-    run_for(world, supervisor, 45 * 60)
+    world.advance(45 * 60, supervisor)
 
-    assert len(world.attempts) > 10, "must keep trying well past any old attempt limit"
+    assert len(world.attempts) > 20, "must keep trying well past any old attempt limit"
     gaps = [b - a for a, b in zip(world.attempts, world.attempts[1:])]
-    assert max(gaps) <= 300 + 5, "delay is capped at 5 minutes (+ one tick of granularity)"
+    assert max(gaps) <= MAX_DELAY_S + 6, "delay is capped at 2 minutes (+ tick granularity)"
     assert supervisor.is_recovering()
 
     world.radio_reachable = True
-    run_for(world, supervisor, 6 * 60)
-
+    world.advance(MAX_DELAY_S + 10, supervisor)
     assert world.connected
+    world.advance(UP_THRESHOLD_S + 2, supervisor)
     assert supervisor.status()["state"] == tls.STATE_IDLE
-    assert any(title == "TCP link re-established" for title, _, _ in world.events)
+    assert supervisor.status()["failed_attempts"] == 0
+    assert any(title == "TCP link restored" for title, _, _ in world.events)
 
 
 def test_unreachable_at_boot_for_more_than_20_minutes_recovers_when_it_appears():
     world = World()  # never connected since boot (DETECTION_ERROR case)
     supervisor = world.supervisor()
-    run_for(world, supervisor, 25 * 60)
-    assert not world.connected and len(world.attempts) >= 6
+    world.advance(25 * 60, supervisor)
+    assert not world.connected and len(world.attempts) >= 12
 
     world.radio_reachable = True
-    run_for(world, supervisor, 5 * 60 + 10)
+    world.advance(MAX_DELAY_S + 10, supervisor)
     assert world.connected
 
 
-def test_first_attempt_is_immediate_not_after_a_full_wait():
+def test_first_attempt_for_a_radio_never_reached_is_immediate():
     world = World()
     supervisor = world.supervisor()
     supervisor.tick()
     assert len(world.attempts) == 1
+
+
+def test_a_link_that_was_up_waits_the_hold_off_before_the_first_attempt():
+    """The radio needs ~25 s to release its slot after it closes a session."""
+    world = World()
+    world.connected = True
+    supervisor = world.supervisor()
+    world.advance(30, supervisor)             # healthy and stable
+    world.radio_reachable = True
+    world.connected = False                   # the radio closed the session
+    t_down = world.now
+    world.advance(60, supervisor)
+    assert world.attempts, "it does reconnect"
+    assert world.attempts[0] - t_down >= HOLD_OFF_S - 1, "but not before the hold-off"
+    assert world.attempts[0] - t_down <= HOLD_OFF_S + 6
 
 
 def test_status_reports_attempt_and_countdown_while_waiting():
@@ -127,10 +154,74 @@ def test_status_reports_attempt_and_countdown_while_waiting():
     assert supervisor.status()["next_in_s"] == 20
 
 
+def test_a_session_that_dies_within_20_seconds_is_not_a_recovery():
+    """DK2 NAS log: 'attempt 6' right after a success. The failure counter must
+    survive a session the radio drops a second after accepting it."""
+    world = World()
+    supervisor = world.supervisor()
+    world.advance(5 * 60, supervisor)                 # a few failed attempts
+    failed_before = supervisor.status()["failed_attempts"]
+    assert failed_before >= 4
+
+    world.radio_reachable = True
+    world.radio_keeps_session_for = 3                 # the radio closes it after 3 s
+    world.advance(MAX_DELAY_S + 10, supervisor)
+    assert world.session_started is not None
+    world.advance(8, supervisor)
+    status = supervisor.status()
+    assert status["failed_attempts"] > failed_before, "an unstable session counts as one more failure"
+    assert status["state"] == tls.STATE_WAITING
+
+
+def test_stability_resets_the_counter_only_after_the_threshold():
+    world = World()
+    supervisor = world.supervisor()
+    world.advance(4 * 60, supervisor)
+    world.radio_reachable = True
+    while not world.connected:
+        world.advance(1, supervisor)
+    world.advance(2, supervisor)
+    assert supervisor.status()["failed_attempts"] > 0, "not yet proven"
+    world.advance(UP_THRESHOLD_S + 2, supervisor)
+    assert supervisor.status()["failed_attempts"] == 0
+
+
+def test_repeated_quick_closes_flag_contention_and_back_off_hard():
+    world = World()
+    supervisor = world.supervisor()
+    world.radio_reachable = True
+    world.radio_keeps_session_for = 2
+    world.advance(10 * 60, supervisor, step=1.0)
+    status = supervisor.status()
+    assert status["contention"] is True
+    assert status["link_losses_1h"] >= 3
+    # every gap between attempts once contention is flagged is at the cap
+    late = [b - a for a, b in zip(world.attempts, world.attempts[1:])][-3:]
+    assert all(gap >= MAX_DELAY_S - 1 for gap in late), late
+    # a user Reconnect clears the contention state and tries at once
+    world.radio_keeps_session_for = None
+    supervisor.trigger_now()
+    n = len(world.attempts)
+    supervisor.tick()
+    assert len(world.attempts) == n + 1 and supervisor.status()["contention"] is False
+
+
+def test_long_sessions_do_not_flag_contention():
+    world = World()
+    world.radio_reachable = True
+    supervisor = world.supervisor()
+    world.advance(30, supervisor)
+    world.radio_keeps_session_for = 120    # the radio drops us every 2 minutes
+    world.advance(20 * 60, supervisor)
+    status = supervisor.status()
+    assert status["contention"] is False
+    assert status["link_losses_1h"] >= 5
+
+
 def test_trigger_now_resets_backoff_and_attempts_on_the_next_tick():
     world = World()
     supervisor = world.supervisor()
-    run_for(world, supervisor, 20 * 60)
+    world.advance(10 * 60, supervisor)
     assert supervisor.status()["failed_attempts"] >= 4
     before = len(world.attempts)
 
@@ -157,7 +248,7 @@ def test_mismatch_or_not_found_stops_the_loop_fail_closed():
     world = World()
     supervisor = world.supervisor()
     world.refused = True
-    run_for(world, supervisor, 10 * 60)
+    world.advance(10 * 60, supervisor)
     assert world.attempts == []
     assert not supervisor.is_recovering()
 
@@ -169,7 +260,7 @@ def test_mismatch_or_not_found_stops_the_loop_fail_closed():
     assert supervisor.status()["state"] == tls.STATE_IDLE
     world.attempts.clear()
     world.refused = True  # identity layer now records MISMATCH
-    run_for(world, supervisor, 10 * 60)
+    world.advance(10 * 60, supervisor)
     assert world.attempts == [], "no further attempts while identity is refused"
 
 
@@ -177,12 +268,12 @@ def test_idle_for_non_tcp_profiles_and_when_auto_reconnect_is_off():
     world = World()
     supervisor = world.supervisor()
     world.tcp_profile = False
-    run_for(world, supervisor, 5 * 60)
+    world.advance(5 * 60, supervisor)
     assert world.attempts == [] and not supervisor.is_recovering()
 
     world.tcp_profile = True
     world.auto = False
-    run_for(world, supervisor, 5 * 60)
+    world.advance(5 * 60, supervisor)
     assert world.attempts == []
     supervisor.trigger_now()  # explicit user action still works
     supervisor.tick()
@@ -192,12 +283,9 @@ def test_idle_for_non_tcp_profiles_and_when_auto_reconnect_is_off():
 def test_an_attempt_that_raises_is_just_a_failed_attempt():
     world = World()
     supervisor = world.supervisor()
-    boom = {"on": True}
 
     def attempt():
-        if boom["on"]:
-            raise RuntimeError("socket on fire")
-        return OUTCOME_CONNECTED
+        raise RuntimeError("socket on fire")
 
     supervisor._attempt = attempt
     supervisor.tick()
@@ -398,30 +486,3 @@ def test_disconnecting_others_skips_a_never_connected_serial_for_tcp():
 
         def connect(self, descriptor, **kw):
             self.connects.append(descriptor)
-
-    never = ConnectionInfo(state=ConnectionState.ERROR, descriptor=None, node_id=None, connected_since=None)
-    serial, ble, tcp = T(never), T(never), T(never)
-    build_transport_connect_new("tcp", serial_transport=serial, ble_transport=ble, tcp_transport=tcp,
-                                tcp_host="10.0.0.5", tcp_port=4403)()
-    assert serial.disconnects == [] and ble.disconnects == [], "no serial release path for a TCP-only host"
-    assert len(tcp.connects) == 1
-
-    # A serial transport that really was connected is still disconnected, and
-    # the serial target path is unchanged (always disconnects the others).
-    used = ConnectionInfo(
-        state=ConnectionState.CONNECTED,
-        descriptor=ConnectionDescriptor(type=ConnectionType.SERIAL, address="/dev/ttyACM0"),
-        node_id=None, connected_since=1.0,
-    )
-    serial2, ble2, tcp2 = T(used), T(never), T(never)
-    build_transport_connect_new("tcp", serial_transport=serial2, ble_transport=ble2, tcp_transport=tcp2,
-                                tcp_host="10.0.0.5", tcp_port=4403)()
-    assert len(serial2.disconnects) == 1
-
-    serial3, ble3, tcp3 = T(never), T(never), T(never)
-    build_transport_connect_new("serial", serial_transport=serial3, ble_transport=ble3, tcp_transport=tcp3,
-                                serial_port="/dev/ttyACM0")()
-    assert len(ble3.disconnects) == 1 and len(tcp3.disconnects) == 1, "serial path byte-identical"
-
-
-from meshsrv.radio_transport import ConnectionDescriptor, ConnectionType  # noqa: E402

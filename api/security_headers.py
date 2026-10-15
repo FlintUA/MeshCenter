@@ -15,10 +15,18 @@ cross-origin subresource request. This still never leaks a path or query
 string off-site, and same-origin requests keep the full Referer.
 """
 
+# Security headers set across all HTTP responses:
+# - X-Content-Type-Options: nosniff prevents MIME type sniffing exploitation.
+# - X-Frame-Options: SAMEORIGIN guards against clickjacking.
+# - Referrer-Policy: strict-origin-when-cross-origin protects user path privacy while supporting OSM tiles.
+# - X-Permitted-Cross-Domain-Policies: none blocks Flash/PDF cross-domain policy execution.
+# - Cross-Origin-Opener-Policy: same-origin isolates browsing context from cross-origin popups/openers.
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "SAMEORIGIN",
     "Referrer-Policy": "strict-origin-when-cross-origin",
+    "X-Permitted-Cross-Domain-Policies": "none",
+    "Cross-Origin-Opener-Policy": "same-origin",
 }
 
 

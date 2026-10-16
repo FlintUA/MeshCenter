@@ -93,8 +93,18 @@ import inspect  # noqa: E402
 import threading  # noqa: E402
 import time  # noqa: E402
 
-from adapters.meshtastic.fake_radio_server import FakeMeshtasticTcpServer  # noqa: E402
 from meshsrv.radio_transport import ConnectionDescriptor, ConnectionState, ConnectionType, TransportError  # noqa: E402
+
+# The DK3 tests below drive the REAL meshtastic library through the fake radio
+# server. CI's core job does not install it (adapter venv only), so these skip
+# there exactly like tests/test_tcp_transport_integration.py does.
+try:
+    from adapters.meshtastic.fake_radio_server import FakeMeshtasticTcpServer  # noqa: E402
+    _HAVE_MESHTASTIC = True
+except ImportError:  # pragma: no cover - environment without the adapter dependencies
+    FakeMeshtasticTcpServer = None
+    _HAVE_MESHTASTIC = False
+needs_meshtastic = pytest.mark.skipif(not _HAVE_MESHTASTIC, reason="meshtastic library not installed")
 
 
 def _descriptor(port):
@@ -114,6 +124,7 @@ def _live_timers():
     return [t for t in threading.enumerate() if isinstance(t, threading.Timer) and t.is_alive()]
 
 
+@needs_meshtastic
 def test_radio_fin_is_answered_by_our_close_within_two_seconds_and_state_is_not_connected():
     logs = []
     server = FakeMeshtasticTcpServer(complete_handshake=True)
@@ -133,6 +144,7 @@ def test_radio_fin_is_answered_by_our_close_within_two_seconds_and_state_is_not_
         server.shutdown()
 
 
+@needs_meshtastic
 def test_failed_handshake_releases_the_radios_slot_immediately():
     """DK3: a bare close() on a socket another thread is blocked reading kept the
     connection (and the radio's single slot) until the radio gave up at 120 s."""
@@ -147,6 +159,7 @@ def test_failed_handshake_releases_the_radios_slot_immediately():
         server.shutdown()
 
 
+@needs_meshtastic
 def test_no_heartbeat_is_armed_or_sent_after_close():
     server = FakeMeshtasticTcpServer(complete_handshake=True)
     transport = TCPTransport(host="127.0.0.1", port=server.port)
@@ -174,6 +187,7 @@ def test_uptime_going_backwards_is_logged_as_a_radio_reboot():
     assert [m for l, m in logs if "REBOOTED" in m and l == "WARNING"]
 
 
+@needs_meshtastic
 def test_installed_meshtastic_still_has_every_private_hook_the_adapter_relies_on():
     """The adapter overrides/reads private members of a pinned third-party
     library (meshtastic>=2.7.9,<2.8). A version bump that renames one must fail
@@ -200,6 +214,7 @@ def test_installed_meshtastic_still_has_every_private_hook_the_adapter_relies_on
     assert "myConnect" in reconnect, "the library's self-reconnect changed shape - re-check our override"
 
 
+@needs_meshtastic
 def test_first_connect_asks_for_the_full_config_reconnects_for_config_only():
     """Measured on the real T-Beam: 13999 B / 100 nodes -> 1187 B / own node only,
     identity identical. Boot (first session in this process) still needs nodes."""

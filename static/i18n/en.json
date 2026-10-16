@@ -807,6 +807,12 @@
     "reconnect": "Reconnect",
     "reconnect_requested": "Reconnect requested",
     "reconnect_failed": "Unable to reconnect",
+    "reconnecting_status": "Reconnecting… (attempt {attempt}, next in {seconds} s)",
+    "reconnecting_status_now": "Reconnecting… (attempt {attempt})",
+    "header_reconnecting": "Reconnecting",
+    "notice_dismiss": "Dismiss",
+    "link_resets_label": "Link resets (last hour)",
+    "radio_contention": "The radio keeps closing new sessions shortly after they start - it may be in use by another client (phone app, a second MeshCenter). Retrying more slowly.",
     "releasing_and_scanning": "Releasing listener and scanning serial ports...",
     "searching_radio_tcp": "Searching for a radio via TCP...",
     "role": "Role",
@@ -828,6 +834,7 @@
     "connection_disconnected": "Disconnected"
   },
   "system": {
+    "container_mode_notice": "Running in a container. Host-level controls (Wi-Fi, network, reboot, shutdown, updates, hardware setup) are disabled. Uptime, load and RAM shown here are the host's; disk shows the data volume. To update, rebuild the image.",
     "title": "System",
     "subtitle": "Device and network status",
     "close": "Close System",

@@ -703,6 +703,10 @@ class AdapterIPCTransport(RadioTransport):
         self._core_serial_transport = core_serial_transport
         self._cached_info = _adapter_unavailable_info()
 
+    @property
+    def transport_type(self) -> ConnectionType:
+        return self._transport_type
+
     def _ble_cleanup_address(self) -> Optional[str]:
         if self._transport_type != ConnectionType.BLUETOOTH:
             return None

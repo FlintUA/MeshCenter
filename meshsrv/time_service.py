@@ -34,6 +34,7 @@ configuration - detection only.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import threading
 import time
@@ -42,6 +43,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from hardware import rtc_service
+from meshsrv import runtime_env
 
 _lock: threading.Lock = threading.Lock()
 _cache: dict[str, Any] = {}
@@ -111,6 +113,11 @@ def _timezone_from_timedatectl() -> str | None:
             value = line.split("=", 1)[1].strip()
             return value or None
     return None
+
+
+def _timezone_from_env() -> str | None:
+    value = os.environ.get("TZ", "").strip().lstrip(":")
+    return value or None
 
 
 def _timezone_from_etc_timezone() -> str | None:
@@ -196,7 +203,12 @@ def detect_system_timezone() -> str:
     I/O, and the outer try/except here is a second net so a bug inside one
     backend can never take down timezone detection for the whole probe.
     """
-    for backend in (_timezone_from_timedatectl, _timezone_from_etc_timezone, _timezone_from_localtime):
+    backends = (_timezone_from_timedatectl, _timezone_from_etc_timezone, _timezone_from_localtime)
+    if runtime_env.is_container():
+        # Container mode: the TZ env var (tzdata is installed in the image) is
+        # the authoritative source; /etc/localtime inside an image is UTC.
+        backends = (_timezone_from_env,) + backends
+    for backend in backends:
         try:
             candidate = backend()
         except Exception as error:
@@ -215,6 +227,11 @@ def _probe_ntp_status() -> dict[str, Any]:
     timezone detection (see detect_system_timezone()) so a timezone-only
     failure (or vice versa) never affects the other. Never raises."""
     result: dict[str, Any] = {"synchronized": False, "source": "system"}
+    if runtime_env.trust_host_clock():
+        # Container mode, operator opt-in (MESHCENTER_TRUST_HOST_CLOCK=1):
+        # no timedatectl exists in a container, so NTP sync can never be
+        # confirmed from in here - the operator vouches for the host clock.
+        return {"synchronized": True, "source": "host-clock"}
     try:
         out = subprocess.check_output(
             ["timedatectl", "show", "-p", "NTPSynchronized", "-p", "Timesource"],

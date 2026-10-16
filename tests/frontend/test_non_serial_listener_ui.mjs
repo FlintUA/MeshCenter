@@ -30,6 +30,9 @@ function extractFunction(name) {
 }
 
 const STRINGS = {
+    'node_manager.header_reconnecting': 'Reconnecting',
+    'node_manager.reconnecting_status': 'Reconnecting... (attempt {attempt}, next in {seconds} s)',
+    'node_manager.reconnecting_status_now': 'Reconnecting... (attempt {attempt})',
     'settings.radio_status_connected': 'Connected',
     'settings.radio_status_reconnecting': 'Reconnecting',
     'settings.radio_status_released': 'Released',
@@ -95,7 +98,7 @@ function build(healthData) {
         _lastSystemLogEvents: [],
     };
     vm.createContext(sandbox);
-    for (const fn of ['isNonSerialTransport', 'deviceConnectionLabel', 'updateHeaderNodeStatus', 'loadRadioHealth']) {
+    for (const fn of ['isNonSerialTransport', 'deviceConnectionLabel', 'formatReconnectStatus', 'updateHeaderNodeStatus', 'loadRadioHealth']) {
         vm.runInContext(extractFunction(fn), sandbox);
     }
     sandbox._els = els;
@@ -141,6 +144,19 @@ const TCP_CONNECTED = {
     const { label, h } = runHeader({ ...TCP_CONNECTED, status: 'DISCONNECTED', level: 'ERROR' });
     assert.equal(label, 'Error');
     assert.ok(h._classes.has('status-error'));
+}
+
+{
+    // DK2: the TCP link supervisor is working on it -> amber "Reconnecting", with
+    // its own schedule in the tooltip, never a green "Online" or a bare red "Error".
+    const { label, h } = runHeader({
+        ...TCP_CONNECTED, status: 'RECONNECTING', level: 'WARNING',
+        status_reason: 'Reconnecting via tcp',
+        reconnect: { state: 'waiting', attempt: 3, next_in_s: 42 },
+    });
+    assert.equal(label, 'Reconnecting');
+    assert.ok(h._classes.has('status-warning') && !h._classes.has('status-ok'));
+    assert.match(h.title, /attempt/);
 }
 
 {

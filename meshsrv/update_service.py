@@ -15,6 +15,7 @@ whichever radio profile happens to be active.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import threading
 import time
@@ -97,6 +98,11 @@ def update_available(current_version: str, cache: dict[str, Any]) -> bool:
     if not latest or not cache.get("check_ok"):
         return False
     if "-" in str(current_version):
+        return False
+    # DK3: only an exact release number can be "behind" one. An image built
+    # with a label that is not a version ("dk2", "dev", "unknown") used to
+    # string-differ from the latest tag and show a false "update available".
+    if not re.fullmatch(r"\d+\.\d+\.\d+", str(current_version)):
         return False
     return str(current_version) != str(latest)
 

@@ -11027,6 +11027,7 @@ function renderNodeManagerConnectionCard(connection, radio, connectionLabel, can
                 ${targetRow}
                 <div><dt>${escapeHtml(window.I18N.t('waypoints.status'))}</dt><dd>${escapeHtml(connectionLabel)}</dd></div>
                 <div><dt>${escapeHtml(window.I18N.t('node_manager.connected_since'))}</dt><dd>${formatDeviceDashboardDate(connection.connected_since)}</dd></div>
+                ${type === 'tcp' && connection.reconnect ? `<div><dt>${escapeHtml(window.I18N.t('node_manager.link_resets_label'))}</dt><dd>${escapeHtml(String(connection.reconnect.link_losses_1h ?? 0))}</dd></div>` : ''}
             `,
             connectionActionsHtml: `
                 <div class="device-action-row">
@@ -11034,6 +11035,9 @@ function renderNodeManagerConnectionCard(connection, radio, connectionLabel, can
                         onclick="reconnectActiveTransport('${type}'); setTimeout(() => loadNodeManagerDashboard(), 1800);"
                         ${canReconnect ? '' : 'disabled'}>${escapeHtml(window.I18N.t('node_manager.reconnect'))}</button>
                 </div>
+                ${type === 'tcp' && connection.reconnect && connection.reconnect.contention
+                    ? `<p class="node-manager-contention-note">${escapeHtml(window.I18N.t('node_manager.radio_contention'))}</p>`
+                    : ''}
             `,
         };
     }
@@ -11069,11 +11073,20 @@ async function reconnectActiveTransport(type) {
     // see api/api_meshtastic.py's api_meshtastic_set_transport()) rather
     // than inventing a Node-Manager-specific endpoint.
     try {
-        const response = await fetch('/api/meshtastic/transport', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ type }),
-        });
+        // TCP: the supervisor's own immediate attempt (resets its backoff, uses
+        // the accepted profile's endpoint - never settings.meshtastic, which is
+        // empty in a container). Bluetooth keeps the generic switch route.
+        const response = type === 'tcp'
+            ? await fetch('/api/meshtastic/reconnect_now', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({}),
+            })
+            : await fetch('/api/meshtastic/transport', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ type }),
+            });
         const data = await response.json().catch(() => ({}));
 
         if (!response.ok || !data.ok) {
@@ -11117,7 +11130,9 @@ function nodeManagerConnectionEndpointLabel(transport, endpoint) {
 function renderNodeManagerConnectionsList(radio, connection) {
     const connections = radio.connections || {};
     const activeTransport = connection.type || radio.preferred_transport || 'serial';
-    const order = ['tcp', 'serial', 'bluetooth'].filter(t => connections[t]);
+    // No USB/Bluetooth hardware in a container (hardware_io off): never list them.
+    const hardwareIo = window.MC_RUNTIME?.hardware_io !== false;
+    const order = ['tcp', 'serial', 'bluetooth'].filter(t => connections[t] && (hardwareIo || t === 'tcp'));
 
     if (!order.length) {
         return `<p class="node-connections-empty">${escapeHtml(window.I18N.t('node_manager.no_saved_connections'))}</p>`;
@@ -11287,7 +11302,10 @@ async function loadNodeManagerDashboard(showFeedback = false) {
         const counts = profile.counts || {};
         const storage = profile.storage || {};
         const statusClass = deviceStatusClass(connection.mode, radio.identity_status);
-        const connectionLabel = deviceConnectionLabel(connection.mode, connection.listener_running, connection.type);
+        const reconnectText = formatReconnectStatus(connection.reconnect);
+        const connectionLabel = (connection.mode !== 'connected' && reconnectText)
+            ? reconnectText
+            : deviceConnectionLabel(connection.mode, connection.listener_running, connection.type);
         const canRelease = connection.mode === 'connected' && connection.listener_running;
         const canReconnect = connection.mode === 'released' || connection.mode === 'error' || (!connection.listener_running && connection.mode !== 'reconnecting');
         const iconSrc = window.MeshCenterNodeAvatar?.current?.() || '/static/meshcenter_logo.png';
@@ -11319,6 +11337,7 @@ async function loadNodeManagerDashboard(showFeedback = false) {
 
         container.dataset.loaded = '1';
         container.innerHTML = `
+            ${renderNodeManagerNotice()}
             <section class="node-profile-selector-section">
                 <div class="node-manager-section-heading">
                     <div>
@@ -11526,6 +11545,32 @@ function updateNodeManagerDiscoveryTransport() {
     if (searchBtn) searchBtn.disabled = selected === 'bluetooth';
 }
 
+// DK3: errors from the radio discovery / accept / activate flows used to be a
+// native window.alert() (modal, unthemed, blocks the page, lost on re-render).
+// They are kept here and rendered as an in-app notice at the top of the Node
+// Manager, which survives loadNodeManagerDashboard()'s re-render until dismissed.
+let nodeManagerNotice = null;
+
+function setNodeManagerNotice(message, level = 'error') {
+    nodeManagerNotice = message ? { message: String(message), level } : null;
+}
+
+function dismissNodeManagerNotice() {
+    nodeManagerNotice = null;
+    document.getElementById('nodeManagerNotice')?.remove();
+}
+
+function renderNodeManagerNotice() {
+    if (!nodeManagerNotice) return '';
+    return `
+        <div id="nodeManagerNotice" class="node-manager-notice node-manager-notice--${escapeHtml(nodeManagerNotice.level)}" role="alert">
+            <span class="node-manager-notice-text">${escapeHtml(nodeManagerNotice.message)}</span>
+            <button type="button" class="node-manager-notice-close"
+                aria-label="${escapeHtml(window.I18N.t('node_manager.notice_dismiss'))}"
+                onclick="dismissNodeManagerNotice()">&times;</button>
+        </div>`;
+}
+
 async function runNodeManagerDiscovery() {
     const selected = document.querySelector('input[name="nodeManagerDiscoveryTransport"]:checked')?.value || 'usb';
     if (selected === 'bluetooth') return; // guarded by the disabled Search button too - see this section's own docstring
@@ -11592,7 +11637,7 @@ async function detectAndAddNodeManagerRadio(tcpEndpoint) {
         await showNodeManagerDiscoveryResult(data, isTcp);
     } catch (error) {
         console.error('[NODE MANAGER] Radio detection failed:', error);
-        window.alert(error.message || String(error));
+        setNodeManagerNotice(error.message || String(error));
         showToast(window.I18N.t('node_manager.radio_not_added'), 'error');
         await loadNodeManagerDashboard();
     }
@@ -11727,7 +11772,7 @@ async function confirmNodeManagerDiscoveryCreateProfile() {
         waitForNodeManagerProfile(accepted.profile_id);
     } catch (error) {
         console.error('[NODE MANAGER] Create profile failed:', error);
-        window.alert(error.message || String(error));
+        setNodeManagerNotice(error.message || String(error));
         showToast(window.I18N.t('node_manager.radio_not_added'), 'error');
         await loadNodeManagerDashboard();
     }
@@ -11818,7 +11863,7 @@ async function activateNodeManagerProfile(profileId) {
         waitForNodeManagerProfile(cleanProfileId, 60000);
     } catch (error) {
         console.error('[NODE MANAGER] Profile activation failed:', error);
-        window.alert(error.message || String(error));
+        setNodeManagerNotice(error.message || String(error));
         showToast(window.I18N.t('node_manager.radio_profile_not_changed'), 'error');
         await loadNodeManagerDashboard();
     } finally {
@@ -13360,13 +13405,16 @@ function ensureStatusDockMetrics() {
         right.innerHTML = '';
         metrics = document.createElement('span');
         metrics.className = 'dock-system-metrics';
+        // Same capability the server uses to blank cpu_temp in /api/system/info
+        // (meshsrv/runtime_env.py has_cpu_temp): no TEMP in a container.
+        const showTemp = window.MC_RUNTIME?.has_cpu_temp !== false;
         metrics.innerHTML = `
             <span class="dock-separator" aria-hidden="true">•</span>
             <span id="dockCpuMetric">CPU --%</span>
             <span class="dock-separator" aria-hidden="true">•</span>
             <span id="dockRamMetric">RAM --%</span>
-            <span class="dock-separator" aria-hidden="true">•</span>
-            <span id="dockTempMetric">TEMP --°C</span>
+            ${showTemp ? `<span class="dock-separator" aria-hidden="true">•</span>
+            <span id="dockTempMetric">TEMP --°C</span>` : ''}
         `;
         right.append(metrics);
     }
@@ -13386,7 +13434,7 @@ function updateCpuStatus(data) {
         ?? data?.cpu_temperature
         ?? data?.temperature;
 
-    const temp = rawTemp === null || rawTemp === undefined
+    const temp = (rawTemp === null || rawTemp === undefined || window.MC_RUNTIME?.has_cpu_temp === false)
         ? NaN
         : Number(rawTemp);
 
@@ -13734,6 +13782,16 @@ async function loadSystemInfo() {
     }
 }
 
+// DK2: "Reconnecting… (attempt N, next in X s)" from the TCP link supervisor's
+// own schedule ({state, attempt, next_in_s}); '' when it is not recovering.
+function formatReconnectStatus(reconnect) {
+    if (!reconnect || (reconnect.state !== 'waiting' && reconnect.state !== 'attempting')) return '';
+    if (reconnect.state === 'waiting' && reconnect.next_in_s != null) {
+        return window.I18N.t('node_manager.reconnecting_status', { attempt: reconnect.attempt, seconds: reconnect.next_in_s });
+    }
+    return window.I18N.t('node_manager.reconnecting_status_now', { attempt: reconnect.attempt });
+}
+
 function updateHeaderNodeStatus(data, reachable = true) {
     const headerStatus = document.getElementById('headerStatusText');
     if (!headerStatus) return;
@@ -13760,6 +13818,10 @@ function updateHeaderNodeStatus(data, reachable = true) {
 
     } else if (status === 'STARTING') {
         label = 'Starting';
+        stateClass = 'status-warning';
+
+    } else if (status === 'RECONNECTING') {
+        label = window.I18N.t('node_manager.header_reconnecting');
         stateClass = 'status-warning';
 
     } else if ((!nonSerial && !listenerRunning) || status === 'LISTENER_DOWN') {
@@ -13811,6 +13873,7 @@ function updateHeaderNodeStatus(data, reachable = true) {
             : 'stopped';
 
     const reason =
+        formatReconnectStatus(data?.reconnect) ||
         data?.status_reason ||
         data?.recommendation ||
         '';

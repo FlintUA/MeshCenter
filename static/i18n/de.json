@@ -807,6 +807,12 @@
     "reconnect": "Neu verbinden",
     "reconnect_requested": "Wiederverbindung angefordert",
     "reconnect_failed": "Verbindung konnte nicht wiederhergestellt werden",
+    "reconnecting_status": "Verbinde neu… (Versuch {attempt}, nächster in {seconds} s)",
+    "reconnecting_status_now": "Verbinde neu… (Versuch {attempt})",
+    "header_reconnecting": "Verbinde neu",
+    "notice_dismiss": "Schließen",
+    "link_resets_label": "Verbindungsabbrüche (letzte Stunde)",
+    "radio_contention": "Das Funkgerät beendet neue Sitzungen kurz nach dem Start - es wird möglicherweise von einem anderen Client verwendet (Handy-App, zweites MeshCenter). Neue Versuche erfolgen langsamer.",
     "releasing_and_scanning": "Listener wird freigegeben und serielle Ports werden gescannt …",
     "searching_radio_tcp": "Suche nach einem Funkgerät über TCP …",
     "role": "Rolle",
@@ -828,6 +834,7 @@
     "connection_disconnected": "Getrennt"
   },
   "system": {
+    "container_mode_notice": "Läuft in einem Container. Host-Funktionen (WLAN, Netzwerk, Neustart, Herunterfahren, Updates, Hardware-Einrichtung) sind deaktiviert. Uptime, Last und RAM sind Werte des Hosts; der Speicher zeigt das Datenvolume. Zum Aktualisieren das Image neu bauen.",
     "title": "System",
     "subtitle": "Geräte- und Netzwerkstatus",
     "close": "System schließen",

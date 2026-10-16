@@ -86,6 +86,9 @@ class PortReleaseOutcome(str, Enum):
 # A listener exit within this long of our own stop request is that request (see
 # run_listener()'s classification).
 INTENTIONAL_STOP_GRACE_S = 30.0
+#: after a claim released the port, listener exits inside this window are the
+#: post-claim settle (see run_listener), not crashes
+CLAIM_SETTLE_WINDOW_S = 120.0
 
 
 class SerialPortSupervisor:
@@ -419,7 +422,16 @@ class SerialPortSupervisor:
             else:
                 self._consecutive_errors = 0
 
-            self._on_lifecycle_event("listener_stop", intentional=stop_was_intentional)
+            # ST1 (live on .104): a listener restarted right after a send claim
+            # often fails its first handshake with the just-closed radio and exits
+            # ~33 s later (code 1, "Closing our port"), once or twice, before a start
+            # sticks. That is a known post-claim settle, not a crash: report it as a
+            # restart-after-command (INFO) instead of ERROR, and keep the recovery
+            # path (the restart below) exactly as it was.
+            settling_after_claim = (time.monotonic() - self._claim_released_at) < CLAIM_SETTLE_WINDOW_S
+            self._on_lifecycle_event(
+                "listener_stop", intentional=True if settling_after_claim else stop_was_intentional
+            )
             with self._radio_lock:
                 self._listen_process = None
 

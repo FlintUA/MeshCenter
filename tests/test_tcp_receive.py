@@ -45,7 +45,8 @@ WAYPOINT_TOPIC = "meshtastic.receive.waypoint"
 NODEINFO_TOPIC = "meshtastic.receive.user"
 POSITION_TOPIC = "meshtastic.receive.position"
 TELEMETRY_TOPIC = "meshtastic.receive.telemetry"
-ALL_TOPICS = [TEXT_TOPIC, WAYPOINT_TOPIC, NODEINFO_TOPIC, POSITION_TOPIC, TELEMETRY_TOPIC]
+ROUTING_TOPIC = "meshtastic.receive.routing"
+ALL_TOPICS = [TEXT_TOPIC, WAYPOINT_TOPIC, NODEINFO_TOPIC, POSITION_TOPIC, TELEMETRY_TOPIC, ROUTING_TOPIC]
 
 
 # ---------------------------------------------------------------------------
@@ -638,7 +639,7 @@ def test_stats_count_everything_without_content(pub, transport):
 
     assert transport.get_receive_stats() == {
         "received_text": 1, "received_waypoint": 1, "received_nodeinfo": 0, "received_position": 0,
-        "received_telemetry": 0, "queue_overflow_dropped": 0, "drained_events": 2, "malformed_events": 1,
+        "received_telemetry": 0, "received_routing": 0, "queue_overflow_dropped": 0, "drained_events": 2, "malformed_events": 1,
         "queue_depth": 0,
     }
 

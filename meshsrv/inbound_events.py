@@ -127,6 +127,9 @@ class InboundDeps:
     # unambiguous).
     find_reply_original: Optional[Callable[[Any, str], Any]] = None
     apply_node_telemetry: Optional[Callable[..., bool]] = None
+    # ST1: resolves a pending delivery ACK (server.resolve_pending_ack) - shared with
+    # the serial `--listen` parser so both transports apply one rule.
+    resolve_pending_ack: Optional[Callable[..., Optional[str]]] = None
 
 
 # --------------------------------------------------------------------------
@@ -139,6 +142,7 @@ _stats = {
     "nodeinfo_stored": 0, "nodeinfo_skipped_local": 0, "nodeinfo_no_node_id": 0,
     "position_stored": 0, "position_no_position": 0, "position_no_node_id": 0,
     "telemetry_stored": 0, "telemetry_no_values": 0, "telemetry_no_node_id": 0,
+    "routing_delivered": 0, "routing_unconfirmed": 0, "routing_implicit": 0, "routing_none": 0,
     "stale_identity_dropped": 0,
 }
 
@@ -601,6 +605,19 @@ def ingest_received_position(event: ReceivedPositionEvent, deps: InboundDeps) ->
 
     _count("position_stored")
     return STORED
+
+
+def ingest_received_routing(event, deps: InboundDeps) -> str:
+    """A routing (N)ACK for a packet this installation sent: hand it to the shared
+    pending-ACK resolution. Returns that resolution's outcome ("delivered",
+    "unconfirmed", "implicit", or "none" when no pending message matched)."""
+    if not _accepts(event, deps, "routing reply"):
+        return STALE_RADIO
+    if deps.resolve_pending_ack is None:
+        return NO_VALUES
+    outcome = deps.resolve_pending_ack(event.request_id, event.error_reason, event.from_num) or "none"
+    _count("routing_" + outcome)
+    return outcome
 
 
 def ingest_received_telemetry(event: ReceivedTelemetryEvent, deps: InboundDeps) -> str:

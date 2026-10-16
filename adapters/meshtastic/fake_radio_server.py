@@ -363,6 +363,22 @@ class FakeMeshtasticTcpServer:
             from_num=from_num, to_num=0xFFFFFFFF, packet_id=packet_id, channel=channel,
         ))
 
+    def send_routing(self, request_id: int, *, error_reason: str = "NONE", from_num: int = 0xB0F14D2A,
+                     to_num: int = 0x756F9960, packet_id: int = 900) -> None:
+        """Push a routing (N)ACK for a packet the client sent: `decoded.request_id`
+        is that packet's id; `error_reason` a Routing.Error name ("NONE" = ACK)."""
+        routing = mesh_pb2.Routing()
+        routing.error_reason = getattr(mesh_pb2.Routing.Error, error_reason)
+        from_radio = mesh_pb2.FromRadio()
+        packet = from_radio.packet
+        packet.id = packet_id
+        setattr(packet, "from", from_num)
+        packet.to = to_num
+        packet.decoded.portnum = portnums_pb2.PortNum.ROUTING_APP
+        packet.decoded.payload = routing.SerializeToString()
+        packet.decoded.request_id = request_id
+        self._outbound.put(frame(from_radio))
+
     def drop_clients(self) -> int:
         """Behave like the real T-Beam closing its API session on its own: send
         FIN (shutdown write side) to every connected client and keep the socket

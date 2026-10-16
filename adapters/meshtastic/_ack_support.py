@@ -26,6 +26,13 @@ ROUTING_TOPIC = "meshtastic.receive.routing"
 #: already stopped the listener, so waiting here costs no reception)
 SERIAL_ACK_WAIT_S = 12.0
 
+#: what the claim still needs AFTER the ACK wait (closing the interface, the 2 s
+#: cooldown, handing the port back) - the wait must leave this much of the caller's
+#: budget, or the adapter's own watchdog fires after the message was already sent
+#: (live on .104: 1 of 10 DMs "failed: send_messages() exceeded 25.3s" with a 12 s wait
+#: and only a 3 s reserve)
+SERIAL_ACK_TAIL_RESERVE_S = 8.0
+
 
 def routing_fields(packet) -> Optional[tuple]:
     """(request_id, error_reason, from_num, to_num, packet_id) from a library routing

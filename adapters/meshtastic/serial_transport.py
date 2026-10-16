@@ -356,7 +356,7 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
         (migrated to call through this transport in Task 46)."""
 
         def _do_send_all():
-            from adapters.meshtastic._ack_support import SERIAL_ACK_WAIT_S, RoutingAckWaiter
+            from adapters.meshtastic._ack_support import SERIAL_ACK_TAIL_RESERVE_S, SERIAL_ACK_WAIT_S, RoutingAckWaiter
 
             results: list[SendResult] = []
             started = time.monotonic()
@@ -400,7 +400,7 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
                         # be seen reliably (the listener is restarting, ~8 s from
                         # ready, when a direct neighbour's ACK arrives). Bounded by
                         # what is left of the caller's own budget.
-                        deadline = min(time.monotonic() + SERIAL_ACK_WAIT_S, started + timeout - 3.0)
+                        deadline = min(time.monotonic() + SERIAL_ACK_WAIT_S, started + timeout - SERIAL_ACK_TAIL_RESERVE_S)
                         outcomes = waiter.wait(deadline) if deadline > time.monotonic() else {}
                         for index, result in enumerate(results):
                             outcome = outcomes.get(result.packet_id) if result.accepted else None

@@ -567,3 +567,22 @@ def test_a_call_that_simply_asked_for_the_minimum_budget_is_made_as_asked():
     router.get_channels(timeout=5.0)
     router.get_channels(timeout=5.0)
     assert len(transport.calls) == 2
+
+
+@needs_meshtastic
+def test_the_ack_wait_leaves_the_claims_tail_inside_the_callers_budget(monkeypatch):
+    """Live regression (.104): a 12 s wait with only 3 s kept back let the adapter watchdog fire
+    after the message had gone out. The wait is capped by `budget - SERIAL_ACK_TAIL_RESERVE_S`."""
+    from adapters.meshtastic import serial_transport as st
+
+    monkeypatch.setattr(st.time, "sleep", lambda *a, **k: None)
+    interface = types.SimpleNamespace(sendText=lambda **k: types.SimpleNamespace(id=77), close=lambda: None)
+    transport = st.SerialTransport(cli_path="x", port="/dev/ttyFAKE", radio_lock=threading.RLock(),
+                                   pause_listen=threading.Event(), supervisor=_FakeSupervisor())
+    transport._open_interface = lambda: interface
+    started = time.monotonic()
+    results = transport.send_messages(
+        [OutgoingMessage(text="x", destination_id=ECHO_ID, channel_index=1, want_ack=True)], timeout=10.0)
+    waited = time.monotonic() - started
+    assert results[0].accepted and results[0].ack_state is None
+    assert waited <= 10.0 - ack.SERIAL_ACK_TAIL_RESERVE_S + 1.0, waited     # ~2 s, never the full 12 s

@@ -180,7 +180,9 @@ def register_chat_routes(
         # its own TransportError internally and always returns one
         # SendResult per input message (never raises) - see
         # SerialTransport/BLETransport.send_messages().
-        results = radio_transport.send_messages(messages, timeout=30)
+        # 40 s (was 30): a serial DM now stays in its claim up to SERIAL_ACK_WAIT_S to see the
+        # delivery ACK; the send worker is a background thread, nothing user-facing waits on it.
+        results = radio_transport.send_messages(messages, timeout=40)
 
         for job, result in zip(batch, results):
             _handle_send_result(job, result)

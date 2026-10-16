@@ -429,3 +429,70 @@ def test_env_example_has_no_secrets_and_documents_clock_trust():
 def test_adapter_subprocess_env_does_not_gain_config_dir():
     text = _read("meshsrv/adapter_ipc_client.py")
     assert '"PYTHONPATH": str(self._project_dir)' in text
+
+
+# ---- ST1: a SIGTERM-killed restart helper is the expected outcome, not an error ----
+
+def _logged(monkeypatch, server_module):
+    events = []
+    monkeypatch.setattr(server_module, "log_system_event",
+                        lambda title, level="INFO", details="", source="system": events.append((title, level)))
+    return events
+
+
+def test_profile_restart_helper_dying_of_sigterm_is_not_logged_as_an_error(server_module, native, monkeypatch):
+    import signal
+    import subprocess
+
+    events = _logged(monkeypatch, server_module)
+    monkeypatch.setattr(server_module.time, "sleep", lambda *_a, **_k: None)
+
+    def killed(cmd, **kw):
+        raise subprocess.CalledProcessError(-signal.SIGTERM, cmd)
+
+    monkeypatch.setattr(server_module.subprocess, "run", killed)
+    server_module._restart_meshcenter_after_profile_switch()
+    assert events == [("Radio profile restart", "INFO")]
+
+
+def test_profile_restart_helper_exit_143_is_the_same_expected_outcome(server_module, native, monkeypatch):
+    import subprocess
+
+    events = _logged(monkeypatch, server_module)
+    monkeypatch.setattr(server_module.time, "sleep", lambda *_a, **_k: None)
+
+    def killed(cmd, **kw):
+        raise subprocess.CalledProcessError(143, cmd)
+
+    monkeypatch.setattr(server_module.subprocess, "run", killed)
+    server_module._restart_meshcenter_after_profile_switch()
+    assert [level for _, level in events] == ["INFO"]
+
+
+def test_profile_restart_real_failures_still_log_an_error(server_module, native, monkeypatch):
+    import subprocess
+
+    monkeypatch.setattr(server_module.time, "sleep", lambda *_a, **_k: None)
+    for failure in (
+        subprocess.CalledProcessError(1, ["sudo"]),               # sudo refused / systemctl failed
+        subprocess.TimeoutExpired(["sudo"], 20),                  # restart never answered
+        FileNotFoundError("sudo"),
+    ):
+        events = _logged(monkeypatch, server_module)
+
+        def boom(cmd, _f=failure, **kw):
+            raise _f
+
+        monkeypatch.setattr(server_module.subprocess, "run", boom)
+        server_module._restart_meshcenter_after_profile_switch()
+        assert [(t, l) for t, l in events] == [("Radio profile restart failed", "ERROR")], failure
+
+
+def test_container_profile_restart_logs_nothing_and_never_calls_the_helper(server_module, container, monkeypatch):
+    events = _logged(monkeypatch, server_module)
+    restarted = []
+    monkeypatch.setattr(server_module.time, "sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr(server_module.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no systemctl in a container")))
+    monkeypatch.setattr(runtime_env, "request_self_restart", lambda: restarted.append(1))
+    server_module._restart_meshcenter_after_profile_switch()
+    assert restarted == [1] and events == []

@@ -6,6 +6,7 @@ MeshCenter - Web Control Center for Meshtastic nodes on Raspberry Pi Zero 2W
 from flask import Flask, request, jsonify, render_template, Response, send_from_directory, make_response
 from flask.json.provider import DefaultJSONProvider
 from functools import wraps
+import signal
 import subprocess
 import threading
 import time
@@ -7171,6 +7172,13 @@ def api_devices_dashboard():
 
 
 
+def _restart_helper_killed_by_the_restart(error):
+    """True when the restart helper ended because of SIGTERM - i.e. the restart
+    it requested is already tearing this process group down (returncode -15, or
+    128+15 if a shell/sudo reported it that way)."""
+    return getattr(error, "returncode", None) in (-signal.SIGTERM, 128 + signal.SIGTERM)
+
+
 def _restart_meshcenter_after_profile_switch():
     """Restart the service after the activation response reaches the browser."""
     time.sleep(1.2)
@@ -7186,6 +7194,26 @@ def _restart_meshcenter_after_profile_switch():
             capture_output=True,
             text=True,
             timeout=20,
+        )
+    except subprocess.CalledProcessError as error:
+        if _restart_helper_killed_by_the_restart(error):
+            # Expected, not a failure: `systemctl restart` stops THIS service first,
+            # and systemd's control-group kill takes the helper (a child of this very
+            # process) down with SIGTERM before it can report success. Every profile
+            # switch used to log a false ERROR "Radio profile restart failed ... died
+            # with SIGTERM" even though the restart worked.
+            log_system_event(
+                "Radio profile restart",
+                "INFO",
+                "MeshCenter is restarting to apply the selected radio profile",
+                source="radio",
+            )
+            return
+        log_system_event(
+            "Radio profile restart failed",
+            "ERROR",
+            str(error),
+            source="radio",
         )
     except Exception as error:
         log_system_event(

@@ -586,3 +586,25 @@ def test_the_ack_wait_leaves_the_claims_tail_inside_the_callers_budget(monkeypat
     waited = time.monotonic() - started
     assert results[0].accepted and results[0].ack_state is None
     assert waited <= 10.0 - ack.SERIAL_ACK_TAIL_RESERVE_S + 1.0, waited     # ~2 s, never the full 12 s
+
+
+def test_failed_time_sync_is_retried_after_the_cooldown_not_after_six_hours(monkeypatch):
+    """Live on .104 after a restart: the boot-time sync hit a 5 s budget behind the
+    boot channel read and failed; the next try was 6 h away."""
+    import server as srv
+
+    monkeypatch.setattr(srv, "STARTUP_SYNC_DELAY_S", 0)
+    monkeypatch.setitem(srv.RADIO_IDENTITY_RESULT, "status", "MATCH")
+
+    def boom(*a, **k):
+        raise RuntimeError("timeout: set_device_time() exceeded 5.28s")
+
+    monkeypatch.setattr(srv.transport_router, "set_device_time", boom)
+    monkeypatch.setattr(srv, "_node_time_sync_last_attempt_ts", time.time())
+    srv._attempt_node_time_sync()
+
+    now = time.time()
+    assert srv.NODE_TIME_SYNC_ATTEMPT_COOLDOWN_S < srv.NODE_TIME_SYNC_REFRESH_S
+    assert now - srv._node_time_sync_last_attempt_ts == pytest.approx(
+        srv.NODE_TIME_SYNC_REFRESH_S - srv.NODE_TIME_SYNC_ATTEMPT_COOLDOWN_S, abs=5
+    )

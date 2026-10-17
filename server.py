@@ -4798,6 +4798,11 @@ def _attempt_node_time_sync():
         transport_router.set_device_time(int(time.time()), timeout=10)
     except Exception as error:
         print(f"[TIME SYNC] Attempt failed: {error}", flush=True)
+        # A failed attempt (typically BUSY / a short budget left behind a boot-time
+        # channel read) must not wait for the next 6 h refresh: retry after the
+        # normal attempt cooldown. A success keeps the long interval.
+        global _node_time_sync_last_attempt_ts
+        _node_time_sync_last_attempt_ts = time.time() - NODE_TIME_SYNC_REFRESH_S + NODE_TIME_SYNC_ATTEMPT_COOLDOWN_S
 
 
 def update_base_status_from_info(info_output=None):

@@ -41,6 +41,23 @@ from typing import Optional
 # project controls or should depend on matching exactly.
 DISCONNECT_LINE_MARKER = "device reports readiness to read but returned no data"
 
+# ST1 (root cause of the "listener exits ~33 s after a send claim", live on .104,
+# strace-confirmed): while the firmware streams its config/NodeDB to a freshly
+# connected client, its text debug log can land INSIDE a protobuf frame on the same
+# USB serial port (bytes "[34mDEBUG ..." within a NodeInfo frame). The library
+# fails that FromRadio parse ("Wire format was corrupt"), its reader thread dies, no
+# config ever completes, and the CLI sits out its own 30 s connect timeout before
+# exiting with code 1. This line is the library's report of that first failure.
+CORRUPT_FRAME_LINE_MARKER = "Error parsing message with type 'meshtastic.protobuf.FromRadio'"
+
+
+def line_signals_corrupt_frame(line: str) -> bool:
+    """True if a raw --listen stdout line is the library's FromRadio parse failure
+    (a frame corrupted by interleaved firmware log text). The listener is dead for
+    all practical purposes from here on, so run_listener() restarts it at once
+    instead of waiting ~30 s for the CLI to give up on its own."""
+    return CORRUPT_FRAME_LINE_MARKER in (line or "")
+
 
 def line_signals_disconnect(line: str) -> bool:
     """True if a raw --listen stdout line is the Meshtastic library's own

@@ -9069,6 +9069,11 @@ def api_radio_health():
     status["transport"] = current_radio_transport()
 
     # Inbound receive counters (counts and states only - never message content).
+    try:
+        status["listener_exits"] = listener_supervisor.exit_stats()
+    except Exception:
+        pass
+
     status["inbound"] = {
         "worker": inbound_worker.stats(),
         "ingest": inbound_events.get_inbound_stats(),

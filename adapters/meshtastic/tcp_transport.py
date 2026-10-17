@@ -87,6 +87,7 @@ from meshsrv.radio_transport import (
     ReceivedBatch,
     ReceivedNodeInfoEvent,
     ReceivedPositionEvent,
+    ReceivedRoutingEvent,
     ReceivedTelemetryEvent,
     ReceivedTextEvent,
     ReceivedWaypointEvent,
@@ -260,6 +261,7 @@ _RECEIVE_TOPIC_WAYPOINT = "meshtastic.receive.waypoint"
 _RECEIVE_TOPIC_NODEINFO = "meshtastic.receive.user"  # the library's own protocol name is "user", not "nodeinfo"
 _RECEIVE_TOPIC_POSITION = "meshtastic.receive.position"
 _RECEIVE_TOPIC_TELEMETRY = "meshtastic.receive.telemetry"
+_RECEIVE_TOPIC_ROUTING = "meshtastic.receive.routing"   # ST1: the (N)ACK of a packet we sent
 
 # LoRa traffic is slow; 256 is a large margin for a queue Core drains about once
 # a second. Bounded, and NOT a silent deque(maxlen=N): overflow drops the OLDEST
@@ -369,6 +371,7 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
             "received_nodeinfo": 0,
             "received_position": 0,
             "received_telemetry": 0,
+            "received_routing": 0,
             "queue_overflow_dropped": 0,
             "drained_events": 0,
             "malformed_events": 0,
@@ -1378,6 +1381,7 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
                 (_RECEIVE_TOPIC_NODEINFO, self._on_receive_nodeinfo),
                 (_RECEIVE_TOPIC_POSITION, self._on_receive_position),
                 (_RECEIVE_TOPIC_TELEMETRY, self._on_receive_telemetry),
+                (_RECEIVE_TOPIC_ROUTING, self._on_receive_routing),
             ]
             for topic, listener in listeners:
                 pub.subscribe(listener, topic)
@@ -1424,6 +1428,38 @@ class TCPTransport(TimeoutEnforced, RadioTransport):
 
     def _on_receive_telemetry(self, packet, interface) -> None:
         self._on_receive(packet, interface, "telemetry", self._normalize_telemetry)
+
+    def _on_receive_routing(self, packet, interface=None) -> None:
+        # `interface=None` on purpose: pubsub fixes a topic's signature at its FIRST
+        # subscriber, and the serial send's RoutingAckWaiter subscribes to the same
+        # topic in this very process - both must declare it identically.
+        self._on_receive(packet, interface, "routing", self._normalize_routing)
+
+    def _normalize_routing(self, packet, interface) -> Optional[ReceivedRoutingEvent]:
+        """The routing reply (ACK/NAK) to a packet WE sent: `decoded.requestId` is that
+        packet's id. Only replies addressed to this radio are kept (the library also
+        hands over route-discovery and other nodes' routing traffic, which carry no
+        requestId or a different `to`). Returns None for those - not malformed."""
+        from adapters.meshtastic._ack_support import routing_fields
+
+        fields = routing_fields(packet)
+        if fields is None:
+            return None
+        request_id, reason, from_num, to_num, packet_id = fields
+        local_node_id = self._local_node_id(interface)
+        if not local_node_id:
+            raise ValueError("local radio node id is not known yet")
+        if to_num is not None and to_num != int(local_node_id[1:], 16):
+            return None
+        return ReceivedRoutingEvent(
+            request_id=request_id,
+            error_reason=reason,
+            from_num=from_num,
+            received_at=time.time(),
+            local_radio_node_id=local_node_id,
+            to_num=to_num,
+            packet_id=packet_id,
+        )
 
     def _on_receive(self, packet, interface, kind, normalize) -> None:
         """Runs on the library's publishing thread: must never raise into it."""

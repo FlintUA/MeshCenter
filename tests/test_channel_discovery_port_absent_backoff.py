@@ -73,12 +73,13 @@ def test_repeated_enoent_backs_off_instead_of_retrying_every_poll(_clean_channel
     )
 
 
-def test_a_non_enoent_discovery_error_is_not_backed_off(_clean_channel_state, monkeypatch):
-    """Regression guard: only the specific 'port doesn't exist' signal
-    gets this treatment - an ordinary busy-port/timeout/protocol error
-    must keep retrying on every poll exactly as before (those ARE
-    expected to resolve on their own within the UI's normal 10s cadence,
-    unlike a device that's genuinely gone)."""
+def test_any_discovery_failure_backs_the_next_attempt_off(_clean_channel_state, monkeypatch):
+    """ST1 (supersedes the DK-era "retry on every poll" policy): every failed read
+    stops the serial listener for 10-15 s and used to be retried by every 10 s
+    poll of every open tab (fleet: 17-20 claims/h/node, the adapter killed on
+    each starved retry). A failed read now waits CHANNEL_DISCOVERY_FAILURE_BACKOFF_S
+    (60 s; 15 s when it was merely deferred as BUSY) - the cached list is served
+    meanwhile - while the port-absent case keeps its own 30 s window."""
     server_module = _clean_channel_state
     monkeypatch.setattr(server_module, "is_radio_available", lambda: True)
 
@@ -95,7 +96,36 @@ def test_a_non_enoent_discovery_error_is_not_backed_off(_clean_channel_state, mo
         response = client.get("/api/chats?refresh_channels=1")
         assert response.status_code == 200
 
-    assert len(call_count) == 3, "a non-ENOENT error must not trigger the absent-port backoff"
+    assert len(call_count) == 1, "one failed read, then served from cache until the backoff expires"
+
+
+def test_concurrent_polls_share_one_in_flight_discovery(_clean_channel_state, monkeypatch):
+    import threading
+    import time
+
+    server_module = _clean_channel_state
+    monkeypatch.setattr(server_module, "is_radio_available", lambda: True)
+    started, release, calls = threading.Event(), threading.Event(), []
+
+    def _slow_get_channels(timeout=15):
+        calls.append(1)
+        started.set()
+        release.wait(5)
+        return []
+
+    monkeypatch.setattr(server_module.transport_router, "get_channels", _slow_get_channels)
+    client = server_module.app.test_client()
+    first = threading.Thread(target=lambda: client.get("/api/chats?refresh_channels=1"))
+    first.start()
+    assert started.wait(3)
+    # a second and third poll arrive while the radio is being read
+    t0 = time.monotonic()
+    for _ in range(2):
+        assert client.get("/api/chats?refresh_channels=1").status_code == 200
+    assert time.monotonic() - t0 < 2.0, "concurrent polls must not queue behind the read"
+    release.set()
+    first.join(5)
+    assert len(calls) == 1
 
 
 def test_a_successful_discovery_clears_a_leftover_backoff(_clean_channel_state, monkeypatch):

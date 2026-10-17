@@ -32,6 +32,26 @@ from meshsrv.radio_transport import (
 from meshsrv.transport_router import TransportRouter
 
 
+def _record_sleeps_of_this_thread(monkeypatch, server_module):
+    """Replace time.sleep with a recorder that only swallows (and records) the
+    TEST thread's sleeps. `time` is one process-wide module: a bare
+    `lambda s: slept.append(s)` also hijacks every other thread's sleep, so any
+    stray background loop in the session spins at full speed and floods `slept`
+    (the DK1-era flake and the ST1 CI hang). Other threads keep the real sleep."""
+    real_sleep = server_module.time.sleep
+    test_thread = threading.current_thread()
+    slept = []
+
+    def _sleep(seconds):
+        if threading.current_thread() is test_thread:
+            slept.append(seconds)
+        else:
+            real_sleep(seconds)
+
+    monkeypatch.setattr(server_module.time, "sleep", _sleep)
+    return slept
+
+
 class _FakeTransport:
     """Minimal RadioTransport stand-in - connects successfully unless
     `fail` is set, records connect() calls. `initial_descriptor`
@@ -482,8 +502,7 @@ def test_verify_radio_identity_retries_a_transient_tcp_failure_and_recovers(
 
     monkeypatch.setattr(server_module, "detect_tcp_radio_identity", _fake_detect_tcp)
 
-    slept = []
-    monkeypatch.setattr(server_module.time, "sleep", lambda seconds: slept.append(seconds))
+    slept = _record_sleeps_of_this_thread(monkeypatch, server_module)
 
     identity = server_module.instance_manager.get()
     updated = dict(identity)
@@ -538,8 +557,7 @@ def test_verify_radio_identity_never_retries_a_definitive_mismatch(
 
     monkeypatch.setattr(server_module, "detect_tcp_radio_identity", _fake_detect_tcp)
 
-    slept = []
-    monkeypatch.setattr(server_module.time, "sleep", lambda seconds: slept.append(seconds))
+    slept = _record_sleeps_of_this_thread(monkeypatch, server_module)
 
     identity = server_module.instance_manager.get()
     updated = dict(identity)
@@ -584,8 +602,7 @@ def test_verify_radio_identity_gives_up_after_exhausting_retries(
 
     monkeypatch.setattr(server_module, "detect_tcp_radio_identity", _fake_detect_tcp)
 
-    slept = []
-    monkeypatch.setattr(server_module.time, "sleep", lambda seconds: slept.append(seconds))
+    slept = _record_sleeps_of_this_thread(monkeypatch, server_module)
 
     identity = server_module.instance_manager.get()
     updated = dict(identity)

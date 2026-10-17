@@ -597,7 +597,7 @@ MeshCenter supports both a Raspberry Pi Camera (CSI ribbon connector) and a USB/
 MeshCenter can talk to your Meshtastic node three ways, switchable under `Settings > Radio Connection > Connection type`:
 
 - **USB** (default, recommended) — a serial cable to the Raspberry Pi. Full send and receive. Unplugging and replugging the cable, or power-cycling the radio, recovers automatically; a different radio on the port is never adopted silently (see "A different radio was connected" below).
-- **TCP** — over the local network, if your radio exposes Meshtastic's own TCP API (port 4403). Full send and receive (text, waypoints, node info, position and telemetry), but no delivery/routing acknowledgements and no remote waypoint deletion over this path.
+- **TCP** — over the local network, if your radio exposes Meshtastic's own TCP API (port 4403). Full send and receive (text, waypoints, node info, position, telemetry and delivery acknowledgements), but no remote waypoint deletion over this path.
 - **Bluetooth** — no cable, marked "Experimental" in the interface:
   - **No incoming messages, telemetry, or node info at all while Bluetooth is active** — not degraded, completely absent. You can send over Bluetooth, but MeshCenter will not receive anything until you switch back to USB or TCP.
   - **Switching connection types can take up to ~90–135 seconds in the worst case** (measured on real hardware) — it is not a quick toggle.

@@ -106,6 +106,7 @@ def register_chat_routes(
         update_message_status(
             message_id, final_chat_id, "sent",
             packet_id=packet_id, ack_requested=want_ack,
+            ack_state=getattr(result, "ack_state", None), ack_error=getattr(result, "ack_error", None),
         )
 
         with state_lock:
@@ -179,7 +180,9 @@ def register_chat_routes(
         # its own TransportError internally and always returns one
         # SendResult per input message (never raises) - see
         # SerialTransport/BLETransport.send_messages().
-        results = radio_transport.send_messages(messages, timeout=30)
+        # 40 s (was 30): a serial DM now stays in its claim up to SERIAL_ACK_WAIT_S to see the
+        # delivery ACK; the send worker is a background thread, nothing user-facing waits on it.
+        results = radio_transport.send_messages(messages, timeout=40)
 
         for job, result in zip(batch, results):
             _handle_send_result(job, result)
@@ -238,7 +241,16 @@ def register_chat_routes(
 
     threading.Thread(target=send_worker, daemon=True, name="mc-send-worker").start()
 
-    CHANNEL_CACHE_TTL_SECONDS = 300
+    # ST1: a channel list only changes when someone edits the radio's channels, yet
+    # every refresh stops the serial listener for 10-15 s (~17-20 claims/h per
+    # node measured on the fleet). Long TTL; `?refresh_channels=1` still forces a
+    # read, concurrent callers share ONE in-flight read, and any failed read backs
+    # the next attempt off by CHANNEL_DISCOVERY_FAILURE_BACKOFF_S instead of being
+    # retried by every 10 s poll of every open tab.
+    CHANNEL_CACHE_TTL_SECONDS = 1800
+    CHANNEL_DISCOVERY_FAILURE_BACKOFF_S = 60
+    CHANNEL_DISCOVERY_BUSY_BACKOFF_S = 15
+    channel_discovery_inflight = threading.Lock()
     channel_cache = {"timestamp": 0.0, "channels": []}
     channel_cache_lock = threading.Lock()
 
@@ -280,6 +292,19 @@ def register_chat_routes(
         return value == CHANNEL_CHAT_ID or bool(re.fullmatch(r"channel:[1-7]", str(value or "")))
 
     def discover_radio_channels(force=False):
+        """Single-flight front door of _discover_radio_channels(): while one
+        caller is reading the radio, everyone else is served the cached list at
+        once instead of queueing a second claim behind it."""
+        if not channel_discovery_inflight.acquire(blocking=False):
+            with channel_cache_lock:
+                cached = [dict(item) for item in channel_cache["channels"]]
+            return cached or _primary_channel_fallback()
+        try:
+            return _discover_radio_channels(force)
+        finally:
+            channel_discovery_inflight.release()
+
+    def _discover_radio_channels(force=False):
         """Read the active channel configuration from the connected radio.
 
         The short cache prevents the 10-second UI poll from reopening the serial
@@ -345,6 +370,10 @@ def register_chat_routes(
                     flush=True,
                 )
             else:
+                busy = getattr(getattr(error, "code", None), "value", None) == "busy"
+                channel_discovery_backoff["until"] = now_ts + (
+                    CHANNEL_DISCOVERY_BUSY_BACKOFF_S if busy else CHANNEL_DISCOVERY_FAILURE_BACKOFF_S
+                )
                 print(f"[CHANNELS] Discovery warning: {error}", flush=True)
 
         if discovered:

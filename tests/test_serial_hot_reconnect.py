@@ -858,3 +858,41 @@ def test_mark_device_verified_seeds_current_verified_port_without_firing_on_port
 
     assert supervisor.current_verified_port() == "/dev/serial/by-id/usb-Fake_Radio-if00"
     assert changes == []
+
+
+# --- ST1: corrupted FromRadio frame (firmware log text inside the stream) ----
+
+_REAL_CORRUPT_FRAME_LINE = (
+    "ERROR file:stream_interface.py __reader line:221 Error while handling message from radio "
+    "Error parsing message with type 'meshtastic.protobuf.FromRadio': Wire format was corrupt\n"
+)
+
+
+def test_corrupt_frame_line_restarts_a_hung_listener_at_once(monkeypatch):
+    """Live on .104: after a corrupted frame the CLI sits out its own 30 s connect
+    timeout. The supervisor must end the process on the first such line instead."""
+    seen_lines = []
+    supervisor = _make_supervisor(on_raw_line=seen_lines.append)
+    fake_process = _FakeListenProcess([_REAL_CORRUPT_FRAME_LINE, "never read\n"], exit_code=None)
+
+    _run_one_cycle(supervisor, monkeypatch, fake_process)
+
+    assert fake_process.terminated is True
+    assert seen_lines == [_REAL_CORRUPT_FRAME_LINE.strip()]
+    assert not supervisor._disconnect_detected.is_set(), "a corrupt frame is not a device disconnect"
+    assert supervisor.exit_stats()["frame_corrupt_restarts"] == 1
+
+
+def test_exit_stats_count_exits_inside_the_post_claim_window(monkeypatch):
+    import meshsrv.serial_port_supervisor as spv_module
+
+    supervisor = _make_supervisor()
+    supervisor._claim_released_at = time.monotonic()
+    _run_one_cycle(supervisor, monkeypatch, _FakeListenProcess(["x\n"], exit_code=1))
+    stats = supervisor.exit_stats()
+    assert stats["unexpected_exits"] == 1 and stats["post_claim_listener_exits"] == 1
+
+    supervisor._claim_released_at = time.monotonic() - spv_module.CLAIM_SETTLE_WINDOW_S - 5
+    _run_one_cycle(supervisor, monkeypatch, _FakeListenProcess(["x\n"], exit_code=1))
+    stats = supervisor.exit_stats()
+    assert stats["unexpected_exits"] == 2 and stats["post_claim_listener_exits"] == 1

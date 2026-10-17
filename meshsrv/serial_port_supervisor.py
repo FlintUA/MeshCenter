@@ -58,6 +58,7 @@ from meshsrv.serial_reconnect import (
     capture_device_identity,
     device_identity_changed,
     identity_retry_delay,
+    line_signals_corrupt_frame,
     line_signals_disconnect,
 )
 
@@ -83,6 +84,14 @@ class PortReleaseOutcome(str, Enum):
     UTILITY_MISSING = "utility_missing"
 
 
+# A listener exit within this long of our own stop request is that request (see
+# run_listener()'s classification).
+INTENTIONAL_STOP_GRACE_S = 30.0
+#: after a claim released the port, listener exits inside this window are the
+#: post-claim settle (see run_listener), not crashes
+CLAIM_SETTLE_WINDOW_S = 120.0
+
+
 class SerialPortSupervisor:
     def __init__(
         self,
@@ -104,6 +113,12 @@ class SerialPortSupervisor:
         self._port = port
         self._radio_lock = radio_lock
         self._pause_listen = pause_listen
+        self._last_stop_request_at = float("-inf")
+        self._claim_released_at = float("-inf")
+        # ST1: visible counters (/api/radio_health "listener_exits") - how often the
+        # listener ended on its own, how many of those were inside the post-claim
+        # settle window, and how many were a corrupted-frame early restart.
+        self._exit_stats = {"unexpected_exits": 0, "post_claim_listener_exits": 0, "frame_corrupt_restarts": 0}
         self._on_raw_line = on_raw_line or (lambda line: None)
         self._on_lifecycle_event = on_lifecycle_event or (lambda event, intentional=None: None)
         # Task 7 (listener-stop-intent logging) follow-up: accepts optional
@@ -314,6 +329,7 @@ class SerialPortSupervisor:
                 self._consecutive_errors = 0
 
             disconnect_signal_seen = False
+            corrupt_frame_seen = False
             for line in proc.stdout:
                 if self._pause_listen.is_set():
                     break
@@ -333,12 +349,22 @@ class SerialPortSupervisor:
                 # never come.
                 if line_signals_disconnect(line):
                     disconnect_signal_seen = True
+                if line_signals_corrupt_frame(line):
+                    corrupt_frame_seen = True
                 try:
                     self._on_raw_line(line)
                 except Exception as e:
                     print(f"[SerialPortSupervisor] on_raw_line error: {e}", file=sys.stderr, flush=True)
-                if disconnect_signal_seen:
+                if disconnect_signal_seen or corrupt_frame_seen:
                     break
+
+            if corrupt_frame_seen and not disconnect_signal_seen and not self._pause_listen.is_set():
+                self._exit_stats["frame_corrupt_restarts"] += 1
+                self._on_log(
+                    "Listener restarted after a corrupted radio frame (firmware log text inside the serial stream)",
+                    "WARNING",
+                )
+                self._terminate_process(proc)
 
             if disconnect_signal_seen:
                 self._terminate_process(proc)
@@ -385,7 +411,14 @@ class SerialPortSupervisor:
             # architectural change that overlaps with the P1-A
             # follow-up, not attempted here. Tracked as backlog, not
             # scheduled separately (rare, narrow, self-recovering).
-            stop_was_intentional = self._pause_listen.is_set()
+            # ST1: the monitor often notices the exit only after the claim that
+            # requested it has finished and cleared pause_listen (10-15 s later), and
+            # then logged every routine claim as ERROR "Listener stopped
+            # unexpectedly" (~20-30/h per node). A stop shortly after our own stop
+            # request is that request.
+            stop_was_intentional = self._pause_listen.is_set() or (
+                time.monotonic() - self._last_stop_request_at < INTENTIONAL_STOP_GRACE_S
+            )
 
             if stop_was_intentional:
                 if current is not None:
@@ -405,7 +438,19 @@ class SerialPortSupervisor:
             else:
                 self._consecutive_errors = 0
 
-            self._on_lifecycle_event("listener_stop", intentional=stop_was_intentional)
+            # ST1 (live on .104): a listener restarted right after a send claim
+            # often fails its first handshake with the just-closed radio and exits
+            # ~33 s later (code 1, "Closing our port"), once or twice, before a start
+            # sticks. That is a known post-claim settle, not a crash: report it as a
+            # restart-after-command (INFO) instead of ERROR, and keep the recovery
+            # path (the restart below) exactly as it was.
+            settling_after_claim = (time.monotonic() - self._claim_released_at) < CLAIM_SETTLE_WINDOW_S
+            self._exit_stats["unexpected_exits"] += 1
+            if settling_after_claim:
+                self._exit_stats["post_claim_listener_exits"] += 1
+            self._on_lifecycle_event(
+                "listener_stop", intentional=True if settling_after_claim else stop_was_intentional
+            )
             with self._radio_lock:
                 self._listen_process = None
 
@@ -720,8 +765,18 @@ class SerialPortSupervisor:
     # outside the class) is the actual fix for the encapsulation half of
     # this stabilization task, not just the import-boundary half.
     # ------------------------------------------------------------------
+    def exit_stats(self) -> dict:
+        """Counters of the listener's own exits (see __init__); a copy."""
+        return dict(self._exit_stats)
+
+    def restarting_after_claim(self, window: float = 45.0) -> bool:
+        """True for a short while after a claim handed the port back: the listener
+        is on its way up again, which is "paused", not "down"."""
+        return (time.monotonic() - self._claim_released_at) < window
+
     def stop_listener_process(self) -> bool:
         self._pause_listen.set()
+        self._last_stop_request_at = time.monotonic()
         # Task 7 (observability follow-up): log intent at the ONE place
         # it's actually known for certain - this is the single choke point
         # both callers that ever intentionally stop the listener go
@@ -1095,3 +1150,4 @@ class SerialPortSupervisor:
                 if cooldown:
                     time.sleep(cooldown)
                 self._pause_listen.clear()
+                self._claim_released_at = time.monotonic()

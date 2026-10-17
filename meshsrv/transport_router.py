@@ -88,8 +88,29 @@ class TransportRouter(RadioTransport):
     # to then run its own full duration on top.
     _SWITCH_LOCK_TIMEOUT_S = 5.0
 
+    # ST1 (fleet-wide serial churn, measured on dev/prod/camtest):
+    # a caller that waited 10-14 s for the lock used to be handed the 0-1 s left
+    # of its budget, a call that is certain to time out AND kills the adapter
+    # subprocess ("get_channels() exceeded 1.0s", ~10-17 kills/h per node), which
+    # leaves the channel cache stale and makes the next poll try again. A call
+    # whose caller asked for at least MIN_CALL_BUDGET_S is only made when at
+    # least that much is still left; otherwise it is BUSY and the adapter is left
+    # alone.
+    MIN_CALL_BUDGET_S = 5.0
+
+    # Background claims (they stop the serial --listen process for 10-15 s) must
+    # never delay a message the user is sending, nor eat the window in which a
+    # delivery ACK can arrive. `hold_background()` / a waiting send make them
+    # BUSY (callers serve cached data) instead of queueing on the lock.
+    BACKGROUND_METHODS = frozenset({"get_channels", "set_device_time", "get_nodes"})
+    SEND_METHODS = frozenset({"send_text", "send_text_checked", "send_packet", "send_messages", "send_waypoint"})
+    _BACKGROUND_POLL_S = 0.25
+
     def __init__(self, initial: RadioTransport, *, on_log: Optional[Callable[[str, str], None]] = None) -> None:
         self._lock = threading.Lock()
+        self._prio_lock = threading.Lock()
+        self._sends_waiting = 0
+        self._background_hold_until = 0.0
         self._active = initial
         # Follow-up investigation after PR #279 (pixel-111 live finding:
         # a manual reconnect attempt got a suspiciously small remaining
@@ -148,14 +169,70 @@ class TransportRouter(RadioTransport):
                 self._on_log(f"switch()'s connect_new() held the router lock for {call_elapsed:.1f}s", "INFO")
             self._lock.release()
 
+    # ------------------------------------------------------------------
+    # ST1: send priority and the ACK-window hold
+    # ------------------------------------------------------------------
+    def hold_background(self, seconds: float) -> None:
+        """Make background claims BUSY for `seconds` (extends, never shortens) -
+        called after a want_ack DM whose ACK was not captured inside the send
+        itself, so a listener restart cannot swallow the late ACK."""
+        with self._prio_lock:
+            self._background_hold_until = max(self._background_hold_until, time.monotonic() + max(0.0, seconds))
+
+    def release_background_hold(self) -> None:
+        with self._prio_lock:
+            self._background_hold_until = 0.0
+
+    def background_hold_remaining(self) -> float:
+        with self._prio_lock:
+            return max(0.0, self._background_hold_until - time.monotonic())
+
+    def _background_blocker(self) -> Optional[str]:
+        with self._prio_lock:
+            if self._sends_waiting > 0:
+                return "a message is being sent"
+            if self._background_hold_until > time.monotonic():
+                return "waiting for a delivery acknowledgement"
+        return None
+
     def _delegate(self, name: str, *args, timeout: float, **kwargs):
         """Splits `timeout` (the caller's own already-existing budget for
         this operation) between the lock-acquire wait and the delegated
         call itself, so the TOTAL time this can hold a caller's thread is
         bounded by `timeout`, not `timeout` twice over. See class
         docstring's BOUNDED WAIT note - this is the Task 47.5 fix."""
+        is_send = name in self.SEND_METHODS
+        is_background = name in self.BACKGROUND_METHODS
+        if is_send:
+            with self._prio_lock:
+                self._sends_waiting += 1
+        try:
+            return self._delegate_locked(name, args, kwargs, timeout, is_background)
+        finally:
+            if is_send:
+                with self._prio_lock:
+                    self._sends_waiting -= 1
+
+    def _delegate_locked(self, name, args, kwargs, timeout, is_background):
         start = time.monotonic()
-        acquired = self._lock.acquire(timeout=timeout)
+        if is_background:
+            blocker = self._background_blocker()
+            if blocker:
+                raise TransportError(TransportErrorCode.BUSY, f"{name}() deferred: {blocker}")
+            deadline = start + timeout
+            acquired = False
+            while True:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    break
+                acquired = self._lock.acquire(timeout=min(self._BACKGROUND_POLL_S, left))
+                if acquired:
+                    break
+                blocker = self._background_blocker()
+                if blocker:
+                    raise TransportError(TransportErrorCode.BUSY, f"{name}() deferred: {blocker}")
+        else:
+            acquired = self._lock.acquire(timeout=timeout)
         wait_elapsed = time.monotonic() - start
         if acquired and wait_elapsed > 0.5:
             self._on_log(f"{name}() waited {wait_elapsed:.1f}s to acquire the router lock", "INFO")
@@ -173,6 +250,18 @@ class TransportRouter(RadioTransport):
         call_start = time.monotonic()
         try:
             remaining = max(0.0, timeout - (time.monotonic() - start))
+            # Only when the LOCK WAIT is what ate the budget: a call that simply asked for
+            # a short timeout (drain_received's 5 s, status reads) is made as asked.
+            if wait_elapsed > 0.5 and timeout >= self.MIN_CALL_BUDGET_S and remaining < self.MIN_CALL_BUDGET_S:
+                self._on_log(
+                    f"{name}() skipped: {remaining:.1f}s of its {timeout:g}s budget left after waiting for the "
+                    "router lock - not calling (it would only time out and kill the adapter)",
+                    "INFO",
+                )
+                raise TransportError(
+                    TransportErrorCode.BUSY,
+                    f"{name}() could not start: the radio was busy for most of its {timeout:g}s budget",
+                )
             return getattr(self._active, name)(*args, timeout=remaining, **kwargs)
         finally:
             call_elapsed = time.monotonic() - call_start

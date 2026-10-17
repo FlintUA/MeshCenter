@@ -356,13 +356,22 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
         (migrated to call through this transport in Task 46)."""
 
         def _do_send_all():
+            from adapters.meshtastic._ack_support import SERIAL_ACK_TAIL_RESERVE_S, SERIAL_ACK_WAIT_S, RoutingAckWaiter
+
             results: list[SendResult] = []
+            started = time.monotonic()
             with self._supervisor.claim_exclusive_access(timeout=timeout, cooldown=2.0):
                 interface = self._open_interface()
+                waiter = None
                 try:
+                    wanted: list[int] = []
                     for message in messages:
                         try:
                             destination = message.destination_id
+                            if message.want_ack and waiter is None:
+                                # Before the first send: an ACK can beat sendText()'s
+                                # return by milliseconds.
+                                waiter = RoutingAckWaiter(interface)
                             sent = interface.sendText(
                                 text=message.text,
                                 destinationId=destination,
@@ -371,12 +380,12 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
                                 replyId=message.reply_id,
                             )
                             packet_id = getattr(sent, "id", None)
-                            results.append(
-                                SendResult(
-                                    accepted=True,
-                                    packet_id=int(packet_id) if packet_id is not None else None,
-                                )
-                            )
+                            packet_id = int(packet_id) if packet_id is not None else None
+                            if message.want_ack and waiter is not None:
+                                waiter.expect(packet_id, destination)
+                                if packet_id is not None:
+                                    wanted.append(packet_id)
+                            results.append(SendResult(accepted=True, packet_id=packet_id))
                         except Exception as e:
                             results.append(
                                 SendResult(
@@ -384,7 +393,25 @@ class SerialTransport(TimeoutEnforced, RadioTransport):
                                     error=TransportError(TransportErrorCode.UNKNOWN, str(e)),
                                 )
                             )
+                    if waiter is not None and wanted:
+                        # ST1: the claim has already stopped the --listen process, so
+                        # staying connected a little longer costs no reception - and
+                        # it is the only place the routing reply of a serial send can
+                        # be seen reliably (the listener is restarting, ~8 s from
+                        # ready, when a direct neighbour's ACK arrives). Bounded by
+                        # what is left of the caller's own budget.
+                        deadline = min(time.monotonic() + SERIAL_ACK_WAIT_S, started + timeout - SERIAL_ACK_TAIL_RESERVE_S)
+                        outcomes = waiter.wait(deadline) if deadline > time.monotonic() else {}
+                        for index, result in enumerate(results):
+                            outcome = outcomes.get(result.packet_id) if result.accepted else None
+                            if outcome is not None:
+                                results[index] = SendResult(
+                                    accepted=True, packet_id=result.packet_id,
+                                    ack_state=outcome[0], ack_error=outcome[1],
+                                )
                 finally:
+                    if waiter is not None:
+                        waiter.close()
                     try:
                         interface.close()
                     except Exception:

@@ -604,7 +604,20 @@ def test_failed_time_sync_is_retried_after_the_cooldown_not_after_six_hours(monk
     srv._attempt_node_time_sync()
 
     now = time.time()
-    assert srv.NODE_TIME_SYNC_ATTEMPT_COOLDOWN_S < srv.NODE_TIME_SYNC_REFRESH_S
+    assert srv.NODE_TIME_SYNC_RETRY_AFTER_FAILURE_S < srv.NODE_TIME_SYNC_REFRESH_S
     assert now - srv._node_time_sync_last_attempt_ts == pytest.approx(
-        srv.NODE_TIME_SYNC_REFRESH_S - srv.NODE_TIME_SYNC_ATTEMPT_COOLDOWN_S, abs=5
+        srv.NODE_TIME_SYNC_REFRESH_S - srv.NODE_TIME_SYNC_RETRY_AFTER_FAILURE_S, abs=5
     )
+
+
+def test_time_sync_gives_the_serial_claim_enough_time(monkeypatch):
+    """timeout=10 made the adapter watchdog fire at ~5 s, before the claim (~10 s) could
+    finish: every attempt failed on .104."""
+    import server as srv
+
+    seen = {}
+    monkeypatch.setattr(srv, "STARTUP_SYNC_DELAY_S", 0)
+    monkeypatch.setitem(srv.RADIO_IDENTITY_RESULT, "status", "MATCH")
+    monkeypatch.setattr(srv.transport_router, "set_device_time", lambda *a, **k: seen.update(k) or True)
+    srv._attempt_node_time_sync()
+    assert seen["timeout"] >= 30

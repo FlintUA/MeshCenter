@@ -1595,6 +1595,8 @@ NODE_TIME_SYNC_ATTEMPT_COOLDOWN_S = 300
 # channel read, a send, the previous sync itself) never triggers one: that fed on
 # itself and ran a ~10 s port claim every ~6 minutes on every node (~9/h measured).
 NODE_TIME_SYNC_REFRESH_S = 6 * 3600
+# A failed attempt is retried after this long (each attempt is a port claim on serial).
+NODE_TIME_SYNC_RETRY_AFTER_FAILURE_S = 30 * 60
 NODE_TIME_SYNC_CLAIM_RESTART_WINDOW_S = 120
 _node_time_sync_last_claim_stop_ts = float("-inf")
 
@@ -4795,14 +4797,18 @@ def _attempt_node_time_sync():
     time.sleep(STARTUP_SYNC_DELAY_S)
 
     try:
-        transport_router.set_device_time(int(time.time()), timeout=10)
+        # 40 s, not 10: on serial this call is a whole port claim (stop the listener,
+        # open the radio, wait for its config, set the clock) = ~10 s on its own; with
+        # 10 s the adapter's watchdog fired at ~5 s and EVERY attempt failed (live on
+        # .104: 126 failed attempts in 12 h, each one stopping the listener).
+        transport_router.set_device_time(int(time.time()), timeout=40)
     except Exception as error:
         print(f"[TIME SYNC] Attempt failed: {error}", flush=True)
         # A failed attempt (typically BUSY / a short budget left behind a boot-time
         # channel read) must not wait for the next 6 h refresh: retry after the
         # normal attempt cooldown. A success keeps the long interval.
         global _node_time_sync_last_attempt_ts
-        _node_time_sync_last_attempt_ts = time.time() - NODE_TIME_SYNC_REFRESH_S + NODE_TIME_SYNC_ATTEMPT_COOLDOWN_S
+        _node_time_sync_last_attempt_ts = time.time() - NODE_TIME_SYNC_REFRESH_S + NODE_TIME_SYNC_RETRY_AFTER_FAILURE_S
 
 
 def update_base_status_from_info(info_output=None):

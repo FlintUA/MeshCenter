@@ -258,3 +258,17 @@ low background rates under different conditions (the same-day A/B
 upstream suggested it exists on `main` too, at ~1-4/hr depending on
 sample), but this measurement found no evidence it is elevated by
 #331's hot-reconnect changes.
+
+## KI-010: Release radio (RR1) - what is and is not covered
+
+- A **TCP** release is persisted per radio profile (`data/profiles/<id>/radio_release.json`) and survives a
+  restart; a **serial** release stays in memory only (a restart reconnects), but both now accept a duration and a
+  timed release ends by itself.
+- The old API-only setting `tcp_ble_autorecovery.enabled` is no longer read for TCP (it had no UI control and did not
+  stop boot or explicit connects - the pixel-111 incident). It still governs Bluetooth auto-reconnect only.
+- Explicit actions end a TCP release: Reconnect / `reconnect_now`, an explicit TCP connect or transport switch, and
+  activating that profile. Detecting/accepting a radio at the *released* endpoint is refused (409 "Radio released -
+  press Reconnect"). Boot, restart and the supervisor never end it.
+- **Bluetooth** has no release (out of scope). Contention detection never releases the radio by itself.
+- A release request waits up to ~30 s for an attempt that is already running (they share one lock); the release
+  gate is set first, so no new attempt starts meanwhile.

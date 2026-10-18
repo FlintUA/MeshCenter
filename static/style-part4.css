@@ -1494,6 +1494,29 @@ html[data-theme="dark"] .identity-error { color: #fca5a5; }
     background: rgba(239, 68, 68, .12);
 }
 
+/* RR1: released = neutral, not warning/danger */
+.device-status-released {
+    color: #475a7a;
+    background: rgba(100, 130, 190, .14);
+}
+
+html[data-theme="dark"] .device-status-released {
+    color: #9db4dc;
+    background: rgba(120, 150, 210, .16);
+}
+
+.device-release-duration {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+}
+
+.device-release-duration select {
+    padding: 4px 6px;
+    border-radius: 6px;
+}
+
 .device-dashboard-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));

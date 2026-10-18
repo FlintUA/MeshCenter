@@ -33,9 +33,14 @@ because they would describe the container; disk shows the data volume. The
 
 A Meshtastic node accepts **one** TCP client. While MeshCenter is connected,
 the Meshtastic phone app or a second MeshCenter cannot use that node's TCP
-port (and vice versa) - **one TCP client per radio**. Stop the container
-(`docker compose stop`) to free it, or use the phone app only while MeshCenter
-is stopped. Inside one MeshCenter instance there is never more than one
+port (and vice versa) - **one TCP client per radio**. To hand the radio to
+another client, press **Release radio** (Node Manager, TCP card; choose 15
+minutes, 1 hour or "until I reconnect"): MeshCenter closes its session at once
+and does **not** connect again - not on a timer, not after a restart of the
+container - until the chosen time has passed or you press **Reconnect**. While
+released, sending and Node Tools answer "radio released" immediately, and the
+header shows "Radio released (until 12:30)". `docker compose stop` still works
+as an alternative. Inside one MeshCenter instance there is never more than one
 connection: a reconnect always closes the old session first.
 
 ## Layout on the NAS
@@ -175,8 +180,14 @@ attempted in that gap fails with "not connected".
 If Node Manager says the radio *"may be in use by another client"*, something
 else is connecting to the same radio (the Meshtastic phone app, a second
 MeshCenter, a script): the radio drops the older client whenever a new one
-connects, so the two keep evicting each other. Close the other client; MeshCenter
-backs off to one attempt per 2 minutes while that is the case.
+connects, so the two keep evicting each other. This is detected from the radio
+closing our session repeatedly - however long each session lasted (3 closes in 5
+minutes, 4 in 10 minutes, or 4 in an hour at regular intervals). A single reboot,
+a Wi-Fi blip or a long power-off does not trigger it. Press **Release radio** on
+the instance that should let go (the other MeshCenter, or close the phone app);
+meanwhile MeshCenter backs off to one attempt per 5 minutes (10 minutes after
+half an hour). The notice goes away after a session has stayed up for 15 minutes.
+MeshCenter never releases the radio by itself.
 
 If the radio is unreachable at start MeshCenter still starts and shows it as
 disconnected. Startup takes about 40 seconds in that case (measured) before the
@@ -203,7 +214,8 @@ share it as a public folder.
 ## Day to day
 
 ```bash
-docker compose stop                 # free the radio's TCP slot
+# free the radio's TCP slot: use "Release radio" in Node Manager (no container stop needed);
+docker compose stop                 # ... or stop the whole container
 docker compose start
 docker compose restart
 docker compose logs -f --timestamps meshcenter

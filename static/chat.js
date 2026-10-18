@@ -10964,8 +10964,37 @@ function formatDeviceDashboardDate(value) {
 function deviceStatusClass(mode, identityStatus) {
     if (identityStatus === 'MISMATCH') return 'device-status-danger';
     if (mode === 'connected') return 'device-status-ok';
-    if (mode === 'released' || mode === 'releasing' || mode === 'reconnecting') return 'device-status-warning';
+    if (mode === 'released' || mode === 'releasing') return 'device-status-released';
+    if (mode === 'reconnecting') return 'device-status-warning';
     return 'device-status-danger';
+}
+
+// RR1: "Radio released" / "Radio released (until 12:30)". `until` is an absolute epoch
+// time in seconds (null = until the user reconnects).
+function formatReleaseTime(until) {
+    const date = new Date(Number(until) * 1000);
+    const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return date.toDateString() === new Date().toDateString()
+        ? time
+        : `${date.toLocaleDateString([], { day: '2-digit', month: '2-digit' })} ${time}`;
+}
+
+function formatReleasedLabel(until) {
+    return until
+        ? window.I18N.t('node_manager.header_released_until', { time: formatReleaseTime(until) })
+        : window.I18N.t('node_manager.header_released');
+}
+
+function renderReleaseDurationSelect(transport) {
+    return `
+        <label class="device-release-duration">
+            <span>${escapeHtml(window.I18N.t('node_manager.release_duration_label'))}</span>
+            <select id="radioReleaseDuration" data-transport="${escapeHtml(transport)}">
+                <option value="900">${escapeHtml(window.I18N.t('node_manager.release_duration_15m'))}</option>
+                <option value="3600">${escapeHtml(window.I18N.t('node_manager.release_duration_1h'))}</option>
+                <option value="" selected>${escapeHtml(window.I18N.t('node_manager.release_duration_until_reconnect'))}</option>
+            </select>
+        </label>`;
 }
 
 // TCP/Bluetooth have no Core `--listen` subprocess, so "listener running"
@@ -11031,6 +11060,11 @@ function renderNodeManagerConnectionCard(connection, radio, connectionLabel, can
             `,
             connectionActionsHtml: `
                 <div class="device-action-row">
+                    ${type === 'tcp' ? `
+                    ${renderReleaseDurationSelect('tcp')}
+                    <button type="button" class="device-action-btn device-action-secondary"
+                        onclick="releaseRadioConnection(); setTimeout(() => loadNodeManagerDashboard(), 1500);"
+                        ${canRelease ? '' : 'disabled'}>${escapeHtml(window.I18N.t('settings.release_radio'))}</button>` : ''}
                     <button type="button" class="device-action-btn device-action-primary"
                         onclick="reconnectActiveTransport('${type}'); setTimeout(() => loadNodeManagerDashboard(), 1800);"
                         ${canReconnect ? '' : 'disabled'}>${escapeHtml(window.I18N.t('node_manager.reconnect'))}</button>
@@ -11054,6 +11088,7 @@ function renderNodeManagerConnectionCard(connection, radio, connectionLabel, can
         `,
         connectionActionsHtml: `
             <div class="device-action-row">
+                ${renderReleaseDurationSelect('serial')}
                 <button type="button" class="device-action-btn device-action-secondary"
                     onclick="releaseRadioConnection(); setTimeout(() => loadNodeManagerDashboard(), 1200);"
                     ${canRelease ? '' : 'disabled'}>${escapeHtml(window.I18N.t('settings.release_radio'))}</button>
@@ -11303,9 +11338,11 @@ async function loadNodeManagerDashboard(showFeedback = false) {
         const storage = profile.storage || {};
         const statusClass = deviceStatusClass(connection.mode, radio.identity_status);
         const reconnectText = formatReconnectStatus(connection.reconnect);
-        const connectionLabel = (connection.mode !== 'connected' && reconnectText)
-            ? reconnectText
-            : deviceConnectionLabel(connection.mode, connection.listener_running, connection.type);
+        const connectionLabel = connection.mode === 'released'
+            ? formatReleasedLabel(connection.until)
+            : (connection.mode !== 'connected' && reconnectText)
+                ? reconnectText
+                : deviceConnectionLabel(connection.mode, connection.listener_running, connection.type);
         const canRelease = connection.mode === 'connected' && connection.listener_running;
         const canReconnect = connection.mode === 'released' || connection.mode === 'error' || (!connection.listener_running && connection.mode !== 'reconnecting');
         const iconSrc = window.MeshCenterNodeAvatar?.current?.() || '/static/meshcenter_logo.png';
@@ -13812,6 +13849,11 @@ function updateHeaderNodeStatus(data, reachable = true) {
         label = 'Disconnected';
         stateClass = 'status-offline';
 
+    } else if (status === 'RELEASED') {
+        // RR1: deliberate, neutral - "Radio released (until 12:30)"
+        label = formatReleasedLabel(data?.released?.until);
+        stateClass = 'status-released';
+
     } else if (status === 'PAUSED') {
         label = 'Radio Busy';
         stateClass = 'status-warning';
@@ -13853,7 +13895,8 @@ function updateHeaderNodeStatus(data, reachable = true) {
         'status-ok',
         'status-warning',
         'status-error',
-        'status-offline'
+        'status-offline',
+        'status-released'
     );
 
     headerStatus.classList.add(stateClass);
@@ -13951,6 +13994,9 @@ async function loadRadioHealth() {
         } else if (level === 'ERROR') {
             levelIcon = '🔴';
             levelColor = '#c62828';
+        } else if (level === 'INFO') {
+            levelIcon = '⚪';
+            levelColor = '#5f7aa8';
         }
 
         if (levelEl) {
@@ -14391,7 +14437,18 @@ window.renderMeshMap = renderMeshMap;
 // ============================================================
 
 async function releaseRadioConnection() {
-    const confirmed = window.confirm(window.I18N.t('settings.release_radio_confirm'));
+    const select = document.getElementById('radioReleaseDuration');
+    const durationS = select && select.value ? parseInt(select.value, 10) : null;
+    const transport = select?.dataset?.transport || 'serial';
+
+    let confirmText = window.I18N.t('settings.release_radio_confirm');
+    if (transport === 'tcp') {
+        const phrase = durationS
+            ? window.I18N.t('node_manager.release_phrase_until_time', { time: formatReleaseTime(Date.now() / 1000 + durationS) })
+            : window.I18N.t('node_manager.release_phrase_until_reconnect');
+        confirmText = window.I18N.t('node_manager.release_confirm_tcp', { until: phrase });
+    }
+    const confirmed = window.confirm(confirmText);
 
     if (!confirmed) return;
 
@@ -14399,7 +14456,7 @@ async function releaseRadioConnection() {
         const response = await fetch('/api/radio_connection/release', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({})
+            body: JSON.stringify({ duration_s: durationS })
         });
         const data = await response.json();
 

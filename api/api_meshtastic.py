@@ -36,6 +36,7 @@ def register_meshtastic_routes(
     instance_manager,
     refresh_identity_after_reconnect,
     resolve_reconnect_descriptor=None,
+    on_explicit_tcp_connect=None,
 ):
     """Task 48: `serial_transport`/`ble_transport`/`tcp_transport` here are
     Core-side IPC proxies (meshsrv.adapter_ipc_client.AdapterIPCTransport)
@@ -470,6 +471,9 @@ def register_meshtastic_routes(
                     "error_code": "tcp_port_invalid",
                 }), 400
 
+        # RR1: an explicit TCP connect IS the Reconnect - it ends a "Release radio".
+        if on_explicit_tcp_connect is not None:
+            on_explicit_tcp_connect()
         connect_new = _connect_new_for("tcp", tcp_host=host, tcp_port=port)
         return _switch(connect_new, "tcp", tcp_host=host, tcp_port=port)
 
@@ -506,6 +510,8 @@ def register_meshtastic_routes(
                     "error_code": "tcp_host_required",
                 }), 400
             port = int(saved.get("tcp_port") or DEFAULT_TCP_PORT)
+            if on_explicit_tcp_connect is not None:
+                on_explicit_tcp_connect()
             connect_new = _connect_new_for("tcp", tcp_host=host, tcp_port=port)
             return _switch(connect_new, "tcp", tcp_host=host, tcp_port=port)
 
@@ -533,6 +539,9 @@ def register_meshtastic_routes(
         # process respawned since the last connect() has no memory of it, and
         # a bare reconnect() then failed with dns_error '' (see
         # AdapterIPCTransport.reconnect()).
+        # RR1: an explicit reconnect ends a TCP "Release radio" (no-op otherwise).
+        if on_explicit_tcp_connect is not None:
+            on_explicit_tcp_connect()
         reconnect_kwargs = {}
         if resolve_reconnect_descriptor is not None:
             try:

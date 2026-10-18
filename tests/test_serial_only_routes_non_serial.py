@@ -104,7 +104,7 @@ def test_refusal_wins_over_identity_gate_message(server_module, _preserve, monke
     assert status == 409 and data["error_code"] == "listener_not_applicable"
 
 
-@pytest.mark.parametrize("transport", ["tcp", "bluetooth"])
+@pytest.mark.parametrize("transport", ["bluetooth"])      # RR1: TCP can be released now
 def test_radio_connection_release_is_refused_for_non_serial(server_module, _preserve, monkeypatch, transport):
     """Review item 5: radio_connection_manager.release()/reconnect() both
     delegate to stop_listener()/wait_serial_release(), which are hardwired
@@ -164,7 +164,7 @@ def test_listen_meshtastic_boot_in_recovery_state_does_not_mark_device_verified(
     assert server_module.listener_supervisor._verified_device is None
 
 
-@pytest.mark.parametrize("transport", ["tcp", "bluetooth"])
+@pytest.mark.parametrize("transport", ["bluetooth"])      # RR1: TCP can be released now
 def test_radio_connection_reconnect_is_refused_for_non_serial(server_module, _preserve, monkeypatch, transport):
     """Same as above for reconnect(): its on_reconnect hook (listener_
     supervisor.clear_mismatch()) only ever re-verifies SERIAL identity, so
@@ -185,7 +185,7 @@ def test_radio_connection_reconnect_is_refused_for_non_serial(server_module, _pr
 def test_radio_connection_release_and_reconnect_still_work_for_serial(server_module, _preserve, monkeypatch):
     """The refusal must not catch the serial case it isn't meant for."""
     _accept(server_module, "serial")
-    monkeypatch.setattr(server_module.radio_connection_manager, "release", lambda timeout=12: (True, {"mode": "released", "message": "ok"}))
+    monkeypatch.setattr(server_module.radio_connection_manager, "release", lambda timeout=12, duration_s=None: (True, {"mode": "released", "message": "ok"}))
     monkeypatch.setattr(server_module.radio_connection_manager, "reconnect", lambda: (True, {"mode": "connected", "message": "ok"}))
     monkeypatch.setattr(server_module, "radio_event", lambda *a, **k: None)
 

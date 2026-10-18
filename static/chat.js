@@ -11345,12 +11345,28 @@ function nodeManagerConnectionInTransition(connection) {
     return state === 'waiting' || state === 'attempting';
 }
 
+// A re-render rebuilds the whole dashboard: it must never run while the user is in the middle of
+// something there - the Discover radio form / its result open, or an input/select focused (typing).
+function nodeManagerUserBusy() {
+    const shown = (id) => {
+        const el = document.getElementById(id);
+        return !!el && el.style.display !== 'none';
+    };
+    if (shown('nodeManagerDiscoverySection') || shown('nodeManagerDiscoveryResultSection')) return true;
+    const active = document.activeElement;
+    const container = document.getElementById('nodeManagerDashboard');
+    return !!(active && container && container.contains(active)
+        && /^(INPUT|SELECT|TEXTAREA)$/.test(active.tagName));
+}
+
 function scheduleNodeManagerRefresh(delayMs) {
     clearTimeout(nodeManagerRefreshTimer);
     nodeManagerRefreshTimer = setTimeout(() => {
         const view = document.getElementById('nodeManagerView');
         const visible = view && view.style.display !== 'none' && !document.hidden;
-        if (visible) {
+        if (visible && nodeManagerUserBusy()) {
+            scheduleNodeManagerRefresh(NODE_MANAGER_REFRESH_TRANSITION_MS);   // look again shortly
+        } else if (visible) {
             loadNodeManagerDashboard();
         } else if (view && view.style.display !== 'none') {
             scheduleNodeManagerRefresh(NODE_MANAGER_REFRESH_IDLE_MS);   // tab hidden: look again later

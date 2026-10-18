@@ -513,3 +513,75 @@ def test_every_locale_words_the_released_send_reason_and_the_composer_hint():
         for key in ("radio_released_placeholder", "radio_released_hint"):
             assert data["chat"][key].strip(), (lang, key)
         assert data["errors"]["radio_released"].strip(), lang
+
+
+# ---------------------------------------------------------------- RR1 PR nits
+
+def test_node_manager_dashboard_shows_the_endpoint_after_a_restart_while_released(rr1, monkeypatch):
+    """After a restart in Released the router never left its serial default (no TCP descriptor),
+    so Host:Port read '-'. The accepted profile's own endpoint is shown instead."""
+    server = rr1
+    _accept(server, "tcp")
+    server.radio_connection_manager.restore_released(None, None, kind="tcp")
+    with server.app.test_request_context("/api/node-manager/dashboard"):
+        payload = server.api_devices_dashboard().get_json()
+    connection = payload["connection"]
+    assert connection["mode"] == "released" and connection["type"] == "tcp"
+    assert connection["address"] == "192.168.2.34:4403"
+    assert connection["until"] is None
+
+
+def test_the_node_manager_dashboard_never_calls_the_radio(rr1, monkeypatch):
+    """The Node Manager now refreshes itself (3 s in a transition, 30 s otherwise): the endpoint it
+    polls must read in-memory/cached status and local file sizes only - no radio call, no channel
+    discovery, no adapter round trip."""
+    server = rr1
+    _accept(server, "tcp")
+
+    def boom(*a, **k):
+        raise AssertionError("the dashboard must not touch the radio")
+
+    router = server.transport_router
+    for name in ("get_channels", "get_nodes", "get_local_node", "get_metadata", "set_device_time",
+                 "send_text", "send_messages", "connect", "reconnect", "drain_received",
+                 "refresh_connection_info"):
+        monkeypatch.setattr(router, name, boom)
+    monkeypatch.setattr(server, "refresh_non_serial_connection_state", boom)
+    monkeypatch.setattr(server, "_probe_tcp_identity", boom)
+    monkeypatch.setattr(server, "verify_radio_identity", boom)
+    for transport in (server.serial_ipc_transport, server.tcp_ipc_transport):
+        monkeypatch.setattr(transport, "get_channels", boom)
+        monkeypatch.setattr(transport, "connect", boom)
+        monkeypatch.setattr(transport, "get_nodes", boom)
+    with server.app.test_request_context("/api/node-manager/dashboard?refresh_channels=force"):
+        assert server.api_devices_dashboard().get_json()["ok"] is True
+
+
+def test_release_and_reconnect_are_never_counted_as_link_losses():
+    from meshsrv.tcp_link_supervisor import OUTCOME_CONNECTED, TcpLinkSupervisor
+
+    state = {"released": False, "connected": True, "now": 1000.0}
+    supervisor = TcpLinkSupervisor(
+        is_tcp_profile=lambda: True, identity_refused=lambda: False,
+        link_connected=lambda: state["connected"],
+        attempt=lambda: state.update(connected=True) or OUTCOME_CONNECTED,
+        is_released=lambda: state["released"], clock=lambda: state["now"], rng=lambda: 0.5,
+    )
+
+    def run(seconds):
+        end = state["now"] + seconds
+        while state["now"] < end:
+            supervisor.tick()
+            state["now"] += 1.0
+
+    run(60)                                    # healthy session
+    state["released"] = True                   # Release: the manager is set BEFORE the session is closed
+    run(2)
+    state["connected"] = False                 # ... and then the session really closes
+    run(120)
+    state["released"] = False                  # Reconnect
+    supervisor.trigger_now()
+    run(60)
+    status = supervisor.status()
+    assert state["connected"] is True
+    assert status["link_losses_1h"] == 0 and status["contention"] is False

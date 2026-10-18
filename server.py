@@ -7390,6 +7390,12 @@ def api_devices_dashboard():
                 "release_kind": released_status.get("release_kind"),
                 "reconnect": None,
             })
+            if released_status.get("release_kind") == "tcp" and not connection.get("address"):
+                # After a restart while released the router never left its serial default, so it
+                # has no TCP descriptor: show the accepted profile's own endpoint instead of "-".
+                endpoint = configured_normalized.get("endpoint") or {}
+                if endpoint.get("host"):
+                    connection["address"] = f"{endpoint['host']}:{int(endpoint.get('port') or 4403)}"
 
     profile_metadata = {}
     profile_json = os.path.join(PROFILE_DATA_DIR, "profile.json")

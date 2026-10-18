@@ -467,3 +467,49 @@ def test_e2e_no_connection_attempts_while_released_timed_resume_and_restart(tmp_
         except Exception:
             pass
         radio.shutdown()
+
+
+# ---------------------------------------------------------------- RR1 follow-up: instant released status, clear send reason
+
+def test_radio_health_reports_released_at_once_not_the_stale_stored_status(rr1, monkeypatch):
+    """The health worker refreshes `status` every 30 s; right after a release the stored value
+    still read OK / listener stopped and the header chip painted a red "Offline"."""
+    server = rr1
+    _accept(server, "tcp")
+    monkeypatch.setattr(server.tcp_ipc_transport, "disconnect", lambda timeout=10: None)
+    with server.state_lock:
+        saved = (server.radio_health.get("status"), server.radio_health.get("level"))
+        server.radio_health["status"], server.radio_health["level"] = "OK", "OK"
+    try:
+        _call(server, server.api_radio_connection_release, "/api/radio_connection/release", {"duration_s": 900})
+        with server.app.test_request_context("/api/radio_health"):
+            payload = server.api_radio_health().get_json()
+        assert payload["status"] == "RELEASED" and payload["level"] == "INFO"
+        assert payload["released"]["until"] is not None and payload["released"]["kind"] == "tcp"
+    finally:
+        with server.state_lock:
+            server.radio_health["status"], server.radio_health["level"] = saved
+
+
+def test_a_send_while_released_says_why(rr1, monkeypatch):
+    server = rr1
+    _accept(server, "tcp")
+    monkeypatch.setattr(server.tcp_ipc_transport, "disconnect", lambda timeout=10: None)
+    _call(server, server.api_radio_connection_release, "/api/radio_connection/release", {})
+    client = server.app.test_client()
+    with client.session_transaction() as sess:
+        sess["csrf_token"] = "test-csrf-token"
+    response = client.post("/api/send", json={"text": "hi", "chat_id": "channel"},
+                           headers={"X-CSRF-Token": "test-csrf-token"})
+    body = response.get_json()
+    assert response.status_code == 409 and body["error_code"] == "radio_released"
+    assert body["error"] == "Radio released - press Reconnect"
+
+
+def test_every_locale_words_the_released_send_reason_and_the_composer_hint():
+    import json
+    for lang in ("en", "de", "ru", "uk"):
+        data = json.load(open(os.path.join("static", "i18n", f"{lang}.json"), encoding="utf-8"))
+        for key in ("radio_released_placeholder", "radio_released_hint"):
+            assert data["chat"][key].strip(), (lang, key)
+        assert data["errors"]["radio_released"].strip(), lang

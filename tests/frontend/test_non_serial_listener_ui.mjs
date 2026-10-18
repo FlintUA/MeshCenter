@@ -31,6 +31,8 @@ function extractFunction(name) {
 
 const STRINGS = {
     'node_manager.header_reconnecting': 'Reconnecting',
+    'node_manager.header_released': 'Radio released',
+    'node_manager.header_released_until': 'Radio released (until {time})',
     'node_manager.reconnecting_status': 'Reconnecting... (attempt {attempt}, next in {seconds} s)',
     'node_manager.reconnecting_status_now': 'Reconnecting... (attempt {attempt})',
     'settings.radio_status_connected': 'Connected',
@@ -96,9 +98,10 @@ function build(healthData) {
         escapeHtml: (v) => String(v ?? ''),
         TimeFormatter: { formatDateTime: () => '' },
         _lastSystemLogEvents: [],
+        applyRadioReleasedState: () => {},
     };
     vm.createContext(sandbox);
-    for (const fn of ['isNonSerialTransport', 'deviceConnectionLabel', 'formatReconnectStatus', 'updateHeaderNodeStatus', 'loadRadioHealth']) {
+    for (const fn of ['isNonSerialTransport', 'deviceConnectionLabel', 'formatReconnectStatus', 'formatReleaseTime', 'formatReleasedLabel', 'updateHeaderNodeStatus', 'loadRadioHealth']) {
         vm.runInContext(extractFunction(fn), sandbox);
     }
     sandbox._els = els;
@@ -125,6 +128,18 @@ const TCP_CONNECTED = {
 };
 
 // --- header ------------------------------------------------------------
+
+{
+    // RR1: a released radio is a deliberate, neutral state - never the red "Offline"
+    // (serial: listener_running is false by design), with the end time when there is one.
+    for (const transport of ['serial', 'tcp']) {
+        const none = runHeader({ status: 'RELEASED', level: 'INFO', listener_running: false, transport, released: { until: null, kind: transport } });
+        assert.equal(none.label, 'Radio released');
+        assert.ok(none.h._classes.has('status-released') && !none.h._classes.has('status-error'));
+        const timed = runHeader({ status: 'RELEASED', level: 'INFO', listener_running: false, transport, released: { until: 1792000000, kind: transport } });
+        assert.ok(/^Radio released \(until .+\)$/.test(timed.label), timed.label);
+    }
+}
 
 {
     const { h, label } = runHeader(TCP_CONNECTED);

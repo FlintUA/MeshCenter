@@ -629,7 +629,7 @@ def register_chat_routes(
         if not is_radio_available():
             return jsonify({
                 "ok": False,
-                "error": "The radio is released for external configuration",
+                "error": "Radio released - press Reconnect",
                 "error_code": "radio_released"
             }), 409
 
@@ -784,7 +784,7 @@ def register_chat_routes(
         if not is_radio_available():
             return jsonify({
                 "ok": False,
-                "error": "The radio is released for external configuration",
+                "error": "Radio released - press Reconnect",
                 "error_code": "radio_released"
             }), 409
 

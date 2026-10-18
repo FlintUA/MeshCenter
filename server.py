@@ -9356,6 +9356,17 @@ def api_radio_health():
     # RR1: the explicit release state (None when not released); "until" is an absolute
     # epoch time (None = until Reconnect).
     status["released"] = _release_status_payload()
+    if status["released"] is not None:
+        # The health worker only refreshes `status` every 30 s: right after a release
+        # the stored value still says OK/listener stopped, which the header chip painted
+        # as a red "Offline" until the next tick. A release is authoritative at once.
+        status["status"], status["level"], status["status_reason"], status["recommendation"] = (
+            compute_radio_health_status(
+                active_transport=status["released"].get("kind") or current_radio_transport(),
+                is_released=True, is_paused=False, listener_running=False,
+                packet_age=None, transport_state={},
+            )
+        )
 
     # Inbound receive counters (counts and states only - never message content).
     try:

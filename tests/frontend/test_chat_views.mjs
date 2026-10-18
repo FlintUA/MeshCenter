@@ -527,3 +527,16 @@ test('mark-read: after a failure, 30 s of back-off, then it may try again', () =
 });
 
 console.log(`test_chat_views.mjs: ${passed} tests passed`);
+
+// RR1: composer state while the radio is released
+{
+    const t = (key) => `T(${key})`;
+    const idle = JSON.stringify({ blocked: false, placeholder: null, hint: '' });
+    assert.equal(JSON.stringify(V.releasedComposerState(null, t)), idle);
+    assert.equal(JSON.stringify(V.releasedComposerState(undefined, t)), idle);
+    const released = V.releasedComposerState({ until: 1792000000, kind: 'tcp' }, t);
+    assert.equal(released.blocked, true);
+    assert.equal(released.placeholder, 'T(chat.radio_released_placeholder)');
+    assert.equal(released.hint, 'T(chat.radio_released_hint)');
+    console.log('ok - releasedComposerState');
+}

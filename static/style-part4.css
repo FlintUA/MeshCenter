@@ -5403,3 +5403,26 @@ html[data-theme="dark"] .message.me .message-reply-quote {
 .mesh-map-node-menu-info strong { font-weight: 600; overflow-wrap: anywhere; }
 .mesh-map-node-menu-actions { display: flex; flex-direction: column; }
 .mesh-map-node-menu-title { flex: 0 0 auto; border-bottom: 0; margin-bottom: 0; }
+
+
+/* RR1: composer hint while the radio is released */
+.radio-released-hint {
+    margin: 0 0 6px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #475a7a;
+    background: rgba(100, 130, 190, .14);
+}
+
+html[data-theme="dark"] .radio-released-hint {
+    color: #9db4dc;
+    background: rgba(120, 150, 210, .16);
+}
+
+.input-form #messageInput:disabled,
+.input-form #sendBtn:disabled {
+    opacity: .6;
+    cursor: not-allowed;
+}

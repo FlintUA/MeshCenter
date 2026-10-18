@@ -11142,6 +11142,7 @@ async function reconnectActiveTransport(type) {
         }
 
         showToast(window.I18N.t('node_manager.reconnect_requested'), 'success');
+        applyRadioReleasedState(null);
     } catch (error) {
         console.error('[NODE MANAGER] Reconnect failed:', error);
         showToast(error.message || window.I18N.t('node_manager.reconnect_failed'), 'error');
@@ -13944,6 +13945,42 @@ function updateHeaderNodeStatus(data, reachable = true) {
     );
 }
 
+// RR1: composer state while the radio is released (disabled input + send, a hint above it).
+let radioReleasedInfo = null;
+
+function applyRadioReleasedState(released) {
+    radioReleasedInfo = released || null;
+    const input = document.getElementById('messageInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const form = document.getElementById('sendForm');
+    if (!input || !sendBtn || !form) return;
+
+    const state = window.MCViews.releasedComposerState(radioReleasedInfo, (key) => window.I18N.t(key));
+    let hint = document.getElementById('radioReleasedHint');
+    if (state.blocked) {
+        if (!hint) {
+            hint = document.createElement('div');
+            hint.id = 'radioReleasedHint';
+            hint.className = 'radio-released-hint';
+            hint.setAttribute('role', 'status');
+            form.parentNode.insertBefore(hint, form);
+        }
+        hint.textContent = state.hint;
+        input.disabled = true;
+        sendBtn.disabled = true;
+        input.dataset.releasedPlaceholder = '1';
+        input.placeholder = state.placeholder;
+    } else {
+        if (hint) hint.remove();
+        input.disabled = false;
+        sendBtn.disabled = false;
+        if (input.dataset.releasedPlaceholder) {
+            delete input.dataset.releasedPlaceholder;
+            input.placeholder = window.I18N.t('chat.message_input_placeholder');
+        }
+    }
+}
+
 async function loadRadioHealth() {
     try {
         const healthResponse = await fetch('/api/radio_health', {
@@ -13957,6 +13994,7 @@ async function loadRadioHealth() {
         const data = await healthResponse.json();
 
         updateHeaderNodeStatus(data, true);
+        applyRadioReleasedState(data.released);
 
         let logData = {
             events: []
@@ -14528,6 +14566,22 @@ async function releaseRadioConnection(durationS = null) {
         }
 
         showToast(window.I18N.t('settings.radio_released_success'), 'success');
+
+        // Apply the released state at once (no "Offline" flash while the next health poll
+        // is on its way): the same shape /api/radio_health serves.
+        const released = {
+            since: data.radio?.released_at ?? null,
+            until: data.radio?.until ?? null,
+            remaining_s: data.radio?.remaining_s ?? null,
+            kind: data.radio?.release_kind ?? null,
+        };
+        updateHeaderNodeStatus({
+            status: 'RELEASED',
+            level: 'INFO',
+            transport: data.radio?.release_kind || undefined,
+            released,
+        }, true);
+        applyRadioReleasedState(released);
     } catch (error) {
         showToast(window.I18N.t('settings.unable_to_release_radio_reason', { reason: error.message }), 'error');
     }
@@ -14548,6 +14602,7 @@ async function reconnectRadioConnection() {
         }
 
         showToast(window.I18N.t('settings.radio_reconnect_requested'), 'success');
+        applyRadioReleasedState(null);
 
         // Give the existing listener loop time to reopen the serial port, then
         // force the normal chat/channel refresh to pick up configuration changes.

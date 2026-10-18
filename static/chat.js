@@ -11583,20 +11583,20 @@ function renderNodeManagerDiscoverySection() {
             <div id="nodeManagerDiscoveryUsbFields">
                 <p class="node-discovery-hint">${escapeHtml(window.I18N.t('node_manager.discover_usb_hint'))}</p>
             </div>
-            <div id="nodeManagerDiscoveryTcpFields" style="display:none;">
-                <div class="settings-option">
-                    <label class="settings-option-label" for="nodeManagerTcpHostInput">${escapeHtml(window.I18N.t('node_manager.tcp_host_label'))}</label>
+            <div id="nodeManagerDiscoveryTcpFields" class="node-discovery-tcp-row" style="display:none;">
+                <div class="files-field node-discovery-field node-discovery-field-host">
+                    <label class="files-field-label" for="nodeManagerTcpHostInput">${escapeHtml(window.I18N.t('node_manager.tcp_host_label'))}</label>
                     <input type="text" id="nodeManagerTcpHostInput" placeholder="192.168.2.34" autocomplete="off">
                 </div>
-                <div class="settings-option">
-                    <label class="settings-option-label" for="nodeManagerTcpPortInput">${escapeHtml(window.I18N.t('node_manager.tcp_port_label'))}</label>
+                <div class="files-field node-discovery-field node-discovery-field-port">
+                    <label class="files-field-label" for="nodeManagerTcpPortInput">${escapeHtml(window.I18N.t('node_manager.tcp_port_label'))}</label>
                     <input type="number" id="nodeManagerTcpPortInput" placeholder="4403" min="1" max="65535" autocomplete="off">
                 </div>
             </div>
             <div id="nodeManagerDiscoveryBluetoothFields" style="display:none;">
                 <p class="node-discovery-hint">${escapeHtml(window.I18N.t('node_manager.discover_bluetooth_unsupported'))}</p>
             </div>
-            <button type="button" class="mc-refresh-btn" id="nodeManagerDiscoverySearchBtn" onclick="runNodeManagerDiscovery()">
+            <button type="button" class="mc-refresh-btn node-discovery-search-btn" id="nodeManagerDiscoverySearchBtn" onclick="runNodeManagerDiscovery()">
                 🔍 ${escapeHtml(window.I18N.t('node_manager.discover_search_button'))}
             </button>
         </div>`;

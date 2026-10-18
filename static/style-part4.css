@@ -1877,6 +1877,7 @@ html[data-theme="dark"] .node-manager-contention-note {
 .node-discovery-section,
 .node-discovery-result-section {
     margin-top: 14px;
+    margin-bottom: 12px;     /* same gap as between the other cards: no glued borders */
     padding: 14px;
     border-radius: 10px;
     border: 1px solid var(--mc-border-soft, #edf1f6);
@@ -1897,6 +1898,42 @@ html[data-theme="dark"] .node-manager-contention-note {
     align-items: center;
     gap: 6px;
     cursor: pointer;
+}
+
+/* Discover radio, TCP: labels above the inputs (the app's standard field look, same as the
+   Files fields), Host wide + Port narrow in one row, Search below with spacing. */
+.node-discovery-tcp-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 120px;
+    gap: 12px;
+    align-items: end;
+}
+
+.node-discovery-field {
+    margin-bottom: 0;
+}
+
+.node-discovery-field input[type="text"],
+.node-discovery-field input[type="number"] {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 7px 10px;
+    border: 1px solid var(--mc-border, #d8e1ec);
+    border-radius: 8px;
+    background: var(--mc-surface, #fff);
+    color: var(--mc-text, #1f2f45);
+    font-size: var(--mc-body-size, 13px);
+}
+
+[data-theme="dark"] .node-discovery-field input[type="text"],
+[data-theme="dark"] .node-discovery-field input[type="number"] {
+    background: #16283a;
+    border-color: #2a3f54;
+    color: #e5eff8;
+}
+
+.node-discovery-search-btn {
+    margin-top: 14px;
 }
 
 .node-discovery-hint {
@@ -1924,6 +1961,11 @@ html[data-theme="dark"] .node-manager-contention-note {
 
     .node-discovery-transport-picker {
         flex-wrap: wrap;
+        gap: 10px;
+    }
+
+    .node-discovery-tcp-row {
+        grid-template-columns: minmax(0, 1fr);
         gap: 10px;
     }
 }

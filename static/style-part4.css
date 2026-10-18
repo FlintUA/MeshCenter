@@ -1506,11 +1506,12 @@ html[data-theme="dark"] .device-status-released {
 }
 
 /* RR1: Connection card - two equal buttons + one status line */
-.device-action-row-equal {
+/* (doubled class: .device-action-row is defined further down with the same specificity) */
+.device-action-row.device-action-row-equal {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
 
-.device-action-row-equal.device-action-row-single-btn {
+.device-action-row.device-action-row-equal.device-action-row-single-btn {
     grid-template-columns: minmax(0, 1fr);
 }
 
@@ -1541,7 +1542,7 @@ html[data-theme="dark"] .device-release-status {
 }
 
 @media (max-width: 480px) {
-    .device-action-row-equal {
+    .device-action-row.device-action-row-equal {
         grid-template-columns: minmax(0, 1fr);
     }
 }

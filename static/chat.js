@@ -11329,9 +11329,39 @@ async function removeRadioConnection(transport) {
     }
 }
 
+// RR1 follow-up: the Node Manager used to refresh only on open / Refresh / one timer 1.8 s
+// after Reconnect - a reconnect takes 5-25 s, so the card kept saying "Reconnecting" after the
+// link was up. While the view is open it now refreshes by itself: every 3 s during a
+// transition (releasing / reconnecting / the supervisor retrying), every 30 s otherwise (which
+// also keeps "N min left" of a timed release current).
+let nodeManagerRefreshTimer = null;
+const NODE_MANAGER_REFRESH_TRANSITION_MS = 3000;
+const NODE_MANAGER_REFRESH_IDLE_MS = 30000;
+
+function nodeManagerConnectionInTransition(connection) {
+    const mode = connection && connection.mode;
+    if (mode === 'releasing' || mode === 'reconnecting' || mode === 'connecting') return true;
+    const state = connection && connection.reconnect && connection.reconnect.state;
+    return state === 'waiting' || state === 'attempting';
+}
+
+function scheduleNodeManagerRefresh(delayMs) {
+    clearTimeout(nodeManagerRefreshTimer);
+    nodeManagerRefreshTimer = setTimeout(() => {
+        const view = document.getElementById('nodeManagerView');
+        const visible = view && view.style.display !== 'none' && !document.hidden;
+        if (visible) {
+            loadNodeManagerDashboard();
+        } else if (view && view.style.display !== 'none') {
+            scheduleNodeManagerRefresh(NODE_MANAGER_REFRESH_IDLE_MS);   // tab hidden: look again later
+        }
+    }, delayMs);
+}
+
 async function loadNodeManagerDashboard(showFeedback = false) {
     const container = document.getElementById('nodeManagerDashboard');
     if (!container) return;
+    clearTimeout(nodeManagerRefreshTimer);
 
     if (!container.dataset.loaded) {
         container.innerHTML = `<div class="device-dashboard-loading">${escapeHtml(window.I18N.t('node_manager.loading'))}</div>`;
@@ -11485,8 +11515,14 @@ async function loadNodeManagerDashboard(showFeedback = false) {
             </div>`;
 
         if (showFeedback) showToast(window.I18N.t('node_manager.info_refreshed'), 'success');
+        scheduleNodeManagerRefresh(
+            nodeManagerConnectionInTransition(connection)
+                ? NODE_MANAGER_REFRESH_TRANSITION_MS
+                : NODE_MANAGER_REFRESH_IDLE_MS
+        );
     } catch (error) {
         console.error('[NODE MANAGER] Dashboard load failed:', error);
+        scheduleNodeManagerRefresh(10000);
         container.innerHTML = `<div class="device-dashboard-error"><strong>${escapeHtml(window.I18N.t('node_manager.unable_to_load'))}</strong><span>${escapeHtml(error.message || String(error))}</span><button type="button" class="mc-refresh-btn" onclick="loadNodeManagerDashboard(true)">${escapeHtml(window.I18N.t('node_manager.try_again'))}</button></div>`;
         if (showFeedback) showToast(window.I18N.t('node_manager.info_load_failed'), 'error');
     }

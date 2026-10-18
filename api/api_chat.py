@@ -247,11 +247,18 @@ def register_chat_routes(
     # read, concurrent callers share ONE in-flight read, and any failed read backs
     # the next attempt off by CHANNEL_DISCOVERY_FAILURE_BACKOFF_S instead of being
     # retried by every 10 s poll of every open tab.
-    CHANNEL_CACHE_TTL_SECONDS = 1800
+    # 6 h: the list changes only when someone edits the radio's channels. It is still
+    # re-read on a new connection (the router's connection_generation changes on
+    # connect/reconnect/switch/path change - a profile switch restarts the process,
+    # so starts empty) and on explicit UI demand (?refresh_channels=1).
+    CHANNEL_CACHE_TTL_SECONDS = 6 * 3600
     CHANNEL_DISCOVERY_FAILURE_BACKOFF_S = 60
     CHANNEL_DISCOVERY_BUSY_BACKOFF_S = 15
     channel_discovery_inflight = threading.Lock()
-    channel_cache = {"timestamp": 0.0, "channels": []}
+    channel_cache = {"timestamp": 0.0, "channels": [], "generation": 0}
+
+    def _connection_generation():
+        return getattr(radio_transport, "connection_generation", 0)
     channel_cache_lock = threading.Lock()
 
     # Review round 4, item 4 (live-caught, 2026-10-04): a FAILED discovery
@@ -319,7 +326,8 @@ def register_chat_routes(
             # so the frontend's "give me a fresh read on first load"
             # (?refresh_channels=1) request silently returned whatever was
             # already cached instead of re-reading the radio.
-            if not force and cached_channels and cache_age < CHANNEL_CACHE_TTL_SECONDS:
+            same_connection = channel_cache.get("generation", 0) == _connection_generation()
+            if not force and cached_channels and cache_age < CHANNEL_CACHE_TTL_SECONDS and same_connection:
                 return cached_channels
 
         discovered = []
@@ -386,6 +394,7 @@ def register_chat_routes(
             discovered = [by_index[index] for index in sorted(by_index)]
             with channel_cache_lock:
                 channel_cache["timestamp"] = now_ts
+                channel_cache["generation"] = _connection_generation()
                 channel_cache["channels"] = [dict(item) for item in discovered]
 
             # Auto-seed chats.json for newly discovered channels so they

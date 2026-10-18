@@ -111,6 +111,10 @@ class TransportRouter(RadioTransport):
         self._prio_lock = threading.Lock()
         self._sends_waiting = 0
         self._background_hold_until = 0.0
+        # ST1: bumped whenever the radio link is (re)established or its path changes, so
+        # a cache of radio-side data (the channel list) can tell "same connection, still
+        # valid" from "new connection, re-read".
+        self._connection_generation = 0
         self._active = initial
         # Follow-up investigation after PR #279 (pixel-111 live finding:
         # a manual reconnect attempt got a suspiciously small remaining
@@ -162,6 +166,7 @@ class TransportRouter(RadioTransport):
             old = self._active
             new = connect_new()
             self._active = new
+            self._connection_generation += 1
             return old
         finally:
             call_elapsed = time.monotonic() - call_start
@@ -172,6 +177,15 @@ class TransportRouter(RadioTransport):
     # ------------------------------------------------------------------
     # ST1: send priority and the ACK-window hold
     # ------------------------------------------------------------------
+    @property
+    def connection_generation(self) -> int:
+        return self._connection_generation
+
+    def note_connection_changed(self) -> None:
+        """The link's path changed outside connect()/switch() (e.g. a serial replug on a
+        new device node): anything cached from the radio is no longer trustworthy."""
+        self._connection_generation += 1
+
     def hold_background(self, seconds: float) -> None:
         """Make background claims BUSY for `seconds` (extends, never shortens) -
         called after a want_ack DM whose ACK was not captured inside the send
@@ -262,7 +276,10 @@ class TransportRouter(RadioTransport):
                     TransportErrorCode.BUSY,
                     f"{name}() could not start: the radio was busy for most of its {timeout:g}s budget",
                 )
-            return getattr(self._active, name)(*args, timeout=remaining, **kwargs)
+            result = getattr(self._active, name)(*args, timeout=remaining, **kwargs)
+            if name in ("connect", "reconnect"):
+                self._connection_generation += 1
+            return result
         finally:
             call_elapsed = time.monotonic() - call_start
             if call_elapsed > 3.0:

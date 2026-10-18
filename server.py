@@ -782,6 +782,12 @@ def _on_listener_port_changed(old_port, new_port):
     except Exception as e:
         print(f"[IDENTITY] Failed to update cached descriptor after port change: {e}", flush=True)
 
+    # A replug on a new path is a new connection: re-read the channels and let the
+    # radio clock be synced again.
+    global _node_time_sync_last_attempt_ts
+    transport_router.note_connection_changed()
+    _node_time_sync_last_attempt_ts = 0.0
+
     log_system_event(
         "Radio reconnected on a new path",
         "INFO",
@@ -1601,6 +1607,33 @@ NODE_TIME_SYNC_CLAIM_RESTART_WINDOW_S = 120
 _node_time_sync_last_claim_stop_ts = float("-inf")
 
 
+_listener_exits_last_logged = {"stats": None, "ts": 0.0}
+LISTENER_EXITS_LOG_MIN_INTERVAL_S = 300
+
+
+def log_listener_exits_if_changed(now_ts):
+    """Journal line with the listener's exit counters (the same ones /api/radio_health
+    serves behind the login) - on change, at most every LISTENER_EXITS_LOG_MIN_INTERVAL_S,
+    so the numbers are readable without a session. No-op while nothing ever exited."""
+    try:
+        stats = listener_supervisor.exit_stats()
+    except Exception:
+        return False
+    last = _listener_exits_last_logged
+    if stats == last["stats"] or not any(stats.values()):
+        return False
+    if now_ts - last["ts"] < LISTENER_EXITS_LOG_MIN_INTERVAL_S:
+        return False
+    last["stats"] = dict(stats)
+    last["ts"] = now_ts
+    print(
+        "[LISTENER EXITS] "
+        + " ".join(f"{key}={value}" for key, value in stats.items()),
+        flush=True,
+    )
+    return True
+
+
 def maybe_refresh_node_time_sync(now_ts):
     """Slow periodic refresh (radio_health_worker): at most one sync attempt per
     NODE_TIME_SYNC_REFRESH_S, only while a serial listener is up."""
@@ -1711,7 +1744,11 @@ def radio_event(event, error="", intentional=None):
                 should_attempt_sync = False
                 claim_restart = (now_ts - _node_time_sync_last_claim_stop_ts) < NODE_TIME_SYNC_CLAIM_RESTART_WINDOW_S
                 with _node_time_sync_attempt_lock:
-                    if not claim_restart and (now_ts - _node_time_sync_last_attempt_ts) >= NODE_TIME_SYNC_ATTEMPT_COOLDOWN_S:
+                    # A listener (re)start is NOT a new connection: a crash restart must not
+                    # sync earlier than NODE_TIME_SYNC_REFRESH_S after the last attempt
+                    # (success: 6 h; failure: the retry time set by _attempt_node_time_sync).
+                    # A genuinely new connection (process start, port change) resets it.
+                    if not claim_restart and (now_ts - _node_time_sync_last_attempt_ts) >= NODE_TIME_SYNC_REFRESH_S:
                         _node_time_sync_last_attempt_ts = now_ts
                         should_attempt_sync = True
                 if should_attempt_sync:
@@ -6637,6 +6674,8 @@ def radio_health_worker():
 
             if active_transport == "serial" and listener_running and not pause_listen.is_set():
                 maybe_refresh_node_time_sync(now_ts)
+
+            log_listener_exits_if_changed(now_ts)
 
             # H2-C Phase 2: detects a hung-but-alive listener subprocess
             # (the Meshtastic library noticed its own disconnect and

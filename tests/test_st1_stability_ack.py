@@ -494,13 +494,68 @@ def test_a_listener_restart_that_ends_a_claim_never_syncs(sync_env):
     assert attempts == []
 
 
-def test_a_genuine_reconnect_still_syncs_after_the_cooldown(sync_env, monkeypatch):
+def test_a_crash_restart_does_not_sync_earlier_than_six_hours_after_the_last_attempt(sync_env, monkeypatch):
+    """A listener restart is not a new connection (ST1 follow-up: close the listener_start gap)."""
     srv, attempts = sync_env
-    monkeypatch.setattr(srv, "_node_time_sync_last_attempt_ts", time.time() - srv.NODE_TIME_SYNC_ATTEMPT_COOLDOWN_S - 5)
-    srv.radio_event("listener_stop", intentional=False)       # the radio vanished / crashed
+    now = time.time()
+    monkeypatch.setattr(srv, "_node_time_sync_last_attempt_ts", now - 3600)      # synced 1 h ago
+    srv.radio_event("listener_stop", intentional=False)       # a real crash, not a claim
+    srv.radio_health["listener_running"] = False
+    srv.radio_event("listener_start")
+    assert attempts == [], "a crash restart 1 h after a sync must not claim the radio again"
+
+
+def test_after_six_hours_a_listener_start_may_sync_again(sync_env, monkeypatch):
+    srv, attempts = sync_env
+    monkeypatch.setattr(srv, "_node_time_sync_last_attempt_ts", time.time() - srv.NODE_TIME_SYNC_REFRESH_S - 5)
+    srv.radio_event("listener_stop", intentional=False)
     srv.radio_health["listener_running"] = False
     srv.radio_event("listener_start")
     assert attempts == ["_attempt_node_time_sync"]
+
+
+def test_a_failed_sync_is_not_retried_by_every_listener_restart(sync_env, monkeypatch):
+    """After a failure _attempt_node_time_sync pulls the timestamp back so the retry lands
+    NODE_TIME_SYNC_RETRY_AFTER_FAILURE_S later - a crash restart in between must not retry."""
+    srv, attempts = sync_env
+    monkeypatch.setattr(
+        srv, "_node_time_sync_last_attempt_ts",
+        time.time() - srv.NODE_TIME_SYNC_REFRESH_S + srv.NODE_TIME_SYNC_RETRY_AFTER_FAILURE_S,
+    )
+    srv.radio_event("listener_stop", intentional=False)
+    srv.radio_health["listener_running"] = False
+    srv.radio_event("listener_start")
+    assert attempts == []
+
+
+def test_a_port_change_is_a_new_connection_for_time_sync_and_channels(sync_env, monkeypatch):
+    srv, attempts = sync_env
+    generation = srv.transport_router.connection_generation
+    monkeypatch.setattr(srv, "_node_time_sync_last_attempt_ts", time.time())
+    monkeypatch.setattr(srv.adapter_supervisor, "shutdown", lambda **k: None)
+    monkeypatch.setattr(srv.serial_ipc_transport, "update_cached_descriptor", lambda p: None)
+    monkeypatch.setattr(srv, "remember_connection", lambda *a, **k: {})
+    monkeypatch.setattr(srv.instance_manager, "save", lambda d: d)
+    srv._on_listener_port_changed("/dev/ttyACM0", "/dev/ttyACM1")
+    assert srv.transport_router.connection_generation == generation + 1
+    assert srv._node_time_sync_last_attempt_ts == 0.0
+
+
+def test_listener_exits_line_is_logged_on_change_and_rate_limited(server_module, monkeypatch, capsys):
+    srv = server_module
+    state = {"unexpected_exits": 0, "post_claim_listener_exits": 0, "frame_corrupt_restarts": 0}
+    monkeypatch.setattr(srv.listener_supervisor, "exit_stats", lambda: dict(state))
+    monkeypatch.setattr(srv, "_listener_exits_last_logged", {"stats": None, "ts": 0.0})
+    now = 10_000.0
+    assert srv.log_listener_exits_if_changed(now) is False, "nothing ever exited -> silent"
+    state["unexpected_exits"] = 2
+    state["post_claim_listener_exits"] = 2
+    assert srv.log_listener_exits_if_changed(now) is True
+    assert "[LISTENER EXITS] unexpected_exits=2 post_claim_listener_exits=2 frame_corrupt_restarts=0" in capsys.readouterr().out
+    assert srv.log_listener_exits_if_changed(now + 10) is False, "unchanged"
+    state["unexpected_exits"] = 3
+    assert srv.log_listener_exits_if_changed(now + 10) is False, "changed but inside the rate limit"
+    assert srv.log_listener_exits_if_changed(now + srv.LISTENER_EXITS_LOG_MIN_INTERVAL_S + 1) is True
 
 
 def test_refresh_is_slow_six_hours(sync_env, monkeypatch):
@@ -621,3 +676,63 @@ def test_time_sync_gives_the_serial_claim_enough_time(monkeypatch):
     monkeypatch.setattr(srv.transport_router, "set_device_time", lambda *a, **k: seen.update(k) or True)
     srv._attempt_node_time_sync()
     assert seen["timeout"] >= 30
+
+
+# ---- ST1 follow-up: channel cache TTL 6 h, generation-aware ---------------------------------
+
+def test_channel_cache_is_kept_for_hours_but_a_new_connection_or_explicit_demand_re_reads(server_module, monkeypatch):
+    import time as time_module
+    from meshsrv.radio_transport import ChannelInfo
+
+    srv = server_module
+    monkeypatch.setattr(srv, "is_radio_available", lambda: True)
+    calls = []
+
+    def fake_get_channels(timeout=15):
+        calls.append(1)
+        return [ChannelInfo(index=0, name="LongFast", role="PRIMARY")]
+
+    monkeypatch.setattr(srv.transport_router, "get_channels", fake_get_channels)
+    client = srv.app.test_client()
+    real_now = time_module.time()
+    base = real_now + 100_000          # past any backoff/TTL left by earlier tests
+
+    def at(offset, url="/api/chats"):
+        with monkeypatch.context() as m:
+            m.setattr(time_module, "time", lambda: base + offset)
+            return client.get(url)
+
+    at(0, "/api/chats?refresh_channels=1")
+    n = len(calls)
+    assert n >= 1
+    at(5 * 3600)                                   # 5 h later, same connection: cached
+    assert len(calls) == n
+    at(6 * 3600 + 10)                              # past the 6 h TTL: one re-read
+    assert len(calls) == n + 1
+    srv.transport_router.note_connection_changed()
+    at(6 * 3600 + 20)                              # a new connection: re-read at once
+    assert len(calls) == n + 2
+    at(6 * 3600 + 400, "/api/chats?refresh_channels=1")   # explicit demand (after the failure backoff)
+    assert len(calls) == n + 3
+
+
+def test_router_connection_generation_changes_on_connect_reconnect_switch_and_path_change():
+    from meshsrv.transport_router import TransportRouter
+
+    class _T:
+        def connect(self, *a, **k):
+            return True
+
+        def reconnect(self, *a, **k):
+            return True
+
+    router = TransportRouter(_T())
+    g = router.connection_generation
+    router.connect(timeout=5)
+    assert router.connection_generation == g + 1
+    router.reconnect(timeout=5)
+    assert router.connection_generation == g + 2
+    router.switch(lambda: _T())
+    assert router.connection_generation == g + 3
+    router.note_connection_changed()
+    assert router.connection_generation == g + 4

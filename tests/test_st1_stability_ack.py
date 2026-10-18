@@ -736,3 +736,38 @@ def test_router_connection_generation_changes_on_connect_reconnect_switch_and_pa
     assert router.connection_generation == g + 3
     router.note_connection_changed()
     assert router.connection_generation == g + 4
+
+
+def test_a_failed_sync_retries_on_the_health_worker_timer_after_30_min_not_via_listener_starts(sync_env, monkeypatch):
+    """The retry is maybe_refresh_node_time_sync() (radio_health_worker, every 30 s), a separate
+    path from the listener_start gate: it fires exactly RETRY_AFTER_FAILURE_S after the failure."""
+    srv, attempts = sync_env
+    monkeypatch.setattr(srv, "STARTUP_SYNC_DELAY_S", 0)
+    monkeypatch.setitem(srv.RADIO_IDENTITY_RESULT, "status", "MATCH")
+
+    def boom(*a, **k):
+        raise RuntimeError("timeout: set_device_time() exceeded 5s")
+
+    monkeypatch.setattr(srv.transport_router, "set_device_time", boom)
+    failed_at = time.time()
+    srv._attempt_node_time_sync()
+    assert attempts == []
+    retry = srv.NODE_TIME_SYNC_RETRY_AFTER_FAILURE_S
+    assert srv.maybe_refresh_node_time_sync(failed_at + retry - 60) is False
+    assert srv.maybe_refresh_node_time_sync(failed_at + retry + 5) is True
+    assert attempts == ["_attempt_node_time_sync"]
+
+
+def test_listener_exits_and_restarts_never_bump_the_router_connection_counter(sync_env):
+    """A post-claim code-1 listener exit + restart must not make the channel cache re-read
+    (that would be claim -> exit -> re-read -> claim ...)."""
+    srv, attempts = sync_env
+    generation = srv.transport_router.connection_generation
+    for _ in range(3):
+        srv.radio_event("listener_stop", intentional=False)
+        srv.radio_health["listener_running"] = False
+        srv.radio_event("listener_start")
+        srv.radio_event("listener_stop", intentional=True)
+        srv.radio_health["listener_running"] = False
+        srv.radio_event("listener_start")
+    assert srv.transport_router.connection_generation == generation

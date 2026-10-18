@@ -37,7 +37,7 @@ Auth/CSRF columns mirror `api/api_auth.py`'s own `_enforce_auth()`/`_enforce_csr
 | `/api/camera/status` | GET | `api/api_camera.py:172` (`api_camera_status`) | required | exempt |
 | `/api/camera/stop` | POST | `api/api_camera.py:200` (`api_camera_stop`) | required | required |
 | `/api/camera/switch_mode` | POST | `api/api_camera.py:211` (`api_camera_switch_mode`) | required | required |
-| `/api/chats` | GET | `api/api_chat.py:447` (`api_chats`) | required | exempt |
+| `/api/chats` | GET | `api/api_chat.py:460` (`api_chats`) | required | exempt |
 | `/api/cleanup_nodes` | POST | `server.py:8292` (`api_cleanup_nodes`) | required | required |
 | `/api/clear_chat` | POST | `server.py:8497` (`api_clear_chat`) | required | required |
 | `/api/delete_all_dm` | POST | `server.py:8976` (`api_delete_all_dm`) | required | required |
@@ -92,9 +92,9 @@ Auth/CSRF columns mirror `api/api_auth.py`'s own `_enforce_auth()`/`_enforce_csr
 | `/api/meshtastic/reconnect_now` | POST | `server.py:8340` (`api_meshtastic_reconnect_now`) | required | required |
 | `/api/meshtastic/tcp/connect` | POST | `api/api_meshtastic.py:437` (`api_meshtastic_tcp_connect`) | required | required |
 | `/api/meshtastic/transport` | POST | `api/api_meshtastic.py:476` (`api_meshtastic_set_transport`) | required | required |
-| `/api/messages` | GET | `api/api_chat.py:464` (`api_messages`) | required | exempt |
-| `/api/messages/delete` | POST | `api/api_chat.py:529` (`api_delete_message`) | required | required |
-| `/api/messages/mark_read` | POST | `api/api_chat.py:507` (`api_mark_chat_read`) | required | required |
+| `/api/messages` | GET | `api/api_chat.py:482` (`api_messages`) | required | exempt |
+| `/api/messages/delete` | POST | `api/api_chat.py:547` (`api_delete_message`) | required | required |
+| `/api/messages/mark_read` | POST | `api/api_chat.py:525` (`api_mark_chat_read`) | required | required |
 | `/api/node-manager/dashboard` | GET | `server.py:7096` (`api_devices_dashboard`) | required | exempt |
 | `/api/node-manager/profiles/<profile_id>/activate` | POST | `server.py:7909` (`api_activate_radio_profile`) | required | required |
 | `/api/node-manager/radio/accept` | POST | `server.py:7753` (`api_accept_detected_radio`) | required | required |
@@ -131,8 +131,8 @@ Auth/CSRF columns mirror `api/api_auth.py`'s own `_enforce_auth()`/`_enforce_csr
 | `/api/schedules/<sid>/toggle` | PATCH | `api/api_system.py:553` (`api_toggle_schedule`) | required | required |
 | `/api/security` | GET | `api/api_auth.py:526` (`api_get_security`) | required | exempt |
 | `/api/security` | POST | `api/api_auth.py:536` (`api_update_security`) | required | required |
-| `/api/send` | POST | `api/api_chat.py:608` (`api_send`) | required | required |
-| `/api/send/retry` | POST | `api/api_chat.py:757` (`api_send_retry`) | required | required |
+| `/api/send` | POST | `api/api_chat.py:626` (`api_send`) | required | required |
+| `/api/send/retry` | POST | `api/api_chat.py:775` (`api_send_retry`) | required | required |
 | `/api/sensors` | GET | `server.py:7074` (`api_sensors`) | required | exempt |
 | `/api/settings` | GET | `api/api_settings.py:668` (`api_get_settings`) | required | exempt |
 | `/api/settings` | POST | `api/api_settings.py:699` (`api_update_settings`) | required | required |

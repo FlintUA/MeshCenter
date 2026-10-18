@@ -39,7 +39,7 @@ def _clean_channel_state(server_module, monkeypatch):
             lambda timeout=15: [ChannelInfo(index=0, name="LongFast", role="PRIMARY")],
         )
         warmup.setattr(time_module, "time", lambda: real_now + 10_000)
-        response = server_module.app.test_client().get("/api/chats?refresh_channels=1")
+        response = server_module.app.test_client().get("/api/chats?refresh_channels=force")
         assert response.status_code == 200
 
     yield server_module
@@ -63,7 +63,7 @@ def test_repeated_enoent_backs_off_instead_of_retrying_every_poll(_clean_channel
 
     client = server_module.app.test_client()
     for _ in range(3):
-        response = client.get("/api/chats?refresh_channels=1")
+        response = client.get("/api/chats?refresh_channels=force")
         assert response.status_code == 200
 
     assert len(call_count) == 1, (
@@ -93,7 +93,7 @@ def test_any_discovery_failure_backs_the_next_attempt_off(_clean_channel_state, 
 
     client = server_module.app.test_client()
     for _ in range(3):
-        response = client.get("/api/chats?refresh_channels=1")
+        response = client.get("/api/chats?refresh_channels=force")
         assert response.status_code == 200
 
     assert len(call_count) == 1, "one failed read, then served from cache until the backoff expires"
@@ -115,13 +115,13 @@ def test_concurrent_polls_share_one_in_flight_discovery(_clean_channel_state, mo
 
     monkeypatch.setattr(server_module.transport_router, "get_channels", _slow_get_channels)
     client = server_module.app.test_client()
-    first = threading.Thread(target=lambda: client.get("/api/chats?refresh_channels=1"))
+    first = threading.Thread(target=lambda: client.get("/api/chats?refresh_channels=force"))
     first.start()
     assert started.wait(3)
     # a second and third poll arrive while the radio is being read
     t0 = time.monotonic()
     for _ in range(2):
-        assert client.get("/api/chats?refresh_channels=1").status_code == 200
+        assert client.get("/api/chats?refresh_channels=force").status_code == 200
     assert time.monotonic() - t0 < 2.0, "concurrent polls must not queue behind the read"
     release.set()
     first.join(5)
@@ -146,12 +146,12 @@ def test_a_successful_discovery_clears_a_leftover_backoff(_clean_channel_state, 
     monkeypatch.setattr(server_module.transport_router, "get_channels", _flaky_get_channels)
 
     client = server_module.app.test_client()
-    first = client.get("/api/chats?refresh_channels=1")
+    first = client.get("/api/chats?refresh_channels=force")
     assert first.status_code == 200
     assert len(call_count) == 1
 
     # Still within the backoff window - must be skipped.
-    second = client.get("/api/chats?refresh_channels=1")
+    second = client.get("/api/chats?refresh_channels=force")
     assert second.status_code == 200
     assert len(call_count) == 1
 
@@ -162,6 +162,6 @@ def test_a_successful_discovery_clears_a_leftover_backoff(_clean_channel_state, 
     should_fail["value"] = False
     real_now = time_module.time()
     monkeypatch.setattr(time_module, "time", lambda: real_now + 9999)
-    third = client.get("/api/chats?refresh_channels=1")
+    third = client.get("/api/chats?refresh_channels=force")
     assert third.status_code == 200
     assert len(call_count) == 2, "once the backoff window has passed, discovery must try again"

@@ -694,15 +694,14 @@ def test_channel_cache_is_kept_for_hours_but_a_new_connection_or_explicit_demand
 
     monkeypatch.setattr(srv.transport_router, "get_channels", fake_get_channels)
     client = srv.app.test_client()
-    real_now = time_module.time()
-    base = real_now + 100_000          # past any backoff/TTL left by earlier tests
+    base = time_module.time() + 100_000          # past any backoff/TTL left by earlier tests
 
     def at(offset, url="/api/chats"):
         with monkeypatch.context() as m:
             m.setattr(time_module, "time", lambda: base + offset)
             return client.get(url)
 
-    at(0, "/api/chats?refresh_channels=1")
+    at(0, "/api/chats?refresh_channels=force")
     n = len(calls)
     assert n >= 1
     at(5 * 3600)                                   # 5 h later, same connection: cached
@@ -712,8 +711,45 @@ def test_channel_cache_is_kept_for_hours_but_a_new_connection_or_explicit_demand
     srv.transport_router.note_connection_changed()
     at(6 * 3600 + 20)                              # a new connection: re-read at once
     assert len(calls) == n + 2
-    at(6 * 3600 + 400, "/api/chats?refresh_channels=1")   # explicit demand (after the failure backoff)
+    at(6 * 3600 + 400, "/api/chats?refresh_channels=force")   # explicit unconditional refresh
     assert len(calls) == n + 3
+    client.get("/api/chats?refresh_channels=force")           # leave the cache stamped with real time
+
+
+def test_the_page_load_soft_refresh_is_honoured_only_for_a_cache_older_than_ten_minutes(server_module, monkeypatch):
+    """The UI's first load sends ?refresh_channels=1: every reload of any tab must not force a
+    serial claim. 3 reloads within minutes -> at most the one read that filled the cache."""
+    import time as time_module
+    from meshsrv.radio_transport import ChannelInfo
+
+    srv = server_module
+    monkeypatch.setattr(srv, "is_radio_available", lambda: True)
+    calls = []
+    monkeypatch.setattr(
+        srv.transport_router, "get_channels",
+        lambda timeout=15: calls.append(1) or [ChannelInfo(index=0, name="LongFast", role="PRIMARY")],
+    )
+    client = srv.app.test_client()
+    base = time_module.time() + 200_000
+
+    def at(offset, url):
+        with monkeypatch.context() as m:
+            m.setattr(time_module, "time", lambda: base + offset)
+            return client.get(url)
+
+    at(0, "/api/chats?refresh_channels=force")             # fills the cache
+    n = len(calls)
+    for offset in (30, 120, 400):                          # three page loads in ~7 min
+        at(offset, "/api/chats?refresh_channels=1")
+    assert len(calls) == n, "a soft refresh on a fresh cache must be served from the cache"
+    at(601, "/api/chats?refresh_channels=1")               # cache now older than 10 min
+    assert len(calls) == n + 1
+    at(700, "/api/chats?refresh_channels=1")               # ... and fresh again
+    assert len(calls) == n + 1
+    srv.transport_router.note_connection_changed()
+    at(710, "/api/chats?refresh_channels=1")               # a new connection beats the age limit
+    assert len(calls) == n + 2
+    client.get("/api/chats?refresh_channels=force")        # leave the cache stamped with real time
 
 
 def test_router_connection_generation_changes_on_connect_reconnect_switch_and_path_change():

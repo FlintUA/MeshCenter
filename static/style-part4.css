@@ -1505,16 +1505,138 @@ html[data-theme="dark"] .device-status-released {
     background: rgba(120, 150, 210, .16);
 }
 
-.device-release-duration {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 13px;
+/* RR1: Connection card - two equal buttons + one status line */
+.device-action-row-equal {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
 
-.device-release-duration select {
+.device-action-row-equal.device-action-row-single-btn {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.device-action-row-equal .device-action-btn {
+    width: 100%;
+    padding: 0 10px;
+}
+
+.device-release-status {
+    margin: 8px 0 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: #475a7a;
+    text-align: center;
+}
+
+html[data-theme="dark"] .device-release-status {
+    color: #9db4dc;
+}
+
+/* long USB by-id path / endpoint: one line, ellipsis, full value in the title */
+.device-detail-list dd.device-ellipsis {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    overflow-wrap: normal;
+    min-width: 0;
+}
+
+@media (max-width: 480px) {
+    .device-action-row-equal {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+/* RR1: release modal (reuses .modal-overlay/.modal-content for the theme) */
+.mc-release-modal-overlay {
+    padding: 12px;
+}
+
+.mc-release-modal {
+    width: min(92vw, 420px);
+    max-width: 420px;
+    min-width: 0;
+    padding: 18px;
+    box-sizing: border-box;
+    overflow: visible;
+}
+
+.mc-release-modal-title {
+    margin: 0 0 10px;
+    font-size: 17px;
+}
+
+.mc-release-modal-body {
+    margin: 0 0 14px;
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--mc-text-secondary, #64748b);
+}
+
+.mc-release-modal-label {
+    margin-bottom: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--mc-text-secondary, #64748b);
+}
+
+.mc-segmented {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    border: 1px solid var(--mc-border, #d8e1ec);
+    border-radius: 9px;
+    overflow: hidden;
+}
+
+.mc-segmented-option {
+    min-height: 38px;
     padding: 4px 6px;
-    border-radius: 6px;
+    border: 0;
+    border-right: 1px solid var(--mc-border, #d8e1ec);
+    background: var(--mc-button-secondary-bg, #f4f7fb);
+    color: var(--mc-text-primary, #172033);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.mc-segmented-option:last-child {
+    border-right: 0;
+}
+
+.mc-segmented-option.is-selected {
+    background: var(--mc-primary, #1769e0);
+    color: #fff;
+}
+
+.mc-release-modal-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 9px;
+    margin-top: 16px;
+}
+
+@media (max-width: 480px) {
+    .mc-release-modal-actions {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    .mc-release-modal-actions .device-action-btn[data-release-action="confirm"] {
+        order: -1;
+    }
+}
+
+[data-theme="dark"] .mc-segmented-option {
+    background: var(--mc-button-secondary-bg);
+    color: var(--mc-text-primary);
+    border-color: var(--mc-border);
+}
+
+[data-theme="dark"] .mc-segmented-option.is-selected {
+    background: #2168d7;
+    color: #fff;
+}
+
+[data-theme="dark"] .mc-segmented {
+    border-color: var(--mc-border);
 }
 
 .device-dashboard-grid {

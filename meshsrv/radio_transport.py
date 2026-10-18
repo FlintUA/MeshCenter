@@ -253,9 +253,16 @@ class OutgoingMessage:
 
 @dataclass(frozen=True)
 class SendResult:
+    """`ack_state` (ST1): set only when the transport itself already observed the
+    delivery acknowledgement for a want_ack DM inside the send - "delivered" (the
+    routing ACK came from the destination itself) or "nak" (a routing error; text
+    in `ack_error`). None = not observed (yet): the pending-ACK machinery in Core
+    keeps waiting for a routing event / listener line."""
     accepted: bool
     packet_id: Optional[int] = None
     error: Optional[TransportError] = None
+    ack_state: Optional[str] = None
+    ack_error: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -577,8 +584,37 @@ class ReceivedTelemetryEvent:
         object.__setattr__(self, "rx_snr", _field_optional_float(owner, "rx_snr", self.rx_snr))
 
 
+@dataclass(frozen=True)
+class ReceivedRoutingEvent:
+    """One Routing/ROUTING_APP packet - the (N)ACK for a packet WE sent with
+    want_ack: `request_id` is the id of that packet, `error_reason` the
+    Routing.Error enum NAME ("NONE" = acknowledged, anything else a NAK such as
+    "NO_ROUTE" / "MAX_RETRANSMIT"), `from_num` the node that sent the reply.
+    A "NONE" from a relay is an implicit ack, not delivery: only a reply whose
+    `from_num` is the destination proves the DM arrived."""
+
+    request_id: int
+    error_reason: str
+    from_num: int
+    received_at: float
+    local_radio_node_id: str
+    to_num: Optional[int] = None
+    packet_id: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        owner = type(self).__name__
+        _field_int(owner, "request_id", self.request_id)
+        _field_str(owner, "error_reason", self.error_reason)
+        _field_int(owner, "from_num", self.from_num)
+        object.__setattr__(self, "received_at", _field_float(owner, "received_at", self.received_at))
+        _field_nonempty_str(owner, "local_radio_node_id", self.local_radio_node_id)
+        for name in ("to_num", "packet_id"):
+            _field_optional_int(owner, name, getattr(self, name))
+
+
 ReceivedEvent = Union[
     ReceivedTextEvent, ReceivedWaypointEvent, ReceivedNodeInfoEvent, ReceivedPositionEvent, ReceivedTelemetryEvent,
+    ReceivedRoutingEvent,
 ]
 
 
@@ -605,7 +641,7 @@ class ReceivedBatch:
         for event in self.events:
             if not isinstance(event, (
                 ReceivedTextEvent, ReceivedWaypointEvent, ReceivedNodeInfoEvent,
-                ReceivedPositionEvent, ReceivedTelemetryEvent,
+                ReceivedPositionEvent, ReceivedTelemetryEvent, ReceivedRoutingEvent,
             )):
                 raise TypeError(f"{owner}.events holds a {type(event).__name__}, not a received event")
         _field_int(owner, "dropped", self.dropped)

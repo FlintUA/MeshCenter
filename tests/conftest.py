@@ -164,6 +164,48 @@ def server_module(tmp_path_factory):
 _IDENTITY_INVARIANT_NAMES = ("nodes", "chats", "messages", "settings", "seen_ids", "seen_recent_texts")
 
 
+# server.py background loops (`while True: time.sleep(...)`) that must never be
+# started for real by a test: they live for the whole pytest session and turn into
+# busy loops the moment any later test patches the global time.sleep.
+_FORBIDDEN_LEAKED_WORKERS = (
+    "cleanup_seen_ids", "telemetry_worker", "telemetry_buffer_worker", "ack_timeout_worker",
+    "radio_health_worker", "radio_inbound_worker", "cpu_history_worker", "epaper_worker",
+    "listen_meshtastic", "telemetry_flush_worker",
+)
+
+
+@pytest.fixture(autouse=True)
+def _no_leaked_server_workers(request):
+    """Latches server._serial_identity_match_done for every server_module test (a
+    serial MATCH fires on_serial_identity_match(), which starts four REAL daemon
+    workers - the ST1 CI hang) and fails any test that still leaks one. Tests that
+    exercise the hook itself (tests/test_start_runtime_worker_gate.py) reset the
+    latch and record Thread instead of starting it."""
+    import threading
+
+    # Deliberately NOT the monkeypatch fixture: requesting it here would make it
+    # the first-created, last-undone one, and _reset_server_state's "nodes/chats
+    # were never rebound" check would then run before the test's own patches are
+    # undone.
+    server = request.getfixturevalue("server_module") if "server_module" in request.fixturenames else None
+    original_latch = getattr(server, "_serial_identity_match_done", None) if server is not None else None
+    if server is not None:
+        server._serial_identity_match_done = True
+
+    before = {t.ident for t in threading.enumerate()}
+    yield
+    if server is not None:
+        server._serial_identity_match_done = original_latch
+    leaked = [
+        t.name for t in threading.enumerate()
+        if t.ident not in before and t.is_alive() and any(f"({w})" in t.name for w in _FORBIDDEN_LEAKED_WORKERS)
+    ]
+    assert not leaked, (
+        f"this test started real server background worker thread(s) {leaked} that outlive it - "
+        "stub the start (e.g. latch server._serial_identity_match_done) or record the Thread instead"
+    )
+
+
 @pytest.fixture(autouse=True)
 def _reset_server_state(request):
     """Snapshot/restore server.py's mutable module-level dicts around every

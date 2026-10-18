@@ -307,6 +307,15 @@ def test_restart_listener_resumes_once_the_re_check_actually_confirms_match(serv
     monkeypatch.setattr(spv_module, "capture_device_identity", lambda port: stable_identity)
     server_module.listener_supervisor._resolve_port = lambda: "/dev/ttyACM0"
     server_module.listener_supervisor._verify_identity = lambda port: ("MATCH", "")
+    # A genuine MATCH also fires on_serial_identity_match(), which starts the four
+    # listener-dependent `while True` workers (cleanup_seen_ids, telemetry_worker,
+    # telemetry_buffer_worker, ack_timeout_worker) as REAL daemon threads that then
+    # live for the rest of the pytest session. Any later test that patches the
+    # global time.sleep to a no-op turned them into busy loops (a CI job hung for
+    # ~8 min in test_server_startup_tcp_transport.py; locally ~300k extra
+    # "sleeps" in one test's `slept` list). This test is about the listener
+    # resuming, not the hook - latch the once-per-process guard instead.
+    monkeypatch.setattr(server_module, "_serial_identity_match_done", True)
 
     server_module.listener_supervisor._listener_cycle()
 

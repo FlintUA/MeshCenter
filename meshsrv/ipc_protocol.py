@@ -32,6 +32,7 @@ from meshsrv.radio_transport import (
     OutgoingWaypoint,
     ReceivedBatch,
     ReceivedEvent,
+    ReceivedRoutingEvent,
     ReceivedNodeInfoEvent,
     ReceivedPositionEvent,
     ReceivedTelemetryEvent,
@@ -136,6 +137,8 @@ def send_result_to_dict(result: SendResult) -> dict:
         "accepted": result.accepted,
         "packet_id": result.packet_id,
         "error": error_to_dict(result.error) if result.error else None,
+        "ack_state": result.ack_state,
+        "ack_error": result.ack_error,
     }
 
 
@@ -144,6 +147,8 @@ def send_result_from_dict(data: dict) -> SendResult:
         accepted=bool(data.get("accepted", False)),
         packet_id=data.get("packet_id"),
         error=error_from_dict(data.get("error")),
+        ack_state=data.get("ack_state"),
+        ack_error=data.get("ack_error"),
     )
 
 
@@ -316,6 +321,7 @@ RECEIVED_KIND_WAYPOINT = "waypoint"
 RECEIVED_KIND_NODEINFO = "nodeinfo"
 RECEIVED_KIND_POSITION = "position"
 RECEIVED_KIND_TELEMETRY = "telemetry"
+RECEIVED_KIND_ROUTING = "routing"
 
 
 def received_text_to_dict(event: ReceivedTextEvent) -> dict:
@@ -520,12 +526,37 @@ def received_telemetry_from_dict(data: dict) -> ReceivedTelemetryEvent:
     )
 
 
+def received_routing_to_dict(event: ReceivedRoutingEvent) -> dict:
+    return {
+        "request_id": event.request_id,
+        "error_reason": event.error_reason,
+        "from_num": event.from_num,
+        "received_at": event.received_at,
+        "local_radio_node_id": event.local_radio_node_id,
+        "to_num": event.to_num,
+        "packet_id": event.packet_id,
+    }
+
+
+def received_routing_from_dict(data: dict) -> ReceivedRoutingEvent:
+    return ReceivedRoutingEvent(
+        request_id=data["request_id"],
+        error_reason=data["error_reason"],
+        from_num=data["from_num"],
+        received_at=data["received_at"],
+        local_radio_node_id=data["local_radio_node_id"],
+        to_num=data.get("to_num"),
+        packet_id=data.get("packet_id"),
+    )
+
+
 _RECEIVED_TO_DICT = {
     ReceivedTextEvent: (RECEIVED_KIND_TEXT, received_text_to_dict),
     ReceivedWaypointEvent: (RECEIVED_KIND_WAYPOINT, received_waypoint_to_dict),
     ReceivedNodeInfoEvent: (RECEIVED_KIND_NODEINFO, received_nodeinfo_to_dict),
     ReceivedPositionEvent: (RECEIVED_KIND_POSITION, received_position_to_dict),
     ReceivedTelemetryEvent: (RECEIVED_KIND_TELEMETRY, received_telemetry_to_dict),
+    ReceivedRoutingEvent: (RECEIVED_KIND_ROUTING, received_routing_to_dict),
 }
 _RECEIVED_FROM_DICT = {
     RECEIVED_KIND_TEXT: received_text_from_dict,
@@ -533,6 +564,7 @@ _RECEIVED_FROM_DICT = {
     RECEIVED_KIND_NODEINFO: received_nodeinfo_from_dict,
     RECEIVED_KIND_POSITION: received_position_from_dict,
     RECEIVED_KIND_TELEMETRY: received_telemetry_from_dict,
+    RECEIVED_KIND_ROUTING: received_routing_from_dict,
 }
 
 

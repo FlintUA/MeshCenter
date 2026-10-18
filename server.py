@@ -6,6 +6,7 @@ MeshCenter - Web Control Center for Meshtastic nodes on Raspberry Pi Zero 2W
 from flask import Flask, request, jsonify, render_template, Response, send_from_directory, make_response
 from flask.json.provider import DefaultJSONProvider
 from functools import wraps
+import signal
 import subprocess
 import threading
 import time
@@ -781,6 +782,12 @@ def _on_listener_port_changed(old_port, new_port):
     except Exception as e:
         print(f"[IDENTITY] Failed to update cached descriptor after port change: {e}", flush=True)
 
+    # A replug on a new path is a new connection: re-read the channels and let the
+    # radio clock be synced again.
+    global _node_time_sync_last_attempt_ts
+    transport_router.note_connection_changed()
+    _node_time_sync_last_attempt_ts = 0.0
+
     log_system_event(
         "Radio reconnected on a new path",
         "INFO",
@@ -913,15 +920,9 @@ def on_serial_identity_match(info_output=""):
     threading.Thread(target=cleanup_seen_ids, daemon=True).start()
     threading.Thread(target=telemetry_worker, daemon=True).start()
     threading.Thread(target=telemetry_buffer_worker, daemon=True).start()
-    # NOT listener-dependent, unlike the others - a pure timer over
-    # `messages` (see ack_timeout_worker()) - but starting it for TCP/
-    # Bluetooth would start flipping every DM there to "unconfirmed" after
-    # 60s (no inbound relay means an ACK can never be observed), a user-
-    # visible delivery-status decision, not a bug fix. This hook is only
-    # ever called for the serial path (boot's own call site is inside the
-    # `active_transport == "serial"` branch; the listener callback only
-    # exists on SerialPortSupervisor), so that constraint still holds.
-    threading.Thread(target=ack_timeout_worker, daemon=True).start()
+    # ack_timeout_worker() is NOT started here any more: it is a pure timer over
+    # `messages`, started once for every transport by start_runtime() (ST1 - TCP
+    # observes routing ACKs now; Bluetooth never stamps an ack deadline).
     print(
         "[IDENTITY] Serial identity confirmed MATCH - listener-dependent "
         "workers started, --info seeding complete",
@@ -1595,6 +1596,56 @@ transport_router = TransportRouter(serial_ipc_transport, on_log=_transport_route
 _node_time_sync_attempt_lock = threading.Lock()
 _node_time_sync_last_attempt_ts = 0.0
 NODE_TIME_SYNC_ATTEMPT_COOLDOWN_S = 300
+# ST1: the radio's clock is synced once when a connection is (re)established and then
+# only refreshed slowly. A listener restart that was merely the end of a claim (a
+# channel read, a send, the previous sync itself) never triggers one: that fed on
+# itself and ran a ~10 s port claim every ~6 minutes on every node (~9/h measured).
+NODE_TIME_SYNC_REFRESH_S = 6 * 3600
+# A failed attempt is retried after this long (each attempt is a port claim on serial).
+NODE_TIME_SYNC_RETRY_AFTER_FAILURE_S = 30 * 60
+NODE_TIME_SYNC_CLAIM_RESTART_WINDOW_S = 120
+_node_time_sync_last_claim_stop_ts = float("-inf")
+
+
+_listener_exits_last_logged = {"stats": None, "ts": 0.0}
+LISTENER_EXITS_LOG_MIN_INTERVAL_S = 300
+
+
+def log_listener_exits_if_changed(now_ts):
+    """Journal line with the listener's exit counters (the same ones /api/radio_health
+    serves behind the login) - on change, at most every LISTENER_EXITS_LOG_MIN_INTERVAL_S,
+    so the numbers are readable without a session. No-op while nothing ever exited."""
+    try:
+        stats = listener_supervisor.exit_stats()
+    except Exception:
+        return False
+    last = _listener_exits_last_logged
+    if stats == last["stats"] or not any(stats.values()):
+        return False
+    if now_ts - last["ts"] < LISTENER_EXITS_LOG_MIN_INTERVAL_S:
+        return False
+    last["stats"] = dict(stats)
+    last["ts"] = now_ts
+    print(
+        "[LISTENER EXITS] "
+        + " ".join(f"{key}={value}" for key, value in stats.items()),
+        flush=True,
+    )
+    return True
+
+
+def maybe_refresh_node_time_sync(now_ts):
+    """Slow periodic refresh (radio_health_worker): at most one sync attempt per
+    NODE_TIME_SYNC_REFRESH_S, only while a serial listener is up."""
+    global _node_time_sync_last_attempt_ts
+    if now_ts - _node_time_sync_last_attempt_ts < NODE_TIME_SYNC_REFRESH_S:
+        return False
+    with _node_time_sync_attempt_lock:
+        if now_ts - _node_time_sync_last_attempt_ts < NODE_TIME_SYNC_REFRESH_S:
+            return False
+        _node_time_sync_last_attempt_ts = now_ts
+    threading.Thread(target=_attempt_node_time_sync, daemon=True, name="node-time-sync").start()
+    return True
 
 radio_health = {
     "status": "STARTING",
@@ -1656,6 +1707,7 @@ def _radio_history_locked(event, level="INFO", details=""):
 
 
 def radio_event(event, error="", intentional=None):
+    global _node_time_sync_last_claim_stop_ts
     now_ts = time.time()
 
     with state_lock:
@@ -1690,8 +1742,13 @@ def radio_event(event, error="", intentional=None):
                 # that self-generated transition re-triggers immediately.
                 global _node_time_sync_last_attempt_ts
                 should_attempt_sync = False
+                claim_restart = (now_ts - _node_time_sync_last_claim_stop_ts) < NODE_TIME_SYNC_CLAIM_RESTART_WINDOW_S
                 with _node_time_sync_attempt_lock:
-                    if (now_ts - _node_time_sync_last_attempt_ts) >= NODE_TIME_SYNC_ATTEMPT_COOLDOWN_S:
+                    # A listener (re)start is NOT a new connection: a crash restart must not
+                    # sync earlier than NODE_TIME_SYNC_REFRESH_S after the last attempt
+                    # (success: 6 h; failure: the retry time set by _attempt_node_time_sync).
+                    # A genuinely new connection (process start, port change) resets it.
+                    if not claim_restart and (now_ts - _node_time_sync_last_attempt_ts) >= NODE_TIME_SYNC_REFRESH_S:
                         _node_time_sync_last_attempt_ts = now_ts
                         should_attempt_sync = True
                 if should_attempt_sync:
@@ -1705,6 +1762,8 @@ def radio_event(event, error="", intentional=None):
             was_running = bool(
                 radio_health.get("listener_running", False)
             )
+            if intentional:
+                _node_time_sync_last_claim_stop_ts = now_ts
 
             radio_health["listener_running"] = False
 
@@ -3678,6 +3737,67 @@ def extract_routing_error_reason(line):
     return None
 
 
+def extract_routing_from_num(line):
+    """The node NUMBER that sent a ROUTING_APP reply ('from': 2968603946 in the
+    --listen dict). `fromId` is None for nodes the radio has not told us about, so
+    the number is the reliable one. None if the line has no usable `from`."""
+    match = re.search(r"""['"]from['"]:\s*(\d+)""", line)
+    return int(match.group(1)) if match else None
+
+
+def _dm_destination_num(chat_id):
+    text = str(chat_id or "")
+    if len(text) == 9 and text.startswith("!"):
+        try:
+            return int(text[1:], 16)
+        except ValueError:
+            return None
+    return None
+
+
+def resolve_pending_ack(request_id, error_reason, from_num):
+    """The ONE rule for turning a routing reply into a message status, shared by
+    the serial `--listen` parser, the TCP routing events and the serial send's own
+    captured ACK.
+
+    * "NONE" from the DM's destination -> delivered.
+    * "NONE" from anyone else -> an implicit ack (a relay rebroadcast our packet):
+      the message stays "sent". It used to be marked delivered.
+    * any routing error -> unconfirmed with that reason (a NAK is a NAK whoever
+      reports it).
+    Returns "delivered" | "unconfirmed" | "implicit", or None when nothing matched."""
+    reason = error_reason or "NONE"
+    is_ack = reason == "NONE"
+
+    with state_lock:
+        target = find_message_by_packet_id(request_id)
+        if target is None or not target.get("ack_requested") or target.get("status") != "sent":
+            return None
+
+        if is_ack:
+            destination = _dm_destination_num(target.get("chat_id"))
+            if destination is None or from_num is None or int(from_num) != destination:
+                return "implicit"
+            target["status"] = "delivered"
+            target.pop("error", None)
+            outcome = "delivered"
+        else:
+            target["status"] = "unconfirmed"
+            target["error"] = reason or "NO_ACK"
+            outcome = "unconfirmed"
+        target.pop("ack_deadline", None)
+        save_messages()
+        still_waiting = any(
+            m.get("ack_requested") and m.get("status") == "sent" and m.get("ack_deadline") for m in messages
+        )
+
+    if not still_waiting:
+        transport_router.release_background_hold()
+
+    print(f"[ACK] requestId={request_id} -> {outcome} ({reason}, from={from_num})", flush=True)
+    return outcome
+
+
 def process_routing_ack_line(line):
     """Resolve a pending DM delivery ACK from a ROUTING_APP line in the
     --listen output (see the module docstring / CLAUDE.md for why this is
@@ -3691,27 +3811,7 @@ def process_routing_ack_line(line):
     if request_id is None:
         return
 
-    error_reason = extract_routing_error_reason(line)
-    is_ack = error_reason is None or error_reason == "NONE"
-
-    with state_lock:
-        target = find_message_by_packet_id(request_id)
-        if target is None or not target.get("ack_requested") or target.get("status") != "sent":
-            return
-
-        target["status"] = "delivered" if is_ack else "unconfirmed"
-        target.pop("ack_deadline", None)
-        if is_ack:
-            target.pop("error", None)
-        else:
-            target["error"] = error_reason or "NO_ACK"
-        save_messages()
-
-    print(
-        f"[ACK] requestId={request_id} -> "
-        f"{'delivered' if is_ack else 'unconfirmed'} ({error_reason})",
-        flush=True,
-    )
+    resolve_pending_ack(request_id, extract_routing_error_reason(line), extract_routing_from_num(line))
 
 
 def ack_timeout_worker():
@@ -4246,7 +4346,8 @@ def add_message(kind, sender, text, node_id="", chat_id=None, chat_name=None, re
 ACK_TIMEOUT_SECONDS = 60
 
 
-def update_message_status(message_id, chat_id, status, packet_id=None, error=None, ack_requested=None):
+def update_message_status(message_id, chat_id, status, packet_id=None, error=None, ack_requested=None,
+                          ack_state=None, ack_error=None):
     """Update a message created with status="pending" once the background
     send worker (api/api_chat.py) has actually talked to the radio.
 
@@ -4258,6 +4359,9 @@ def update_message_status(message_id, chat_id, status, packet_id=None, error=Non
     it stamps an ack_deadline so ack_timeout_worker() can flip it to
     "unconfirmed" if process_routing_ack_line() never sees a response.
     """
+    # Resolved BEFORE state_lock: it consults the router, whose lock is never taken
+    # while state_lock is held anywhere in this codebase.
+    observable = bool(ack_requested) and _ack_observable()
     with state_lock:
         for message in reversed(messages):
             if message.get("id") == message_id and message.get("chat_id") == chat_id:
@@ -4267,16 +4371,40 @@ def update_message_status(message_id, chat_id, status, packet_id=None, error=Non
                         message["packet_id"] = int(packet_id)
                     except (TypeError, ValueError):
                         pass
-                if ack_requested:
-                    message["ack_requested"] = True
-                    message["ack_deadline"] = time.time() + ACK_TIMEOUT_SECONDS
                 if error:
                     message["error"] = str(error)[:300]
                 elif "error" in message and status in ("sent", "delivered"):
                     message.pop("error", None)
+                if observable:
+                    message["ack_requested"] = True
+                    message["ack_deadline"] = time.time() + ACK_TIMEOUT_SECONDS
+                    if ack_state == "delivered":
+                        # The transport saw the destination's ACK inside the send itself.
+                        message["status"] = "delivered"
+                        message.pop("ack_deadline", None)
+                        message.pop("error", None)
+                    elif ack_state == "nak":
+                        message["status"] = "unconfirmed"
+                        message["error"] = str(ack_error or "NO_ACK")[:300]
+                        message.pop("ack_deadline", None)
+                    elif status == "sent":
+                        # Not seen yet: it may still arrive via the serial listener (which
+                        # restarts ~8 s after a send) - keep background claims from
+                        # stopping it again during the whole ACK window.
+                        transport_router.hold_background(ACK_TIMEOUT_SECONDS)
                 save_messages()
                 return message
     return None
+
+def _ack_observable():
+    """A delivery ACK can only be observed over serial (the --listen parser and the
+    ACK captured inside the send) and TCP (routing events). Bluetooth cannot receive
+    at all - asking it for one would just flip every DM to "unconfirmed" after 60 s."""
+    try:
+        return current_radio_transport() in ("serial", "tcp")
+    except Exception:
+        return True
+
 
 def reconcile_interrupted_sends():
     """Fail out any message left in status="pending" from a previous run.
@@ -4706,9 +4834,18 @@ def _attempt_node_time_sync():
     time.sleep(STARTUP_SYNC_DELAY_S)
 
     try:
-        transport_router.set_device_time(int(time.time()), timeout=10)
+        # 40 s, not 10: on serial this call is a whole port claim (stop the listener,
+        # open the radio, wait for its config, set the clock) = ~10 s on its own; with
+        # 10 s the adapter's watchdog fired at ~5 s and EVERY attempt failed (live on
+        # .104: 126 failed attempts in 12 h, each one stopping the listener).
+        transport_router.set_device_time(int(time.time()), timeout=40)
     except Exception as error:
         print(f"[TIME SYNC] Attempt failed: {error}", flush=True)
+        # A failed attempt (typically BUSY / a short budget left behind a boot-time
+        # channel read) must not wait for the next 6 h refresh: retry after the
+        # normal attempt cooldown. A success keeps the long interval.
+        global _node_time_sync_last_attempt_ts
+        _node_time_sync_last_attempt_ts = time.time() - NODE_TIME_SYNC_REFRESH_S + NODE_TIME_SYNC_RETRY_AFTER_FAILURE_S
 
 
 def update_base_status_from_info(info_output=None):
@@ -4881,6 +5018,7 @@ def _inbound_deps():
         telemetry_values_from_metrics=_telemetry_values_from_metrics,
         apply_node_telemetry=apply_node_telemetry,
         find_reply_original=find_reply_original,
+        resolve_pending_ack=resolve_pending_ack,
     )
 
 
@@ -4913,6 +5051,7 @@ inbound_worker = inbound_worker_module.InboundWorker(
     ingest_nodeinfo=lambda event: inbound_events.ingest_received_nodeinfo(event, _inbound_deps()),
     ingest_position=lambda event: inbound_events.ingest_received_position(event, _inbound_deps()),
     ingest_telemetry=lambda event: inbound_events.ingest_received_telemetry(event, _inbound_deps()),
+    ingest_routing=lambda event: inbound_events.ingest_received_routing(event, _inbound_deps()),
     log=print,
     log_system_event=log_system_event,
 )
@@ -6148,6 +6287,7 @@ def compute_radio_health_status(
     transport_state,
     awaiting_identity=False,
     tcp_link=None,
+    restarting_after_claim=False,
 ):
     """Pure status/level/reason/recommendation decision for
     radio_health_worker() - split out the same way
@@ -6202,6 +6342,17 @@ def compute_radio_health_status(
             )
 
         if not listener_running:
+            if restarting_after_claim:
+                # ST1: the port was just handed back after a radio command (channel
+                # read, time sync, send): the listener is on its way up, which is
+                # "paused", not "down" - flipping to LISTENER_DOWN armed the 60 s
+                # auto-recovery countdown ~20-30 times an hour on every node.
+                return (
+                    "PAUSED",
+                    "WARNING",
+                    "Listener restarting after a radio command",
+                    "Wait a few seconds",
+                )
             if awaiting_identity:
                 return (
                     "AWAITING_IDENTITY",
@@ -6452,6 +6603,7 @@ def radio_health_worker():
                     transport_state=transport_state,
                     awaiting_identity=listener_supervisor.owns_recovery(),
                     tcp_link=tcp_link_status,
+                    restarting_after_claim=listener_supervisor.restarting_after_claim(),
                 )
 
                 previous_status = radio_health.get("status")
@@ -6519,6 +6671,11 @@ def radio_health_worker():
                 )
 
                 process_identity_recovery(active_transport, now_ts)
+
+            if active_transport == "serial" and listener_running and not pause_listen.is_set():
+                maybe_refresh_node_time_sync(now_ts)
+
+            log_listener_exits_if_changed(now_ts)
 
             # H2-C Phase 2: detects a hung-but-alive listener subprocess
             # (the Meshtastic library noticed its own disconnect and
@@ -7171,6 +7328,13 @@ def api_devices_dashboard():
 
 
 
+def _restart_helper_killed_by_the_restart(error):
+    """True when the restart helper ended because of SIGTERM - i.e. the restart
+    it requested is already tearing this process group down (returncode -15, or
+    128+15 if a shell/sudo reported it that way)."""
+    return getattr(error, "returncode", None) in (-signal.SIGTERM, 128 + signal.SIGTERM)
+
+
 def _restart_meshcenter_after_profile_switch():
     """Restart the service after the activation response reaches the browser."""
     time.sleep(1.2)
@@ -7186,6 +7350,26 @@ def _restart_meshcenter_after_profile_switch():
             capture_output=True,
             text=True,
             timeout=20,
+        )
+    except subprocess.CalledProcessError as error:
+        if _restart_helper_killed_by_the_restart(error):
+            # Expected, not a failure: `systemctl restart` stops THIS service first,
+            # and systemd's control-group kill takes the helper (a child of this very
+            # process) down with SIGTERM before it can report success. Every profile
+            # switch used to log a false ERROR "Radio profile restart failed ... died
+            # with SIGTERM" even though the restart worked.
+            log_system_event(
+                "Radio profile restart",
+                "INFO",
+                "MeshCenter is restarting to apply the selected radio profile",
+                source="radio",
+            )
+            return
+        log_system_event(
+            "Radio profile restart failed",
+            "ERROR",
+            str(error),
+            source="radio",
         )
     except Exception as error:
         log_system_event(
@@ -8935,6 +9119,11 @@ def api_radio_health():
     status["transport"] = current_radio_transport()
 
     # Inbound receive counters (counts and states only - never message content).
+    try:
+        status["listener_exits"] = listener_supervisor.exit_stats()
+    except Exception:
+        pass
+
     status["inbound"] = {
         "worker": inbound_worker.stats(),
         "ingest": inbound_events.get_inbound_stats(),
@@ -9378,6 +9567,12 @@ def start_runtime():
     # also covers a live Settings switch to TCP and a TCP radio whose identity is
     # still unresolved at boot - it just waits until MATCH.
     threading.Thread(target=radio_inbound_worker, daemon=True).start()
+
+    # ST1: delivery ACKs are observable over serial (listener parser + the ACK captured
+    # inside the send) and TCP (routing events); this timer flips a DM whose ACK never
+    # came to "unconfirmed" after ACK_TIMEOUT_SECONDS. Bluetooth cannot receive, and
+    # update_message_status() never stamps an ack deadline for it.
+    threading.Thread(target=ack_timeout_worker, daemon=True).start()
 
     # H1-C5: debounced telemetry-history flush - started for every transport
     # (unlike the serial-only group below) since add_node_telemetry_record()

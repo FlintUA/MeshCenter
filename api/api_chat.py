@@ -106,6 +106,7 @@ def register_chat_routes(
         update_message_status(
             message_id, final_chat_id, "sent",
             packet_id=packet_id, ack_requested=want_ack,
+            ack_state=getattr(result, "ack_state", None), ack_error=getattr(result, "ack_error", None),
         )
 
         with state_lock:
@@ -179,7 +180,9 @@ def register_chat_routes(
         # its own TransportError internally and always returns one
         # SendResult per input message (never raises) - see
         # SerialTransport/BLETransport.send_messages().
-        results = radio_transport.send_messages(messages, timeout=30)
+        # 40 s (was 30): a serial DM now stays in its claim up to SERIAL_ACK_WAIT_S to see the
+        # delivery ACK; the send worker is a background thread, nothing user-facing waits on it.
+        results = radio_transport.send_messages(messages, timeout=40)
 
         for job, result in zip(batch, results):
             _handle_send_result(job, result)
@@ -238,8 +241,29 @@ def register_chat_routes(
 
     threading.Thread(target=send_worker, daemon=True, name="mc-send-worker").start()
 
-    CHANNEL_CACHE_TTL_SECONDS = 300
-    channel_cache = {"timestamp": 0.0, "channels": []}
+    # ST1: a channel list only changes when someone edits the radio's channels, yet
+    # every refresh stops the serial listener for 10-15 s (~17-20 claims/h per
+    # node measured on the fleet). Long TTL; `?refresh_channels=force` forces a
+    # read, concurrent callers share ONE in-flight read, and any failed read backs
+    # the next attempt off by CHANNEL_DISCOVERY_FAILURE_BACKOFF_S instead of being
+    # retried by every 10 s poll of every open tab.
+    # 6 h: the list changes only when someone edits the radio's channels. It is still
+    # re-read on a new connection (the router's connection_generation changes on
+    # connect/reconnect/switch/path change - a profile switch restarts the process,
+    # so starts empty) and on explicit UI demand (?refresh_channels=1).
+    CHANNEL_CACHE_TTL_SECONDS = 6 * 3600
+    # The UI's first page load sends `?refresh_channels=1` ("soft"): every reload of any
+    # tab on any device would otherwise force a serial claim. A soft refresh is honoured
+    # only when the cache is older than this (or the connection changed); the explicit,
+    # unconditional path is `?refresh_channels=force`.
+    CHANNEL_SOFT_REFRESH_MIN_AGE_S = 600
+    CHANNEL_DISCOVERY_FAILURE_BACKOFF_S = 60
+    CHANNEL_DISCOVERY_BUSY_BACKOFF_S = 15
+    channel_discovery_inflight = threading.Lock()
+    channel_cache = {"timestamp": 0.0, "channels": [], "generation": 0}
+
+    def _connection_generation():
+        return getattr(radio_transport, "connection_generation", 0)
     channel_cache_lock = threading.Lock()
 
     # Review round 4, item 4 (live-caught, 2026-10-04): a FAILED discovery
@@ -280,6 +304,19 @@ def register_chat_routes(
         return value == CHANNEL_CHAT_ID or bool(re.fullmatch(r"channel:[1-7]", str(value or "")))
 
     def discover_radio_channels(force=False):
+        """Single-flight front door of _discover_radio_channels(): while one
+        caller is reading the radio, everyone else is served the cached list at
+        once instead of queueing a second claim behind it."""
+        if not channel_discovery_inflight.acquire(blocking=False):
+            with channel_cache_lock:
+                cached = [dict(item) for item in channel_cache["channels"]]
+            return cached or _primary_channel_fallback()
+        try:
+            return _discover_radio_channels(force)
+        finally:
+            channel_discovery_inflight.release()
+
+    def _discover_radio_channels(force=False):
         """Read the active channel configuration from the connected radio.
 
         The short cache prevents the 10-second UI poll from reopening the serial
@@ -294,7 +331,16 @@ def register_chat_routes(
             # so the frontend's "give me a fresh read on first load"
             # (?refresh_channels=1) request silently returned whatever was
             # already cached instead of re-reading the radio.
-            if not force and cached_channels and cache_age < CHANNEL_CACHE_TTL_SECONDS:
+            same_connection = channel_cache.get("generation", 0) == _connection_generation()
+            hard = force is True or force == "force"
+            soft = force == "soft"
+            if (
+                cached_channels
+                and same_connection
+                and not hard
+                and cache_age < CHANNEL_CACHE_TTL_SECONDS
+                and not (soft and cache_age >= CHANNEL_SOFT_REFRESH_MIN_AGE_S)
+            ):
                 return cached_channels
 
         discovered = []
@@ -345,6 +391,10 @@ def register_chat_routes(
                     flush=True,
                 )
             else:
+                busy = getattr(getattr(error, "code", None), "value", None) == "busy"
+                channel_discovery_backoff["until"] = now_ts + (
+                    CHANNEL_DISCOVERY_BUSY_BACKOFF_S if busy else CHANNEL_DISCOVERY_FAILURE_BACKOFF_S
+                )
                 print(f"[CHANNELS] Discovery warning: {error}", flush=True)
 
         if discovered:
@@ -357,6 +407,7 @@ def register_chat_routes(
             discovered = [by_index[index] for index in sorted(by_index)]
             with channel_cache_lock:
                 channel_cache["timestamp"] = now_ts
+                channel_cache["generation"] = _connection_generation()
                 channel_cache["channels"] = [dict(item) for item in discovered]
 
             # Auto-seed chats.json for newly discovered channels so they
@@ -409,7 +460,12 @@ def register_chat_routes(
     @app.route("/api/chats")
     def api_chats():
         chat_list, total_unread = get_chats_list()
-        force_channel_refresh = request.args.get("refresh_channels", "").lower() in {"1", "true", "yes"}
+        refresh_arg = request.args.get("refresh_channels", "").lower()
+        force_channel_refresh = (
+            "force" if refresh_arg == "force"
+            else "soft" if refresh_arg in {"1", "true", "yes"}
+            else False
+        )
         channels = discover_radio_channels(force=force_channel_refresh)
         chat_by_id = {item.get("id"): item for item in chat_list}
         for channel in channels:

@@ -25,6 +25,7 @@ from typing import Any, Callable, Optional
 from meshsrv.radio_transport import (
     ReceivedNodeInfoEvent,
     ReceivedPositionEvent,
+    ReceivedRoutingEvent,
     ReceivedTelemetryEvent,
     ReceivedTextEvent,
     ReceivedWaypointEvent,
@@ -63,6 +64,7 @@ class InboundWorker:
         ingest_nodeinfo: Callable[[ReceivedNodeInfoEvent], Any],
         ingest_position: Callable[[ReceivedPositionEvent], Any],
         ingest_telemetry: Callable[[ReceivedTelemetryEvent], Any],
+        ingest_routing: Optional[Callable[[Any], Any]] = None,
         log: Callable[..., Any] = print,
         log_system_event: Optional[Callable[..., Any]] = None,
         clock: Callable[[], float] = time.monotonic,
@@ -75,6 +77,7 @@ class InboundWorker:
         self._ingest_nodeinfo = ingest_nodeinfo
         self._ingest_position = ingest_position
         self._ingest_telemetry = ingest_telemetry
+        self._ingest_routing = ingest_routing
         self._log = log
         self._log_system_event = log_system_event
         self._clock = clock
@@ -90,6 +93,7 @@ class InboundWorker:
             "nodeinfo_events": 0,
             "position_events": 0,
             "telemetry_events": 0,
+            "routing_events": 0,
             "ingest_errors": 0,
             "malformed_events": 0,          # undecodable on the adapter or on this side
             "overflow_dropped": 0,          # discarded by the adapter's bounded queue
@@ -215,6 +219,10 @@ class InboundWorker:
                 elif isinstance(event, ReceivedTelemetryEvent):
                     self._bump("telemetry_events")
                     self._ingest_telemetry(event)
+                elif isinstance(event, ReceivedRoutingEvent):
+                    self._bump("routing_events")
+                    if self._ingest_routing is not None:
+                        self._ingest_routing(event)
                 else:
                     self._bump("malformed_events")
             except Exception as error:

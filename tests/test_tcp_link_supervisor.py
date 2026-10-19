@@ -195,15 +195,15 @@ def test_repeated_quick_closes_flag_contention_and_back_off_hard():
     status = supervisor.status()
     assert status["contention"] is True
     assert status["link_losses_1h"] >= 3
-    # every gap between attempts once contention is flagged is at the cap
-    late = [b - a for a, b in zip(world.attempts, world.attempts[1:])][-3:]
-    assert all(gap >= MAX_DELAY_S - 1 for gap in late), late
-    # a user Reconnect clears the contention state and tries at once
+    # once contention is flagged the delay floor is CONTENTION_FLOOR_S (5 min)
+    assert [b - a for a, b in zip(world.attempts, world.attempts[1:])][-1] >= tls.CONTENTION_FLOOR_S - 1
+    # a user Reconnect tries at once but does NOT clear the flag (RR1: only a
+    # stable session does)
     world.radio_keeps_session_for = None
     supervisor.trigger_now()
     n = len(world.attempts)
     supervisor.tick()
-    assert len(world.attempts) == n + 1 and supervisor.status()["contention"] is False
+    assert len(world.attempts) == n + 1 and supervisor.status()["contention"] is True
 
 
 def test_long_sessions_do_not_flag_contention():
@@ -211,11 +211,11 @@ def test_long_sessions_do_not_flag_contention():
     world.radio_reachable = True
     supervisor = world.supervisor()
     world.advance(30, supervisor)
-    world.radio_keeps_session_for = 120    # the radio drops us every 2 minutes
-    world.advance(20 * 60, supervisor)
+    world.radio_keeps_session_for = 40 * 60    # sessions of 40 min: a drop now and then
+    world.advance(3 * 3600, supervisor)
     status = supervisor.status()
     assert status["contention"] is False
-    assert status["link_losses_1h"] >= 5
+    assert status["link_losses_1h"] <= 2
 
 
 def test_trigger_now_resets_backoff_and_attempts_on_the_next_tick():
@@ -486,3 +486,149 @@ def test_disconnecting_others_skips_a_never_connected_serial_for_tcp():
 
         def connect(self, descriptor, **kw):
             self.connects.append(descriptor)
+
+
+# ---------------------------------------------------------------- RR1: contention fixtures
+
+def _cycle_world(session_s):
+    world = World()
+    world.radio_reachable = True
+    world.radio_keeps_session_for = session_s
+    return world, world.supervisor()
+
+
+def test_rr1_a_radio_closing_30s_sessions_is_flagged_within_five_minutes():
+    """~15 radio closes in ~22 min with ~30 s sessions (the real alternation pattern)."""
+    world, supervisor = _cycle_world(30)
+    world.advance(30, supervisor)               # first session comes up
+    start = world.now
+    flagged_at = None
+    for _ in range(22 * 60):
+        world.advance(1, supervisor)
+        if flagged_at is None and supervisor.status()["contention"]:
+            flagged_at = world.now - start
+    assert flagged_at is not None and flagged_at <= 5 * 60, flagged_at
+    assert supervisor.status()["contention_since_s"] is not None
+    # and it backs off harder afterwards instead of re-dialling every ~90 s
+    assert [b - a for a, b in zip(world.attempts, world.attempts[1:])][-1] >= tls.CONTENTION_FLOOR_S - 1
+
+
+def test_rr1_b_a_single_reboot_is_not_contention():
+    world = World()
+    world.radio_reachable = True
+    supervisor = world.supervisor()
+    world.advance(10 * 60, supervisor)           # stable
+    world.connected = False                       # the radio reboots...
+    world.radio_reachable = False
+    world.advance(3 * 60, supervisor)            # ...and is away for 3 min
+    world.radio_reachable = True
+    world.advance(10 * 60, supervisor)
+    assert supervisor.status()["contention"] is False
+    assert world.connected
+
+
+def test_rr1_b_a_wifi_blip_is_not_contention():
+    world = World()
+    world.radio_reachable = True
+    supervisor = world.supervisor()
+    world.advance(20 * 60, supervisor)
+    world.connected = False
+    world.advance(40, supervisor)
+    world.advance(10 * 60, supervisor)
+    assert supervisor.status()["contention"] is False
+
+
+def test_rr1_b_a_25_minute_power_off_is_not_contention():
+    world = World()
+    world.radio_reachable = True
+    supervisor = world.supervisor()
+    world.advance(15 * 60, supervisor)
+    world.connected = False
+    world.radio_reachable = False
+    world.advance(25 * 60, supervisor)            # unplugged: failed attempts are not closes
+    assert supervisor.status()["failed_attempts"] >= 5
+    world.radio_reachable = True
+    world.advance(10 * 60, supervisor)
+    assert supervisor.status()["contention"] is False
+
+
+def test_rr1_c_the_flag_clears_only_after_a_stable_session():
+    world, supervisor = _cycle_world(30)
+    world.advance(10 * 60, supervisor)
+    assert supervisor.status()["contention"] is True
+    world.radio_keeps_session_for = None          # the other client went away
+    world.advance(15 * 60, supervisor)            # up, but not yet 15 min
+    assert supervisor.status()["contention"] is True or world.connected
+    world.advance(16 * 60, supervisor)
+    assert world.connected
+    assert supervisor.status()["contention"] is False
+    assert any("contention cleared" in event[0] for event in world.events)
+
+
+def test_rr1_regular_alternation_every_12_minutes_is_flagged():
+    world, supervisor = _cycle_world(12 * 60)
+    world.advance(55 * 60, supervisor)
+    assert supervisor.status()["contention"] is True
+
+
+def test_rr1_contention_event_carries_the_release_hint_once():
+    world, supervisor = _cycle_world(30)
+    world.advance(15 * 60, supervisor)
+    hints = [e for e in world.events if "in use by another client" in e[0]]
+    assert len(hints) == 1 and "Release radio" in hints[0][2]
+
+
+# ---------------------------------------------------------------- RR1: released = zero attempts
+
+def test_rr1_released_means_no_attempts_and_nothing_counted():
+    world = World()
+    world.released = False
+    supervisor = TcpLinkSupervisor(
+        is_tcp_profile=lambda: True,
+        identity_refused=lambda: False,
+        link_connected=lambda: world.connected,
+        attempt=world.attempt,
+        is_released=lambda: world.released,
+        clock=world.clock,
+        rng=lambda: 0.5,
+        on_event=lambda *event: world.events.append(event),
+    )
+    world.radio_reachable = True
+    world.connected = True                         # a healthy session
+    world.advance(60, supervisor)
+    assert world.connected and world.attempts == []
+    world.released = True
+    world.connected = False                        # the release closed the session
+    world.advance(30 * 60, supervisor)
+    assert world.attempts == [], "not a single attempt while released"
+    status = supervisor.status()
+    assert status["state"] == tls.STATE_IDLE
+    assert status["link_losses_1h"] == 0 and status["contention"] is False
+    supervisor.trigger_now()                       # ignored while released
+    world.advance(30, supervisor)
+    assert world.attempts == []
+    world.released = False                         # Reconnect / timer ended it
+    supervisor.trigger_now()
+    world.advance(10, supervisor)
+    assert len(world.attempts) == 1 and world.connected
+
+
+def test_rr1_release_landing_between_tick_and_attempt_does_not_dial():
+    world = World()
+    state = {"released": False}
+    supervisor = TcpLinkSupervisor(
+        is_tcp_profile=lambda: True,
+        identity_refused=lambda: False,
+        link_connected=lambda: False,
+        attempt=world.attempt,
+        is_released=lambda: state["released"],
+        clock=world.clock,
+        rng=lambda: 0.5,
+    )
+    # the tick decided to dial (state ATTEMPTING) ...
+    supervisor._state = tls.STATE_ATTEMPTING
+    # ... and the release lands before the dial
+    state["released"] = True
+    supervisor._run_attempt()
+    assert world.attempts == []
+    assert supervisor.status()["state"] == tls.STATE_IDLE

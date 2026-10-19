@@ -1494,6 +1494,152 @@ html[data-theme="dark"] .identity-error { color: #fca5a5; }
     background: rgba(239, 68, 68, .12);
 }
 
+/* RR1: released = neutral, not warning/danger */
+.device-status-released {
+    color: #475a7a;
+    background: rgba(100, 130, 190, .14);
+}
+
+html[data-theme="dark"] .device-status-released {
+    color: #9db4dc;
+    background: rgba(120, 150, 210, .16);
+}
+
+/* RR1: Connection card - two equal buttons + one status line */
+/* (doubled class: .device-action-row is defined further down with the same specificity) */
+.device-action-row.device-action-row-equal {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.device-action-row.device-action-row-equal.device-action-row-single-btn {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.device-action-row-equal .device-action-btn {
+    width: 100%;
+    padding: 0 10px;
+}
+
+.device-release-status {
+    margin: 8px 0 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: #475a7a;
+    text-align: center;
+}
+
+html[data-theme="dark"] .device-release-status {
+    color: #9db4dc;
+}
+
+/* long USB by-id path / endpoint: one line, ellipsis, full value in the title */
+.device-detail-list dd.device-ellipsis {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    overflow-wrap: normal;
+    min-width: 0;
+}
+
+@media (max-width: 480px) {
+    .device-action-row.device-action-row-equal {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+/* RR1: release modal (reuses .modal-overlay/.modal-content for the theme) */
+.mc-release-modal-overlay {
+    padding: 12px;
+}
+
+.mc-release-modal {
+    width: min(92vw, 420px);
+    max-width: 420px;
+    min-width: 0;
+    padding: 18px;
+    box-sizing: border-box;
+    overflow: visible;
+}
+
+.mc-release-modal-title {
+    margin: 0 0 10px;
+    font-size: 17px;
+}
+
+.mc-release-modal-body {
+    margin: 0 0 14px;
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--mc-text-secondary, #64748b);
+}
+
+.mc-release-modal-label {
+    margin-bottom: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--mc-text-secondary, #64748b);
+}
+
+.mc-segmented {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    border: 1px solid var(--mc-border, #d8e1ec);
+    border-radius: 9px;
+    overflow: hidden;
+}
+
+.mc-segmented-option {
+    min-height: 38px;
+    padding: 4px 6px;
+    border: 0;
+    border-right: 1px solid var(--mc-border, #d8e1ec);
+    background: var(--mc-button-secondary-bg, #f4f7fb);
+    color: var(--mc-text-primary, #172033);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.mc-segmented-option:last-child {
+    border-right: 0;
+}
+
+.mc-segmented-option.is-selected {
+    background: var(--mc-primary, #1769e0);
+    color: #fff;
+}
+
+.mc-release-modal-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 9px;
+    margin-top: 16px;
+}
+
+@media (max-width: 480px) {
+    .mc-release-modal-actions {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    .mc-release-modal-actions .device-action-btn[data-release-action="confirm"] {
+        order: -1;
+    }
+}
+
+[data-theme="dark"] .mc-segmented-option {
+    background: var(--mc-button-secondary-bg);
+    color: var(--mc-text-primary);
+    border-color: var(--mc-border);
+}
+
+[data-theme="dark"] .mc-segmented-option.is-selected {
+    background: #2168d7;
+    color: #fff;
+}
+
+[data-theme="dark"] .mc-segmented {
+    border-color: var(--mc-border);
+}
+
 .device-dashboard-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1731,6 +1877,7 @@ html[data-theme="dark"] .node-manager-contention-note {
 .node-discovery-section,
 .node-discovery-result-section {
     margin-top: 14px;
+    margin-bottom: 12px;     /* same gap as between the other cards: no glued borders */
     padding: 14px;
     border-radius: 10px;
     border: 1px solid var(--mc-border-soft, #edf1f6);
@@ -1751,6 +1898,42 @@ html[data-theme="dark"] .node-manager-contention-note {
     align-items: center;
     gap: 6px;
     cursor: pointer;
+}
+
+/* Discover radio, TCP: labels above the inputs (the app's standard field look, same as the
+   Files fields), Host wide + Port narrow in one row, Search below with spacing. */
+.node-discovery-tcp-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 120px;
+    gap: 12px;
+    align-items: end;
+}
+
+.node-discovery-field {
+    margin-bottom: 0;
+}
+
+.node-discovery-field input[type="text"],
+.node-discovery-field input[type="number"] {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 7px 10px;
+    border: 1px solid var(--mc-border, #d8e1ec);
+    border-radius: 8px;
+    background: var(--mc-surface, #fff);
+    color: var(--mc-text, #1f2f45);
+    font-size: var(--mc-body-size, 13px);
+}
+
+[data-theme="dark"] .node-discovery-field input[type="text"],
+[data-theme="dark"] .node-discovery-field input[type="number"] {
+    background: #16283a;
+    border-color: #2a3f54;
+    color: #e5eff8;
+}
+
+.node-discovery-search-btn {
+    margin-top: 14px;
 }
 
 .node-discovery-hint {
@@ -1778,6 +1961,11 @@ html[data-theme="dark"] .node-manager-contention-note {
 
     .node-discovery-transport-picker {
         flex-wrap: wrap;
+        gap: 10px;
+    }
+
+    .node-discovery-tcp-row {
+        grid-template-columns: minmax(0, 1fr);
         gap: 10px;
     }
 }
@@ -5257,3 +5445,26 @@ html[data-theme="dark"] .message.me .message-reply-quote {
 .mesh-map-node-menu-info strong { font-weight: 600; overflow-wrap: anywhere; }
 .mesh-map-node-menu-actions { display: flex; flex-direction: column; }
 .mesh-map-node-menu-title { flex: 0 0 auto; border-bottom: 0; margin-bottom: 0; }
+
+
+/* RR1: composer hint while the radio is released */
+.radio-released-hint {
+    margin: 0 0 6px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #475a7a;
+    background: rgba(100, 130, 190, .14);
+}
+
+html[data-theme="dark"] .radio-released-hint {
+    color: #9db4dc;
+    background: rgba(120, 150, 210, .16);
+}
+
+.input-form #messageInput:disabled,
+.input-form #sendBtn:disabled {
+    opacity: .6;
+    cursor: not-allowed;
+}

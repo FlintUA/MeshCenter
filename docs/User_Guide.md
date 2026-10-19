@@ -530,6 +530,10 @@ MeshCenter keeps a separate profile (messages, nodes, telemetry, waypoints, devi
 
 **Temporary release, for the official Meshtastic app**: since only one application can use the USB connection at a time, configuring channels/encryption/LoRa settings with the official Meshtastic app means releasing the radio first: `Settings > Meshtastic Radio > Release Radio` (can take 1–2 minutes), make your changes in the official app over Bluetooth, disconnect from it, then **Reconnect Radio** in MeshCenter. Messaging, telemetry, node management and Node Tools are unavailable for that window, by design — the radio is genuinely disconnected from MeshCenter during it. On reconnect, MeshCenter automatically re-syncs channel changes (added, removed, renamed) with no restart needed.
 
+**Handing a TCP radio to another client (phone app, a second MeshCenter)**: a Meshtastic radio serves only **one** TCP client, so while MeshCenter is connected the phone app cannot use that radio over Wi-Fi (and vice versa). Open **Node Manager**, choose a duration (15 minutes, 1 hour or *until I reconnect*) and press **Release radio**. MeshCenter closes its connection immediately and then does **not** connect again — not on its own timer and not after a restart of MeshCenter or the container — until the time has passed or you press **Reconnect**. The header shows *Radio released (until 12:30)* in a calm, neutral colour; sending and Node Tools answer "radio released" at once instead of timing out. When you are done with the phone app, close it and press **Reconnect** (or just wait for the timer): MeshCenter checks that it is the same radio and is back within about half a minute. A forgotten *until I reconnect* release stays in place until you end it, so check the header chip. The same duration choice exists for a USB radio (its release is not remembered across a restart).
+
+If Node Manager says the radio *may be in use by another client*, two clients keep taking the radio from each other: press **Release radio** on the one that should let go.
+
 Profiles can be backed up by copying the relevant folder under `data/profiles/`.
 
 ## 9. Map and reference location

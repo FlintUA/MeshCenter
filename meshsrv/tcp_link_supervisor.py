@@ -30,9 +30,19 @@ Rules
     Until then the failure counter is NOT reset, so a radio that accepts a
     session and drops it a second later cannot make us hammer it ("attempt 6
     right after a success" in the DK2 NAS log).
-  * Three or more sessions that die within UP_THRESHOLD_S inside five minutes
-    flag `contention` ("the radio may be in use by another client") and put the
-    delay floor at the cap.
+  * Contention (RR1): the radio serves ONE client, so another client taking turns
+    with us shows up as the radio closing our session again and again, however
+    long each session lasted. `contention` ("the radio may be in use by another
+    client") is flagged when the link is lost >= 3 times in 5 minutes, or >= 4
+    times in 10 minutes, or >= 4 times in an hour at near-regular intervals (the
+    other client re-dialling on a timer). A single reboot, a Wi-Fi blip or a long
+    power-off is one loss and never flags. The flag is latched: it clears only
+    after a session has stayed up CONTENTION_CLEAR_UP_S (15 min). While it is set
+    the delay floor is CONTENTION_FLOOR_S (5 min), 10 min after half an hour. We
+    never release the radio by ourselves - the user does that (Release radio).
+  * Released (RR1): while `is_released()` is true there are ZERO attempts and
+    nothing is counted (a release closes the session itself - that is not a link
+    loss); a timed release ends from outside via the owner's timer.
   * `trigger_now()` (the Reconnect button) resets the backoff and attempts on
     the next tick, hold-off skipped; it never starts a second concurrent attempt.
   * One attempt at a time, enforced by `lock` - the same RLock the boot-time
@@ -53,6 +63,16 @@ MAX_DELAY_S = BACKOFF_DELAYS_S[-1]
 UP_THRESHOLD_S = 20
 CONTENTION_CLOSES = 3
 CONTENTION_WINDOW_S = 300
+CONTENTION_LONG_CLOSES = 4
+CONTENTION_LONG_WINDOW_S = 600
+CONTENTION_REGULAR_CLOSES = 4
+CONTENTION_REGULAR_WINDOW_S = 3600
+CONTENTION_REGULAR_MAX_GAP_S = 1200
+CONTENTION_REGULAR_SPREAD = 0.35
+CONTENTION_CLEAR_UP_S = 900
+CONTENTION_FLOOR_S = 300
+CONTENTION_LONG_FLOOR_S = 600
+CONTENTION_LONG_FLAG_S = 1800
 LOSS_HISTORY_S = 3600
 JITTER_RATIO = 0.10
 TICK_INTERVAL_S = 5.0
@@ -82,6 +102,7 @@ class TcpLinkSupervisor:
         link_connected: Callable[[], bool],
         attempt: Callable[[], str],
         auto_enabled: Optional[Callable[[], bool]] = None,
+        is_released: Optional[Callable[[], bool]] = None,
         lock: Optional[threading.RLock] = None,
         clock: Callable[[], float] = time.monotonic,
         rng: Callable[[], float] = random.random,
@@ -92,6 +113,7 @@ class TcpLinkSupervisor:
         self._link_connected = link_connected
         self._attempt = attempt
         self._auto_enabled = auto_enabled or (lambda: True)
+        self._is_released = is_released or (lambda: False)
         self.lock = lock or threading.RLock()
         self._clock = clock
         self._rng = rng
@@ -107,6 +129,9 @@ class TcpLinkSupervisor:
         self._ever_up = False         # a session has been up at least once in this process
         self._quick_closes: List[float] = []
         self._losses: List[float] = []
+        self._contention_losses: List[float] = []   # radio-side closes, for the contention rule only
+        self._contention_flag = False
+        self._contention_since: Optional[float] = None
         self._force = False
         self._wake = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -129,6 +154,11 @@ class TcpLinkSupervisor:
                 "next_in_s": next_in,
                 "last_error": self._last_error,
                 "contention": self._contention_locked(now),
+                "contention_since_s": (
+                    int(now - self._contention_since)
+                    if self._contention_flag and self._contention_since is not None
+                    else None
+                ),
                 "link_losses_1h": len(self._losses),
                 "up_for_s": int(now - self._up_since) if self._up_since is not None else None,
             }
@@ -148,7 +178,9 @@ class TcpLinkSupervisor:
         the link looks healthy (an explicit user request forces a fresh
         session), hold-off skipped. Safe to call while an attempt is already
         running (then it only resets the counter - the running attempt is never
-        duplicated)."""
+        duplicated). Ignored while released: the owner ends the release first."""
+        if self._is_released():
+            return self.status()
         with self._mutex:
             self._attempts = 0
             self._quick_closes.clear()
@@ -181,6 +213,15 @@ class TcpLinkSupervisor:
 
     def tick(self) -> None:
         """One scheduling decision (also called directly by tests)."""
+        if self._is_released():
+            # RR1: zero attempts, nothing counted. The release closed the session
+            # itself, so the link going down is not a loss and must not flag
+            # contention.
+            with self._mutex:
+                self._force = False
+                self._reset_all_locked()
+            return
+
         if not self._is_tcp_profile() or self._identity_refused():
             with self._mutex:
                 self._reset_all_locked()
@@ -232,6 +273,11 @@ class TcpLinkSupervisor:
                 # the session has proven itself.
                 self._state = STATE_IDLE
                 self._next_at = None
+            if self._contention_flag and now - self._up_since >= CONTENTION_CLEAR_UP_S:
+                self._contention_flag = False
+                self._contention_since = None
+                self._contention_losses.clear()
+                self._on_event("TCP radio contention cleared", "OK", f"the session has been stable for {CONTENTION_CLEAR_UP_S // 60} min")
             if self._probation and now - self._up_since >= UP_THRESHOLD_S:
                 self._on_event("TCP link restored", "OK", f"stable after {self._attempts} failed attempt(s)")
                 self._probation = False
@@ -249,6 +295,7 @@ class TcpLinkSupervisor:
             self._up_since = None
             self._probation = False
             self._losses.append(now)
+            self._contention_losses.append(now)
             quick = up_for < UP_THRESHOLD_S
             if quick:
                 self._quick_closes.append(now)
@@ -256,8 +303,18 @@ class TcpLinkSupervisor:
             else:
                 self._attempts = 0
             self._prune_locked(now)
+            was_flagged = self._contention_flag
             contention = self._contention_locked(now)
             delay = float(HOLD_OFF_S) if not quick else self._delay_locked(now)
+            if contention:
+                delay = max(delay, self._contention_floor_locked(now))
+            if contention and not was_flagged:
+                self._on_event(
+                    "TCP radio in use by another client?",
+                    "WARNING",
+                    "the radio closed our session repeatedly - another client (phone app, a second MeshCenter) "
+                    "probably shares it. Use Release radio on the other instance; backing off.",
+                )
             self._state = STATE_WAITING
             self._next_at = now + delay
             self._on_event(
@@ -276,19 +333,50 @@ class TcpLinkSupervisor:
     def _prune_locked(self, now: float) -> None:
         self._losses = [t for t in self._losses if now - t < LOSS_HISTORY_S]
         self._quick_closes = [t for t in self._quick_closes if now - t < CONTENTION_WINDOW_S]
+        self._contention_losses = [t for t in self._contention_losses if now - t < CONTENTION_REGULAR_WINDOW_S]
+
+    def _contention_rule_locked(self, now: float) -> bool:
+        losses = [t for t in self._contention_losses if now - t < CONTENTION_REGULAR_WINDOW_S]
+        if len([t for t in losses if now - t < CONTENTION_WINDOW_S]) >= CONTENTION_CLOSES:
+            return True
+        if len([t for t in losses if now - t < CONTENTION_LONG_WINDOW_S]) >= CONTENTION_LONG_CLOSES:
+            return True
+        if len(losses) >= CONTENTION_REGULAR_CLOSES:
+            gaps = [b - a for a, b in zip(losses, losses[1:])]
+            ordered = sorted(gaps)
+            median = ordered[len(ordered) // 2]
+            if 0 < median <= CONTENTION_REGULAR_MAX_GAP_S and all(
+                abs(gap - median) <= CONTENTION_REGULAR_SPREAD * median for gap in gaps
+            ):
+                return True
+        return False
 
     def _contention_locked(self, now: float) -> bool:
-        return len([t for t in self._quick_closes if now - t < CONTENTION_WINDOW_S]) >= CONTENTION_CLOSES
+        """Latched: set when the rule above fires, cleared only by a stable session."""
+        if not self._contention_flag and self._contention_rule_locked(now):
+            self._contention_flag = True
+            self._contention_since = now
+        return self._contention_flag
+
+    def _contention_floor_locked(self, now: float) -> float:
+        if self._contention_since is not None and now - self._contention_since >= CONTENTION_LONG_FLAG_S:
+            return float(CONTENTION_LONG_FLOOR_S)
+        return float(CONTENTION_FLOOR_S)
 
     def _delay_locked(self, now: float) -> float:
         delay = backoff_delay(self._attempts, rng=self._rng)
         if self._contention_locked(now):
-            delay = max(delay, float(MAX_DELAY_S))
+            delay = max(delay, self._contention_floor_locked(now))
         return delay
 
     # ------------------------------------------------------------------ attempts
     def _run_attempt(self) -> None:
         with self.lock:
+            if self._is_released():
+                # Released between the tick's decision and now: do not dial.
+                with self._mutex:
+                    self._reset_all_locked()
+                return
             try:
                 outcome = self._attempt()
                 error = ""

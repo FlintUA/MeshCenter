@@ -4285,6 +4285,17 @@ function escapeHtml(value) {
 // carrying the matched data-chat-action, not necessarily e.target itself
 // (a click can land on a child of the actionable element).
 const CHAT_ACTIONS = {
+    // RR1: Node Manager Connection card
+    'radio-release-open': (target) => openReleaseRadioModal(target.dataset.transport),
+    'radio-reconnect': async (target) => {
+        const type = target.dataset.transport;
+        if (type === 'serial') {
+            await reconnectRadioConnection();
+        } else {
+            await reconnectActiveTransport(type);
+        }
+        setTimeout(() => loadNodeManagerDashboard(), 1800);
+    },
     'message-focus-sender': (target, event) => {
         const row = target.closest('.message[data-message-id]');
         if (!row) return;
@@ -10964,8 +10975,56 @@ function formatDeviceDashboardDate(value) {
 function deviceStatusClass(mode, identityStatus) {
     if (identityStatus === 'MISMATCH') return 'device-status-danger';
     if (mode === 'connected') return 'device-status-ok';
-    if (mode === 'released' || mode === 'releasing' || mode === 'reconnecting') return 'device-status-warning';
+    if (mode === 'released' || mode === 'releasing') return 'device-status-released';
+    if (mode === 'reconnecting') return 'device-status-warning';
     return 'device-status-danger';
+}
+
+// RR1: "Radio released" / "Radio released (until 12:30)". `until` is an absolute epoch
+// time in seconds (null = until the user reconnects).
+function formatReleaseTime(until) {
+    const date = new Date(Number(until) * 1000);
+    const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return date.toDateString() === new Date().toDateString()
+        ? time
+        : `${date.toLocaleDateString([], { day: '2-digit', month: '2-digit' })} ${time}`;
+}
+
+function formatReleasedLabel(until) {
+    return until
+        ? window.I18N.t('node_manager.header_released_until', { time: formatReleaseTime(until) })
+        : window.I18N.t('node_manager.header_released');
+}
+
+// RR1: one status line under the two buttons when the radio is released.
+function renderReleaseStatusLine(connection) {
+    if (connection.mode !== 'released') return '';
+    let text;
+    if (connection.until) {
+        const minutes = Math.max(0, Math.ceil((Number(connection.until) * 1000 - Date.now()) / 60000));
+        text = window.I18N.t('node_manager.release_status_until', { time: formatReleaseTime(connection.until), minutes });
+    } else {
+        text = window.I18N.t('node_manager.release_status_until_reconnect');
+    }
+    return `<p class="device-release-status" role="status">${escapeHtml(text)}</p>`;
+}
+
+// Two equal-width buttons: "Release radio" and "Reconnect" (Bluetooth: Reconnect only).
+// Released: Release disabled and Reconnect becomes the primary action.
+function renderConnectionActionRow(type, connection, canRelease, canReconnect) {
+    const released = connection.mode === 'released' || connection.mode === 'releasing';
+    const releasable = type === 'tcp' || type === 'serial';
+    const reconnectClass = released ? 'device-action-primary is-primary' : 'device-action-secondary';
+    return `
+        <div class="device-action-row device-action-row-equal${releasable ? '' : ' device-action-row-single-btn'}">
+            ${releasable ? `<button type="button" class="device-action-btn device-action-secondary"
+                data-chat-action="radio-release-open" data-transport="${escapeHtml(type)}"
+                ${canRelease ? '' : 'disabled'}>${escapeHtml(window.I18N.t('settings.release_radio'))}</button>` : ''}
+            <button type="button" class="device-action-btn ${reconnectClass}"
+                data-chat-action="radio-reconnect" data-transport="${escapeHtml(type)}"
+                ${canReconnect ? '' : 'disabled'}>${escapeHtml(window.I18N.t('node_manager.reconnect'))}</button>
+        </div>
+        ${renderReleaseStatusLine(connection)}`;
 }
 
 // TCP/Bluetooth have no Core `--listen` subprocess, so "listener running"
@@ -11018,7 +11077,7 @@ function renderNodeManagerConnectionCard(connection, radio, connectionLabel, can
             ? window.I18N.t('node_manager.connection_type_tcp')
             : window.I18N.t('node_manager.connection_type_bluetooth');
         const targetRow = type === 'tcp'
-            ? `<div><dt>${escapeHtml(window.I18N.t('node_manager.host_port_label'))}</dt><dd class="device-monospace">${deviceDashboardValue(connection.address)}</dd></div>`
+            ? `<div><dt>${escapeHtml(window.I18N.t('node_manager.host_port_label'))}</dt><dd class="device-monospace device-ellipsis" title="${escapeHtml(String(connection.address || ''))}">${deviceDashboardValue(connection.address)}</dd></div>`
             : `<div><dt>${escapeHtml(window.I18N.t('node_manager.device_label'))}</dt><dd class="device-monospace">${connection.label ? `${escapeHtml(connection.label)} (${deviceDashboardValue(connection.address)})` : deviceDashboardValue(connection.address)}</dd></div>`;
 
         return {
@@ -11030,11 +11089,7 @@ function renderNodeManagerConnectionCard(connection, radio, connectionLabel, can
                 ${type === 'tcp' && connection.reconnect ? `<div><dt>${escapeHtml(window.I18N.t('node_manager.link_resets_label'))}</dt><dd>${escapeHtml(String(connection.reconnect.link_losses_1h ?? 0))}</dd></div>` : ''}
             `,
             connectionActionsHtml: `
-                <div class="device-action-row">
-                    <button type="button" class="device-action-btn device-action-primary"
-                        onclick="reconnectActiveTransport('${type}'); setTimeout(() => loadNodeManagerDashboard(), 1800);"
-                        ${canReconnect ? '' : 'disabled'}>${escapeHtml(window.I18N.t('node_manager.reconnect'))}</button>
-                </div>
+                ${renderConnectionActionRow(type, connection, canRelease, canReconnect)}
                 ${type === 'tcp' && connection.reconnect && connection.reconnect.contention
                     ? `<p class="node-manager-contention-note">${escapeHtml(window.I18N.t('node_manager.radio_contention'))}</p>`
                     : ''}
@@ -11045,7 +11100,7 @@ function renderNodeManagerConnectionCard(connection, radio, connectionLabel, can
     // Serial - byte-for-byte the pre-existing behavior.
     return {
         connectionDetailRows: `
-            <div><dt>${escapeHtml(window.I18N.t('node_manager.usb_port'))}</dt><dd class="device-monospace">${deviceDashboardValue(radio.port)}</dd></div>
+            <div><dt>${escapeHtml(window.I18N.t('node_manager.usb_port'))}</dt><dd class="device-monospace device-ellipsis" title="${escapeHtml(String(radio.port || ''))}">${deviceDashboardValue(radio.port)}</dd></div>
             <div><dt>${escapeHtml(window.I18N.t('waypoints.status'))}</dt><dd>${escapeHtml(connectionLabel)}</dd></div>
             <div><dt>${escapeHtml(window.I18N.t('node_manager.listener_label'))}</dt><dd>${connection.listener_running ? escapeHtml(window.I18N.t('node_manager.running')) : escapeHtml(window.I18N.t('node_manager.stopped'))}</dd></div>
             <div><dt>${escapeHtml(window.I18N.t('node_manager.listener_pid'))}</dt><dd>${deviceDashboardValue(connection.listener_pid)}</dd></div>
@@ -11053,14 +11108,7 @@ function renderNodeManagerConnectionCard(connection, radio, connectionLabel, can
             <div><dt>${escapeHtml(window.I18N.t('node_manager.message_label'))}</dt><dd>${deviceDashboardValue(connection.message)}</dd></div>
         `,
         connectionActionsHtml: `
-            <div class="device-action-row">
-                <button type="button" class="device-action-btn device-action-secondary"
-                    onclick="releaseRadioConnection(); setTimeout(() => loadNodeManagerDashboard(), 1200);"
-                    ${canRelease ? '' : 'disabled'}>${escapeHtml(window.I18N.t('settings.release_radio'))}</button>
-                <button type="button" class="device-action-btn device-action-primary"
-                    onclick="reconnectRadioConnection(); setTimeout(() => loadNodeManagerDashboard(), 1800);"
-                    ${canReconnect ? '' : 'disabled'}>${escapeHtml(window.I18N.t('node_manager.reconnect'))}</button>
-            </div>
+            ${renderConnectionActionRow('serial', connection, canRelease, canReconnect)}
         `,
     };
 }
@@ -11094,6 +11142,7 @@ async function reconnectActiveTransport(type) {
         }
 
         showToast(window.I18N.t('node_manager.reconnect_requested'), 'success');
+        applyRadioReleasedState(null);
     } catch (error) {
         console.error('[NODE MANAGER] Reconnect failed:', error);
         showToast(error.message || window.I18N.t('node_manager.reconnect_failed'), 'error');
@@ -11280,9 +11329,55 @@ async function removeRadioConnection(transport) {
     }
 }
 
+// RR1 follow-up: the Node Manager used to refresh only on open / Refresh / one timer 1.8 s
+// after Reconnect - a reconnect takes 5-25 s, so the card kept saying "Reconnecting" after the
+// link was up. While the view is open it now refreshes by itself: every 3 s during a
+// transition (releasing / reconnecting / the supervisor retrying), every 30 s otherwise (which
+// also keeps "N min left" of a timed release current).
+let nodeManagerRefreshTimer = null;
+const NODE_MANAGER_REFRESH_TRANSITION_MS = 3000;
+const NODE_MANAGER_REFRESH_IDLE_MS = 30000;
+
+function nodeManagerConnectionInTransition(connection) {
+    const mode = connection && connection.mode;
+    if (mode === 'releasing' || mode === 'reconnecting' || mode === 'connecting') return true;
+    const state = connection && connection.reconnect && connection.reconnect.state;
+    return state === 'waiting' || state === 'attempting';
+}
+
+// A re-render rebuilds the whole dashboard: it must never run while the user is in the middle of
+// something there - the Discover radio form / its result open, or an input/select focused (typing).
+function nodeManagerUserBusy() {
+    const shown = (id) => {
+        const el = document.getElementById(id);
+        return !!el && el.style.display !== 'none';
+    };
+    if (shown('nodeManagerDiscoverySection') || shown('nodeManagerDiscoveryResultSection')) return true;
+    const active = document.activeElement;
+    const container = document.getElementById('nodeManagerDashboard');
+    return !!(active && container && container.contains(active)
+        && /^(INPUT|SELECT|TEXTAREA)$/.test(active.tagName));
+}
+
+function scheduleNodeManagerRefresh(delayMs) {
+    clearTimeout(nodeManagerRefreshTimer);
+    nodeManagerRefreshTimer = setTimeout(() => {
+        const view = document.getElementById('nodeManagerView');
+        const visible = view && view.style.display !== 'none' && !document.hidden;
+        if (visible && nodeManagerUserBusy()) {
+            scheduleNodeManagerRefresh(NODE_MANAGER_REFRESH_TRANSITION_MS);   // look again shortly
+        } else if (visible) {
+            loadNodeManagerDashboard();
+        } else if (view && view.style.display !== 'none') {
+            scheduleNodeManagerRefresh(NODE_MANAGER_REFRESH_IDLE_MS);   // tab hidden: look again later
+        }
+    }, delayMs);
+}
+
 async function loadNodeManagerDashboard(showFeedback = false) {
     const container = document.getElementById('nodeManagerDashboard');
     if (!container) return;
+    clearTimeout(nodeManagerRefreshTimer);
 
     if (!container.dataset.loaded) {
         container.innerHTML = `<div class="device-dashboard-loading">${escapeHtml(window.I18N.t('node_manager.loading'))}</div>`;
@@ -11303,9 +11398,11 @@ async function loadNodeManagerDashboard(showFeedback = false) {
         const storage = profile.storage || {};
         const statusClass = deviceStatusClass(connection.mode, radio.identity_status);
         const reconnectText = formatReconnectStatus(connection.reconnect);
-        const connectionLabel = (connection.mode !== 'connected' && reconnectText)
-            ? reconnectText
-            : deviceConnectionLabel(connection.mode, connection.listener_running, connection.type);
+        const connectionLabel = connection.mode === 'released'
+            ? formatReleasedLabel(connection.until)
+            : (connection.mode !== 'connected' && reconnectText)
+                ? reconnectText
+                : deviceConnectionLabel(connection.mode, connection.listener_running, connection.type);
         const canRelease = connection.mode === 'connected' && connection.listener_running;
         const canReconnect = connection.mode === 'released' || connection.mode === 'error' || (!connection.listener_running && connection.mode !== 'reconnecting');
         const iconSrc = window.MeshCenterNodeAvatar?.current?.() || '/static/meshcenter_logo.png';
@@ -11434,8 +11531,14 @@ async function loadNodeManagerDashboard(showFeedback = false) {
             </div>`;
 
         if (showFeedback) showToast(window.I18N.t('node_manager.info_refreshed'), 'success');
+        scheduleNodeManagerRefresh(
+            nodeManagerConnectionInTransition(connection)
+                ? NODE_MANAGER_REFRESH_TRANSITION_MS
+                : NODE_MANAGER_REFRESH_IDLE_MS
+        );
     } catch (error) {
         console.error('[NODE MANAGER] Dashboard load failed:', error);
+        scheduleNodeManagerRefresh(10000);
         container.innerHTML = `<div class="device-dashboard-error"><strong>${escapeHtml(window.I18N.t('node_manager.unable_to_load'))}</strong><span>${escapeHtml(error.message || String(error))}</span><button type="button" class="mc-refresh-btn" onclick="loadNodeManagerDashboard(true)">${escapeHtml(window.I18N.t('node_manager.try_again'))}</button></div>`;
         if (showFeedback) showToast(window.I18N.t('node_manager.info_load_failed'), 'error');
     }
@@ -11496,20 +11599,20 @@ function renderNodeManagerDiscoverySection() {
             <div id="nodeManagerDiscoveryUsbFields">
                 <p class="node-discovery-hint">${escapeHtml(window.I18N.t('node_manager.discover_usb_hint'))}</p>
             </div>
-            <div id="nodeManagerDiscoveryTcpFields" style="display:none;">
-                <div class="settings-option">
-                    <label class="settings-option-label" for="nodeManagerTcpHostInput">${escapeHtml(window.I18N.t('node_manager.tcp_host_label'))}</label>
+            <div id="nodeManagerDiscoveryTcpFields" class="node-discovery-tcp-row" style="display:none;">
+                <div class="files-field node-discovery-field node-discovery-field-host">
+                    <label class="files-field-label" for="nodeManagerTcpHostInput">${escapeHtml(window.I18N.t('node_manager.tcp_host_label'))}</label>
                     <input type="text" id="nodeManagerTcpHostInput" placeholder="192.168.2.34" autocomplete="off">
                 </div>
-                <div class="settings-option">
-                    <label class="settings-option-label" for="nodeManagerTcpPortInput">${escapeHtml(window.I18N.t('node_manager.tcp_port_label'))}</label>
+                <div class="files-field node-discovery-field node-discovery-field-port">
+                    <label class="files-field-label" for="nodeManagerTcpPortInput">${escapeHtml(window.I18N.t('node_manager.tcp_port_label'))}</label>
                     <input type="number" id="nodeManagerTcpPortInput" placeholder="4403" min="1" max="65535" autocomplete="off">
                 </div>
             </div>
             <div id="nodeManagerDiscoveryBluetoothFields" style="display:none;">
                 <p class="node-discovery-hint">${escapeHtml(window.I18N.t('node_manager.discover_bluetooth_unsupported'))}</p>
             </div>
-            <button type="button" class="mc-refresh-btn" id="nodeManagerDiscoverySearchBtn" onclick="runNodeManagerDiscovery()">
+            <button type="button" class="mc-refresh-btn node-discovery-search-btn" id="nodeManagerDiscoverySearchBtn" onclick="runNodeManagerDiscovery()">
                 🔍 ${escapeHtml(window.I18N.t('node_manager.discover_search_button'))}
             </button>
         </div>`;
@@ -13812,6 +13915,11 @@ function updateHeaderNodeStatus(data, reachable = true) {
         label = 'Disconnected';
         stateClass = 'status-offline';
 
+    } else if (status === 'RELEASED') {
+        // RR1: deliberate, neutral - "Radio released (until 12:30)"
+        label = formatReleasedLabel(data?.released?.until);
+        stateClass = 'status-released';
+
     } else if (status === 'PAUSED') {
         label = 'Radio Busy';
         stateClass = 'status-warning';
@@ -13853,7 +13961,8 @@ function updateHeaderNodeStatus(data, reachable = true) {
         'status-ok',
         'status-warning',
         'status-error',
-        'status-offline'
+        'status-offline',
+        'status-released'
     );
 
     headerStatus.classList.add(stateClass);
@@ -13888,6 +13997,42 @@ function updateHeaderNodeStatus(data, reachable = true) {
     );
 }
 
+// RR1: composer state while the radio is released (disabled input + send, a hint above it).
+let radioReleasedInfo = null;
+
+function applyRadioReleasedState(released) {
+    radioReleasedInfo = released || null;
+    const input = document.getElementById('messageInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const form = document.getElementById('sendForm');
+    if (!input || !sendBtn || !form) return;
+
+    const state = window.MCViews.releasedComposerState(radioReleasedInfo, (key) => window.I18N.t(key));
+    let hint = document.getElementById('radioReleasedHint');
+    if (state.blocked) {
+        if (!hint) {
+            hint = document.createElement('div');
+            hint.id = 'radioReleasedHint';
+            hint.className = 'radio-released-hint';
+            hint.setAttribute('role', 'status');
+            form.parentNode.insertBefore(hint, form);
+        }
+        hint.textContent = state.hint;
+        input.disabled = true;
+        sendBtn.disabled = true;
+        input.dataset.releasedPlaceholder = '1';
+        input.placeholder = state.placeholder;
+    } else {
+        if (hint) hint.remove();
+        input.disabled = false;
+        sendBtn.disabled = false;
+        if (input.dataset.releasedPlaceholder) {
+            delete input.dataset.releasedPlaceholder;
+            input.placeholder = window.I18N.t('chat.message_input_placeholder');
+        }
+    }
+}
+
 async function loadRadioHealth() {
     try {
         const healthResponse = await fetch('/api/radio_health', {
@@ -13901,6 +14046,7 @@ async function loadRadioHealth() {
         const data = await healthResponse.json();
 
         updateHeaderNodeStatus(data, true);
+        applyRadioReleasedState(data.released);
 
         let logData = {
             events: []
@@ -13951,6 +14097,9 @@ async function loadRadioHealth() {
         } else if (level === 'ERROR') {
             levelIcon = '🔴';
             levelColor = '#c62828';
+        } else if (level === 'INFO') {
+            levelIcon = '⚪';
+            levelColor = '#5f7aa8';
         }
 
         if (levelEl) {
@@ -14390,16 +14539,77 @@ window.renderMeshMap = renderMeshMap;
 // RADIO CONNECTION ACTIONS (Node Manager -> Connection card)
 // ============================================================
 
-async function releaseRadioConnection() {
-    const confirmed = window.confirm(window.I18N.t('settings.release_radio_confirm'));
+// RR1: in-app modal (not window.confirm). It lives in <body>, outside the Node Manager
+// container, so the periodic dashboard re-render can neither close nor reset it.
+function closeReleaseRadioModal() {
+    const existing = document.getElementById('radioReleaseModal');
+    if (existing) {
+        document.removeEventListener('keydown', existing._onKeydown, true);
+        existing.remove();
+    }
+}
 
-    if (!confirmed) return;
+function openReleaseRadioModal(transport) {
+    closeReleaseRadioModal();
+    const t = (key) => escapeHtml(window.I18N.t(key));
+    const body = transport === 'tcp' ? 'node_manager.release_modal_body_tcp' : 'node_manager.release_modal_body_serial';
+    const overlay = document.createElement('div');
+    overlay.id = 'radioReleaseModal';
+    overlay.className = 'modal-overlay mc-release-modal-overlay';
+    overlay.innerHTML = `
+        <div class="modal-content mc-release-modal" role="dialog" aria-modal="true" aria-labelledby="radioReleaseModalTitle">
+            <h3 id="radioReleaseModalTitle" class="mc-release-modal-title">${t('node_manager.release_modal_title')}</h3>
+            <p class="mc-release-modal-body">${t(body)}</p>
+            <div class="mc-release-modal-label" id="radioReleaseDurationLabel">${t('node_manager.release_modal_duration')}</div>
+            <div class="mc-segmented" role="radiogroup" aria-labelledby="radioReleaseDurationLabel">
+                <button type="button" class="mc-segmented-option is-selected" role="radio" aria-checked="true" data-duration="900">${t('node_manager.release_duration_15m')}</button>
+                <button type="button" class="mc-segmented-option" role="radio" aria-checked="false" data-duration="3600">${t('node_manager.release_duration_1h')}</button>
+                <button type="button" class="mc-segmented-option" role="radio" aria-checked="false" data-duration="">${t('node_manager.release_duration_until_reconnect')}</button>
+            </div>
+            <div class="mc-release-modal-actions">
+                <button type="button" class="device-action-btn device-action-secondary" data-release-action="cancel">${t('node_manager.release_modal_cancel')}</button>
+                <button type="button" class="device-action-btn device-action-primary is-primary" data-release-action="confirm">${t('node_manager.release_modal_confirm')}</button>
+            </div>
+        </div>`;
 
+    let durationS = 900;
+    overlay.querySelectorAll('.mc-segmented-option').forEach((option) => {
+        option.addEventListener('click', () => {
+            overlay.querySelectorAll('.mc-segmented-option').forEach((other) => {
+                const selected = other === option;
+                other.classList.toggle('is-selected', selected);
+                other.setAttribute('aria-checked', selected ? 'true' : 'false');
+            });
+            durationS = option.dataset.duration ? parseInt(option.dataset.duration, 10) : null;
+        });
+    });
+    overlay.querySelector('[data-release-action="cancel"]').addEventListener('click', closeReleaseRadioModal);
+    overlay.querySelector('[data-release-action="confirm"]').addEventListener('click', async (event) => {
+        event.currentTarget.disabled = true;
+        await releaseRadioConnection(durationS);
+        closeReleaseRadioModal();
+    });
+    overlay.addEventListener('click', (event) => {
+        if (event.target === overlay) closeReleaseRadioModal();
+    });
+    overlay._onKeydown = (event) => {
+        if (event.key === 'Escape') {
+            event.stopPropagation();
+            closeReleaseRadioModal();
+        }
+    };
+    document.addEventListener('keydown', overlay._onKeydown, true);
+
+    document.body.appendChild(overlay);
+    overlay.querySelector('.mc-segmented-option.is-selected').focus();
+}
+
+async function releaseRadioConnection(durationS = null) {
     try {
         const response = await fetch('/api/radio_connection/release', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({})
+            body: JSON.stringify({ duration_s: durationS })
         });
         const data = await response.json();
 
@@ -14408,9 +14618,26 @@ async function releaseRadioConnection() {
         }
 
         showToast(window.I18N.t('settings.radio_released_success'), 'success');
+
+        // Apply the released state at once (no "Offline" flash while the next health poll
+        // is on its way): the same shape /api/radio_health serves.
+        const released = {
+            since: data.radio?.released_at ?? null,
+            until: data.radio?.until ?? null,
+            remaining_s: data.radio?.remaining_s ?? null,
+            kind: data.radio?.release_kind ?? null,
+        };
+        updateHeaderNodeStatus({
+            status: 'RELEASED',
+            level: 'INFO',
+            transport: data.radio?.release_kind || undefined,
+            released,
+        }, true);
+        applyRadioReleasedState(released);
     } catch (error) {
         showToast(window.I18N.t('settings.unable_to_release_radio_reason', { reason: error.message }), 'error');
     }
+    setTimeout(() => loadNodeManagerDashboard(), 800);
 }
 
 async function reconnectRadioConnection() {
@@ -14427,6 +14654,7 @@ async function reconnectRadioConnection() {
         }
 
         showToast(window.I18N.t('settings.radio_reconnect_requested'), 'success');
+        applyRadioReleasedState(null);
 
         // Give the existing listener loop time to reopen the serial port, then
         // force the normal chat/channel refresh to pick up configuration changes.
@@ -14444,4 +14672,5 @@ async function reconnectRadioConnection() {
 }
 
 window.releaseRadioConnection = releaseRadioConnection;
+window.openReleaseRadioModal = openReleaseRadioModal;
 window.reconnectRadioConnection = reconnectRadioConnection;

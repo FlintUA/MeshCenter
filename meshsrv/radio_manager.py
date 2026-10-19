@@ -5,10 +5,17 @@ from meshsrv import error_reporting
 
 
 class RadioConnectionManager:
-    """Manage temporary release and reconnect of the Meshtastic serial radio.
+    """Manage temporary release and reconnect of the Meshtastic radio.
 
-    The MeshCenter process keeps running while the listener is paused and the
-    serial port is released for use by the official Meshtastic application.
+    The MeshCenter process keeps running while the radio is released: for serial
+    the listener is paused and the port freed for the official Meshtastic app; for
+    TCP (RR1) the session is closed and MeshCenter does not dial again, so the
+    radio's single client slot is free for another client.
+
+    A release may carry a duration: `until` is an ABSOLUTE wall-clock time and
+    `expired()` tells the owner's timer when to resume (RR1). A TCP release is
+    persisted through `store` (per profile) so it survives a restart; a serial
+    release stays in memory only.
     """
 
     def __init__(
@@ -19,6 +26,11 @@ class RadioConnectionManager:
         serial_port,
         log_event=None,
         on_reconnect=None,
+        transport_provider=None,
+        tcp_release=None,
+        tcp_resume=None,
+        store=None,
+        clock=time.time,
     ):
         self._pause_event = pause_event
         self._stop_listener = stop_listener
@@ -43,6 +55,13 @@ class RadioConnectionManager:
         # before the release. Optional/no-op default so this class stays
         # usable standalone (e.g. in tests) without a listener supervisor.
         self._on_reconnect = on_reconnect or (lambda: None)
+        self._transport_provider = transport_provider or (lambda: "serial")
+        self._tcp_release = tcp_release
+        self._tcp_resume = tcp_resume
+        self._store = store
+        self._clock = clock
+        self._until = None          # absolute epoch seconds, or None = until reconnect
+        self._kind = "serial"       # which kind of release is (or was last) active
         self._lock = threading.RLock()
         self._mode = "connected"
         self._message = "The radio is controlled by MeshCenter."
@@ -57,11 +76,15 @@ class RadioConnectionManager:
             self._last_error = str(error or "")
             self._updated_at = time.time()
 
-    def _log(self, level, title, details):
+    def _log(self, level, title, details, source="radio"):
+        """One System Log entry: event=<title>, level, details=<full text>, source. (This used
+        to pass (level, "radio", title, details) positionally into log_system_event(title,
+        level, details, source): every entry came out with the fields shifted - event "ACTION",
+        source = the truncated details.)"""
         if self._log_event is None:
             return
         try:
-            self._log_event(level, "radio", title, details)
+            self._log_event(title, level, details, source=source)
         except Exception as error:
             print(f"[RADIO MANAGER] Log error: {error}", flush=True)
 
@@ -73,16 +96,26 @@ class RadioConnectionManager:
         with self._lock:
             return self._mode not in {"releasing", "released", "reconnecting"}
 
-    def release(self, timeout=12):
+    def release(self, timeout=12, duration_s=None):
+        """Release the radio. `duration_s` None/0 = until Reconnect; otherwise the
+        release ends by itself after that many seconds (the owner's timer calls
+        reconnect() once `expired()`)."""
+        kind = self._transport_provider()
+        until = (self._clock() + float(duration_s)) if duration_s else None
         with self._lock:
             if self._mode == "released":
                 return True, self.status(False)
             if self._mode in {"releasing", "reconnecting"}:
                 return False, self.status(False)
             self._mode = "releasing"
+            self._kind = "tcp" if kind == "tcp" else "serial"
+            self._until = until
             self._message = "Stopping the listener and releasing the serial port..."
             self._last_error = ""
             self._updated_at = time.time()
+
+        if kind == "tcp":
+            return self._release_tcp(until)
 
         print("[RADIO MANAGER] Releasing radio", flush=True)
         self._pause_event.set()
@@ -124,6 +157,8 @@ class RadioConnectionManager:
 
         except Exception as error:
             self._pause_event.clear()
+            with self._lock:
+                self._until = None
             if isinstance(error, RuntimeError):
                 # Our own, deliberately worded reason ("listener could not be
                 # stopped", "serial port is still busy: ...") - safe to show.
@@ -150,10 +185,15 @@ class RadioConnectionManager:
                 return True, self.status(True)
             if self._mode == "releasing":
                 return False, self.status(False)
+            kind = self._kind
             self._mode = "reconnecting"
             self._message = "Reconnecting MeshCenter to the Meshtastic radio..."
             self._last_error = ""
+            self._until = None
             self._updated_at = time.time()
+
+        if kind == "tcp":
+            return self._reconnect_tcp()
 
         print("[RADIO MANAGER] Reconnect requested", flush=True)
         try:
@@ -165,8 +205,130 @@ class RadioConnectionManager:
             "ACTION",
             "Radio reconnect requested",
             "Meshtastic listener restart requested after external configuration",
+            source="recovery",
         )
         return True, self.status(False)
+
+    # ------------------------------------------------------------------
+    # RR1: TCP release / resume, persistence, timed expiry
+    # ------------------------------------------------------------------
+    def _release_tcp(self, until):
+        """Mode is already "releasing" (so every dialling path already sees the
+        release); close the session, then persist and publish "released"."""
+        print("[RADIO MANAGER] Releasing TCP radio", flush=True)
+        try:
+            if self._tcp_release is None:
+                raise RuntimeError("TCP release is not available")
+            self._tcp_release()
+            released_at = self._clock()
+            with self._lock:
+                self._mode = "released"
+                self._message = "The radio is free for another client; MeshCenter is not connecting."
+                self._released_at = released_at
+                self._updated_at = time.time()
+                self._last_error = ""
+            if self._store is not None:
+                self._store.save({"released": True, "until": until, "since": released_at, "transport": "tcp"})
+            self._log(
+                "ACTION",
+                "Radio released",
+                "TCP connection closed - MeshCenter will not reconnect "
+                + ("until you press Reconnect" if until is None else "until the chosen time has passed"),
+            )
+            print("[RADIO MANAGER] TCP radio released", flush=True)
+            return True, self.status(False)
+        except Exception as error:
+            if isinstance(error, RuntimeError):
+                shown = str(error)
+            else:
+                error_id = error_reporting.report_unexpected_error(
+                    error, "radio_release", log_event=None, source="radio"
+                )
+                shown = f"{error_reporting.GENERIC_MESSAGE} (ID: {error_id})"
+            with self._lock:
+                self._until = None
+            self._set_state("error", "The radio could not be released.", shown)
+            self._log("ERROR", "Radio release failed", shown)
+            print(f"[RADIO MANAGER] TCP release failed: {error}", flush=True)
+            return False, self.status(False)
+
+    def _reconnect_tcp(self):
+        print("[RADIO MANAGER] TCP reconnect requested", flush=True)
+        try:
+            if self._store is not None:
+                self._store.clear()
+            if self._tcp_resume is not None:
+                self._tcp_resume()
+        except Exception as error:
+            print(f"[RADIO MANAGER] TCP resume hook error: {error}", flush=True)
+        with self._lock:
+            self._mode = "connected"
+            self._message = "The radio is controlled by MeshCenter."
+            self._released_at = None
+            self._until = None
+            self._last_error = ""
+            self._updated_at = time.time()
+        self._log("ACTION", "Radio reconnect requested", "TCP release ended - reconnecting to the radio", source="recovery")
+        return True, self.status(False)
+
+    def end_release(self):
+        """End a TCP release WITHOUT the resume hook: an explicit connect/reconnect/
+        activation is itself the Reconnect and does the connecting. True if there
+        was a TCP release to end."""
+        with self._lock:
+            if self._mode not in {"released", "error"} or self._kind != "tcp":
+                return False
+        if self._store is not None:
+            self._store.clear()
+        with self._lock:
+            self._mode = "connected"
+            self._message = "The radio is controlled by MeshCenter."
+            self._released_at = None
+            self._until = None
+            self._last_error = ""
+            self._updated_at = time.time()
+        self._log("ACTION", "Radio reconnect requested", "TCP release ended by an explicit connect", source="recovery")
+        return True
+
+    def restore_released(self, until, since=None, kind="tcp"):
+        """Boot: adopt a persisted release WITHOUT touching the radio."""
+        with self._lock:
+            self._mode = "released"
+            self._kind = kind
+            self._until = until
+            self._released_at = since or self._clock()
+            self._message = "The radio is free for another client; MeshCenter is not connecting."
+            self._last_error = ""
+            self._updated_at = time.time()
+
+    def load_persisted_release(self):
+        """(until, since) of a persisted, still-valid release, else None. An
+        expired record is removed (connect normally)."""
+        if self._store is None:
+            return None
+        record = self._store.load()
+        if not isinstance(record, dict) or not record.get("released"):
+            return None
+        until = record.get("until")
+        if until is not None:
+            try:
+                until = float(until)
+            except (TypeError, ValueError):
+                self._store.clear()
+                return None
+            if until <= self._clock():
+                self._store.clear()
+                return None
+        return until, record.get("since")
+
+    def expired(self):
+        """True when a timed release has run out and the owner should resume."""
+        with self._lock:
+            return (
+                self._mode == "released"
+                and self._until is not None
+                and self._clock() >= self._until
+            )
 
     def listener_started(self):
         with self._lock:
@@ -175,6 +337,7 @@ class RadioConnectionManager:
                 self._message = "The radio is controlled by MeshCenter."
                 self._last_error = ""
                 self._released_at = None
+                self._until = None
                 self._updated_at = time.time()
 
     def listener_stopped(self):
@@ -203,4 +366,13 @@ class RadioConnectionManager:
                 "updated_at": self._updated_at,
                 "released_at": self._released_at,
                 "last_error": self._last_error,
+                # RR1: when a timed release ends (absolute epoch seconds; None =
+                # until Reconnect) and which kind of radio link is released.
+                "until": self._until if self._mode in {"releasing", "released"} else None,
+                "remaining_s": (
+                    max(0, int(self._until - self._clock()))
+                    if self._until is not None and self._mode in {"releasing", "released"}
+                    else None
+                ),
+                "release_kind": self._kind if self._mode in {"releasing", "released"} else None,
             }

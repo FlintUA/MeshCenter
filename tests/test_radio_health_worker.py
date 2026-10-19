@@ -28,7 +28,21 @@ def test_serial_released(compute):
         transport_state={},
     )
     assert status == "RELEASED"
-    assert level == "WARNING"
+    assert level == "INFO"          # RR1: a deliberate state, neutral - not a warning
+
+
+def test_tcp_released_is_neutral_and_beats_reconnecting(compute):
+    status, level, reason, _ = compute(
+        active_transport="tcp",
+        is_released=True,
+        is_paused=False,
+        listener_running=False,
+        packet_age=None,
+        transport_state={"state": "disconnected", "type": "tcp", "address": "192.0.2.1:4403"},
+        tcp_link={"state": "waiting", "attempt": 3, "next_in_s": 10},
+    )
+    assert (status, level) == ("RELEASED", "INFO")
+    assert "not connecting" in reason
 
 
 def test_serial_paused(compute):
@@ -240,10 +254,10 @@ def test_nonserial_never_stuck_on_starting(compute):
 
 
 def test_nonserial_ignores_released_and_paused(compute):
-    """RELEASED/PAUSED are serial-port-release concepts (RadioConnectionManager/
-    pause_listen) - meaningless for TCP/Bluetooth, must not leak in."""
+    """PAUSED is a serial-port concept and RELEASED is only honoured for serial and
+    TCP (RR1) - Bluetooth must not take either."""
     status, _level, _reason, _recommendation = compute(
-        active_transport="tcp",
+        active_transport="bluetooth",
         is_released=True,
         is_paused=True,
         listener_running=False,

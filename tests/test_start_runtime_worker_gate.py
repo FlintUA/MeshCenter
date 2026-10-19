@@ -23,7 +23,7 @@ SERIAL_ONLY_WORKERS = {
 
 # ST1: started once by start_runtime() for EVERY transport (delivery ACKs are
 # observable over serial and TCP; Bluetooth never stamps an ack deadline).
-EVERY_TRANSPORT_WORKERS = {"ack_timeout_worker"}
+EVERY_TRANSPORT_WORKERS = {"ack_timeout_worker", "release_timer_worker"}
 
 # H2-C Phase 2: listen_meshtastic() now always starts for serial regardless
 # of boot-time identity status - its own disconnect-recovery/mismatch

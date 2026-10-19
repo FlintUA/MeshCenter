@@ -38,6 +38,7 @@ from telemetry import telemetry
 from meshsrv import meshtastic_transport
 from meshsrv.info_parser import local_node_entry, parse_info_nodes
 from meshsrv.radio_manager import RadioConnectionManager
+from meshsrv.radio_release_store import RadioReleaseStore
 from meshsrv.runtime_identity import (
     resolve_meshtastic_cli,
     resolve_serial_port,
@@ -1535,6 +1536,9 @@ tcp_detection_cache = DetectionCache()
 
 
 def _probe_tcp_identity(host, port, timeout=25):
+    if _released_endpoint_refusal(host, port) is not None:
+        return {"detected": {}, "checked_at": utc_now_iso(), "error": "Radio released - press Reconnect",
+                "error_code": "radio_released"}, ""
     return probe_tcp_radio_identity(
         host,
         port,
@@ -4687,6 +4691,11 @@ def _on_radio_reconnect_requested():
         print(f"[RADIO MANAGER] Failed to recycle adapter on reconnect: {e}", flush=True)
 
 
+# RR1: a TCP release is persisted per profile (data/profiles/<id>/radio_release.json);
+# a serial release stays in memory only. The hooks are resolved lazily - they use
+# objects defined further down (tcp_link_lock, the supervisor, the inbound worker).
+radio_release_store = RadioReleaseStore(lambda: PROFILE_DATA_DIR)
+
 radio_connection_manager = RadioConnectionManager(
     pause_event=pause_listen,
     stop_listener=stop_listener,
@@ -4694,6 +4703,10 @@ radio_connection_manager = RadioConnectionManager(
     serial_port=current_serial_port,
     log_event=log_system_event,
     on_reconnect=_on_radio_reconnect_requested,
+    transport_provider=lambda: current_radio_transport(),
+    tcp_release=lambda: _tcp_release_hook(),
+    tcp_resume=lambda: _tcp_resume_hook(),
+    store=radio_release_store,
 )
 
 
@@ -5031,6 +5044,8 @@ def inbound_eligibility():
     accepted = normalize_radio_record(dict(instance_manager.get().get("radio", {})))
     if accepted.get("transport") != "tcp":
         return "not_tcp"
+    if radio_connection_manager.is_released():
+        return "released"
     status = str(RADIO_IDENTITY_RESULT.get("status") or "NOT_CHECKED")
     if status != "MATCH":
         return f"identity_{status.lower()}"
@@ -6202,9 +6217,148 @@ def _tcp_identity_refused():
     return RADIO_IDENTITY_RESULT.get("status") in IDENTITY_REFUSED_STATUSES
 
 
-def _tcp_auto_reconnect_enabled():
-    with state_lock:
-        return bool((settings.get("tcp_ble_autorecovery") or {}).get("enabled", True))
+# RR1: `tcp_ble_autorecovery.enabled` is no longer read for TCP (it had no UI control
+# and did not stop boot/explicit dials - the pixel-111 incident); it stays for
+# Bluetooth only. What stops a TCP re-dial is the persistent Release radio state.
+def _tcp_release_hook():
+    """Manager hook for a TCP release. The manager is already in "releasing" (so the
+    supervisor, the inbound worker and every explicit path already see the release);
+    wait for an in-flight attempt/probe (they share tcp_link_lock), then close the
+    session for good (shutdown + close, as in DK3)."""
+    if not tcp_link_lock.acquire(timeout=30):
+        raise RuntimeError("A reconnect attempt is still running - try again in a moment")
+    try:
+        try:
+            tcp_ipc_transport.disconnect(timeout=10)
+        except Exception as error:
+            raise RuntimeError(f"Could not close the TCP session: {error}")
+        try:
+            inbound_worker.discard_pending(lambda **kwargs: tcp_ipc_transport.drain_received(**kwargs))
+        except Exception:
+            pass
+    finally:
+        tcp_link_lock.release()
+    return True
+
+
+def _tcp_resume_hook():
+    """Manager hook for ending a TCP release by Reconnect / the timer: the normal
+    supervisor path (identity check included) takes it from here, right away."""
+    tcp_link_supervisor.trigger_now()
+
+
+def _end_tcp_release_for_explicit_connect():
+    """An explicit TCP connect / reconnect / profile activation IS the Reconnect:
+    end a TCP release without scheduling a second, concurrent attempt."""
+    try:
+        return radio_connection_manager.end_release()
+    except Exception as error:
+        print(f"[RADIO MANAGER] end_release failed: {error}", flush=True)
+        return False
+
+
+def _released_tcp_endpoint():
+    """(host, port) of the radio whose TCP release is active, else None."""
+    if not radio_connection_manager.is_released():
+        return None
+    status = radio_connection_manager.status(False)
+    if status.get("release_kind") != "tcp":
+        return None
+    accepted = normalize_radio_record(dict(instance_manager.get().get("radio", {})))
+    endpoint = accepted.get("endpoint") or {}
+    return str(endpoint.get("host") or ""), int(endpoint.get("port") or 0)
+
+
+def _released_endpoint_refusal(host, port):
+    """(response, 409) when a probe would dial the released radio's own endpoint."""
+    released = _released_tcp_endpoint()
+    if released is None:
+        return None
+    if str(host or "").strip().lower() != released[0].lower():
+        return None
+    if int(port or 0) not in (0, released[1]):
+        return None
+    return jsonify({
+        "ok": False,
+        "error": "Radio released - press Reconnect",
+        "error_code": "radio_released",
+    }), 409
+
+
+def _restore_persisted_tcp_release():
+    """Boot: adopt a persisted, still-valid TCP release (no radio contact). An expired
+    record is removed so boot connects normally. Returns True when released."""
+    accepted = normalize_radio_record(INSTANCE_IDENTITY.get("radio", {}))
+    if accepted.get("transport") != "tcp":
+        return False
+    try:
+        record = radio_connection_manager.load_persisted_release()
+    except Exception as error:
+        print(f"[RADIO RELEASE] Could not read the persisted release: {error}", flush=True)
+        return False
+    if record is None:
+        return False
+    until, since = record
+    radio_connection_manager.restore_released(until, since, kind="tcp")
+    global RADIO_IDENTITY_RESULT
+    RADIO_IDENTITY_RESULT = {
+        "status": "NOT_CHECKED",
+        "checked_at": utc_now_iso(),
+        "configured": dict(INSTANCE_IDENTITY.get("radio", {})),
+        "detected": {},
+        "error": None,
+        "transient": False,
+    }
+    shown = (
+        "until you press Reconnect"
+        if until is None
+        else "until " + datetime.fromtimestamp(until).astimezone().strftime("%H:%M")
+    )
+    log_system_event(
+        "Radio still released",
+        "INFO",
+        f"MeshCenter restarted while the radio was released - not connecting {shown}.",
+        source="radio",
+    )
+    print(f"[RADIO RELEASE] Starting released ({shown}) - no connection attempt", flush=True)
+    return True
+
+
+def _auto_resume_released_radio():
+    """A timed release ran out: same path as pressing Reconnect."""
+    log_system_event(
+        "Radio release ended",
+        "INFO",
+        "The chosen release time has passed - reconnecting to the radio.",
+        source="radio",
+    )
+    transport = current_radio_transport()
+    ok, _status = radio_connection_manager.reconnect()
+    if ok and transport == "serial":
+        radio_event("restart")
+
+
+def release_timer_worker():
+    """Ends a timed release (serial or TCP) once its absolute end time has passed."""
+    while True:
+        time.sleep(5)
+        try:
+            if radio_connection_manager.expired():
+                _auto_resume_released_radio()
+        except Exception as error:
+            print(f"[RADIO RELEASE] timer error: {error}", flush=True)
+
+
+def _release_status_payload():
+    status = radio_connection_manager.status(False)
+    if not status.get("released"):
+        return None
+    return {
+        "since": status.get("released_at"),
+        "until": status.get("until"),
+        "remaining_s": status.get("remaining_s"),
+        "kind": status.get("release_kind"),
+    }
 
 
 def _tcp_link_connected():
@@ -6273,7 +6427,7 @@ tcp_link_supervisor = tcp_link_supervisor_module.TcpLinkSupervisor(
     attempt=tcp_link_attempt,
     lock=tcp_link_lock,
     on_event=_tcp_link_event,
-    auto_enabled=_tcp_auto_reconnect_enabled,
+    is_released=lambda: radio_connection_manager.is_released(),
 )
 
 
@@ -6324,14 +6478,24 @@ def compute_radio_health_status(
     needed and, worse, races the supervisor's own recovery if actually
     followed via process_listener_autorecovery()).
     """
-    if active_transport == "serial":
-        if is_released:
+    if is_released:
+        # RR1: a deliberate state, not a fault - neutral level (INFO), for serial and TCP.
+        if active_transport == "tcp":
             return (
                 "RELEASED",
-                "WARNING",
+                "INFO",
+                "Radio released - MeshCenter is not connecting",
+                "Press Reconnect when the radio should be used by MeshCenter again",
+            )
+        if active_transport == "serial":
+            return (
+                "RELEASED",
+                "INFO",
                 "Radio released for external configuration",
                 "Reconnect the radio from Settings when configuration is complete",
             )
+
+    if active_transport == "serial":
 
         if is_paused:
             return (
@@ -7039,6 +7203,7 @@ register_meshtastic_routes(
     instance_manager,
     refresh_identity_after_reconnect,
     resolve_reconnect_descriptor,
+    on_explicit_tcp_connect=_end_tcp_release_for_explicit_connect,
 )
 
 @app.route("/")
@@ -7137,6 +7302,9 @@ def api_devices_dashboard():
     transport_state = connection_payload(transport_router, LOCAL_NODE_ID, listener_supervisor)
     configured_normalized = normalize_radio_record(configured)
     active_transport = transport_state.get("type") or configured_normalized["preferred_transport"]
+    if radio_connection_manager.is_released() and radio_connection_manager.status(False).get("release_kind") == "tcp":
+        # A released TCP radio after a restart: the router never left its serial default.
+        active_transport = "tcp"
 
     if active_transport == "serial":
         # Byte-for-byte the pre-existing behavior - RadioConnectionManager
@@ -7208,6 +7376,26 @@ def api_devices_dashboard():
             "address": transport_state.get("address"),
             "reconnect": tcp_link_supervisor.status() if active_transport == "tcp" else None,
         }
+        if radio_connection_manager.is_released():
+            released_status = radio_connection_manager.status(False)
+            connection.update({
+                "mode": "released",
+                "released": True,
+                "commands_allowed": False,
+                "listener_running": False,
+                "message": released_status.get("message", ""),
+                "released_at": released_status.get("released_at"),
+                "until": released_status.get("until"),
+                "remaining_s": released_status.get("remaining_s"),
+                "release_kind": released_status.get("release_kind"),
+                "reconnect": None,
+            })
+            if released_status.get("release_kind") == "tcp" and not connection.get("address"):
+                # After a restart while released the router never left its serial default, so it
+                # has no TCP descriptor: show the accepted profile's own endpoint instead of "-".
+                endpoint = configured_normalized.get("endpoint") or {}
+                if endpoint.get("host"):
+                    connection["address"] = f"{endpoint['host']}:{int(endpoint.get('port') or 4403)}"
 
     profile_metadata = {}
     profile_json = os.path.join(PROFILE_DATA_DIR, "profile.json")
@@ -7429,6 +7617,9 @@ def _detect_tcp_radio_response(host, port):
     when no host/port is given). See api_detect_new_radio()'s own
     docstring for the full picture; detection stays provisional either
     way - nothing here writes to INSTANCE_IDENTITY."""
+    released_refusal = _released_endpoint_refusal(host, port)
+    if released_refusal is not None:
+        return released_refusal
     detection, _tcp_output = _probe_tcp_identity(host, port)
     busy = _detection_in_progress_response(detection)
     if busy is not None:
@@ -7639,6 +7830,9 @@ def _accept_tcp_radio(host, port, requested_node_id):
     api_accept_detected_radio()'s own docstring for the full picture."""
     global INSTANCE_IDENTITY
 
+    released_refusal = _released_endpoint_refusal(host, port)
+    if released_refusal is not None:
+        return released_refusal
     endpoint = {"host": host, "port": port}
     # Discovery -> Accept: reuse the probe Discovery just ran (server-side
     # cache, single-use, 60s TTL, node_id must match what the client
@@ -7939,6 +8133,9 @@ def api_activate_radio_profile(profile_id):
     selected_profile_id = str(profile.get("profile_id") or "").strip().lower()
 
     if selected_profile_id == current_profile_id:
+        # RR1: activating the (released) active TCP profile is the explicit Reconnect.
+        if radio_connection_manager.is_released() and radio_connection_manager.status(False).get("release_kind") == "tcp":
+            radio_connection_manager.reconnect()
         return jsonify({
             "ok": True,
             "already_active": True,
@@ -7969,6 +8166,12 @@ def api_activate_radio_profile(profile_id):
 
     if selected_transport == "tcp":
         endpoint = expected_radio["endpoint"]
+        # RR1: explicitly activating a profile whose TCP radio is released ends that release
+        # (its record lives in the profile's own folder; the process restarts into it anyway).
+        try:
+            RadioReleaseStore(lambda: str(profile_manager._profile_dir(selected_profile_id))).clear()
+        except Exception as error:
+            print(f"[RADIO RELEASE] Could not clear the release of {selected_profile_id}: {error}", flush=True)
         detection, _tcp_output = _probe_tcp_identity(endpoint.get("host", ""), endpoint.get("port", 0))
         busy = _detection_in_progress_response(detection)
         if busy is not None:
@@ -8313,23 +8516,53 @@ def api_radio_connection_status():
     })
 
 
+RELEASE_DURATIONS_MAX_S = 24 * 3600
+
+
+def release_unsupported_refusal(action_label):
+    """Serial and TCP can be released; Bluetooth cannot (out of scope)."""
+    transport = current_radio_transport()
+    if transport in ("serial", "tcp"):
+        return None
+    label = {"bluetooth": "Bluetooth"}.get(transport, transport)
+    return jsonify({
+        "ok": False,
+        "error": f"{action_label} is not available for {label} connections",
+        "error_code": "listener_not_applicable",
+        "transport": transport,
+    }), 409
+
+
+def _parse_release_duration(value):
+    """None = until Reconnect; else seconds (60 .. 24 h). Raises ValueError."""
+    if value in (None, "", 0, "0"):
+        return None
+    seconds = int(value)
+    if seconds < 60 or seconds > RELEASE_DURATIONS_MAX_S:
+        raise ValueError("duration out of range")
+    return seconds
+
+
 @app.route("/api/radio_connection/release", methods=["POST"])
 @handle_errors
 def api_radio_connection_release():
-    # Review item 5 (H2-C Phase 2 follow-up): radio_connection_manager's
-    # release()/reconnect() both delegate to stop_listener()/
-    # wait_serial_release(), which are hardwired to listener_supervisor -
-    # the SERIAL listener supervisor, unconditionally, regardless of which
-    # transport is actually active. For TCP/Bluetooth this "succeeds"
-    # without releasing anything real (there is no serial port in use to
-    # release), which is confusing rather than dangerous on its own, but
-    # reconnect()'s on_reconnect hook (listener_supervisor.clear_mismatch())
-    # only ever re-verifies SERIAL identity - so refuse both routes outright
-    # for a non-serial radio, same pattern as restart_listener/rescan_nodes.
-    refusal = serial_only_action_refusal("Releasing the radio")
+    """Release the radio (RR1: serial AND TCP). Body: {"duration_s": 900|3600|null} -
+    null/absent = until Reconnect. A TCP release closes the session and MeshCenter does
+    not dial again (persisted per profile); a serial release stops the listener and frees
+    the port (in memory only). A timed release ends by itself."""
+    refusal = release_unsupported_refusal("Releasing the radio")
     if refusal:
         return refusal
-    ok, status = radio_connection_manager.release(timeout=12)
+    data = request.get_json(silent=True) or {}
+    try:
+        duration_s = _parse_release_duration(data.get("duration_s"))
+    except (TypeError, ValueError):
+        return jsonify({
+            "ok": False,
+            "error": "duration_s must be empty (until reconnect) or 60 to 86400 seconds",
+            "error_code": "invalid_duration",
+        }), 400
+    ok, status = radio_connection_manager.release(timeout=12, duration_s=duration_s)
     return jsonify({
         "ok": ok,
         "radio": status,
@@ -8362,6 +8595,10 @@ def api_meshtastic_reconnect_now():
             "error_code": "identity_mismatch",
             "identity_status": RADIO_IDENTITY_RESULT.get("status"),
         }), 409
+    if radio_connection_manager.is_released():
+        # RR1: Reconnect ends a TCP release (the manager's resume hook triggers the attempt).
+        ok, released_status = radio_connection_manager.reconnect()
+        return jsonify({"ok": ok, "reconnect": tcp_link_supervisor.status(), "radio": released_status}), (200 if ok else 409)
     status = tcp_link_supervisor.trigger_now()
     return jsonify({"ok": True, "reconnect": status})
 
@@ -8387,11 +8624,15 @@ def api_radio_connection_reconnect():
     # release()'s own comment above) - refuse outright for TCP/Bluetooth
     # rather than silently no-op "succeeding" with no real re-verification
     # of a non-serial radio's identity.
-    refusal = serial_only_action_refusal("Reconnecting the radio")
+    refusal = release_unsupported_refusal("Reconnecting the radio")
     if refusal:
         return refusal
+    was_tcp_release = (
+        radio_connection_manager.is_released()
+        and radio_connection_manager.status(False).get("release_kind") == "tcp"
+    )
     ok, status = radio_connection_manager.reconnect()
-    if ok:
+    if ok and not was_tcp_release and current_radio_transport() == "serial":
         radio_event("restart")
     return jsonify({
         "ok": ok,
@@ -9118,6 +9359,21 @@ def api_radio_health():
     # Bluetooth - they have no Core `--listen` subprocess) as a fault.
     status["transport"] = current_radio_transport()
 
+    # RR1: the explicit release state (None when not released); "until" is an absolute
+    # epoch time (None = until Reconnect).
+    status["released"] = _release_status_payload()
+    if status["released"] is not None:
+        # The health worker only refreshes `status` every 30 s: right after a release
+        # the stored value still says OK/listener stopped, which the header chip painted
+        # as a red "Offline" until the next tick. A release is authoritative at once.
+        status["status"], status["level"], status["status_reason"], status["recommendation"] = (
+            compute_radio_health_status(
+                active_transport=status["released"].get("kind") or current_radio_transport(),
+                is_released=True, is_paused=False, listener_running=False,
+                packet_age=None, transport_state={},
+            )
+        )
+
     # Inbound receive counters (counts and states only - never message content).
     try:
         status["listener_exits"] = listener_supervisor.exit_stats()
@@ -9361,8 +9617,13 @@ def start_runtime():
     except Exception as _exc:  # noqa: BLE001 - a warning must never block startup
         print(f"[SECURITY] initial_password.txt check failed: {_exc}", flush=True)
 
-    # Verify the physical radio before loading or mutating radio-profile data.
-    startup_info_output = verify_radio_identity()
+    # RR1: a TCP release survives restarts. Read it BEFORE anything can dial: while it is
+    # active the boot identity probe is skipped (it would open a session to the radio).
+    if _restore_persisted_tcp_release():
+        startup_info_output = ""
+    else:
+        # Verify the physical radio before loading or mutating radio-profile data.
+        startup_info_output = verify_radio_identity()
     identity_status = RADIO_IDENTITY_RESULT.get("status", "NOT_CHECKED")
     identity_match = identity_status == "MATCH"
     # Radio TCP Transport, part 2: which transport the accepted radio
@@ -9567,6 +9828,9 @@ def start_runtime():
     # also covers a live Settings switch to TCP and a TCP radio whose identity is
     # still unresolved at boot - it just waits until MATCH.
     threading.Thread(target=radio_inbound_worker, daemon=True).start()
+
+    # RR1: ends a timed Release radio (serial or TCP) by itself.
+    threading.Thread(target=release_timer_worker, daemon=True, name="radio-release-timer").start()
 
     # ST1: delivery ACKs are observable over serial (listener parser + the ACK captured
     # inside the send) and TCP (routing events); this timer flips a DM whose ACK never

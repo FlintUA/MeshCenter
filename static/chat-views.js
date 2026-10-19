@@ -449,6 +449,18 @@
         return Object.assign({}, state, { inFlight: false, backoffUntil: now + MARK_READ_BACKOFF_MS });
     }
 
+    // RR1: while the radio is released the composer cannot send - say why instead of letting
+    // the user type into a send that is bound to fail. `released` is the /api/radio_health
+    // `released` object (null/undefined when not released); `t` translates a key.
+    function releasedComposerState(released, t) {
+        if (!released) return { blocked: false, placeholder: null, hint: '' };
+        return {
+            blocked: true,
+            placeholder: t('chat.radio_released_placeholder'),
+            hint: t('chat.radio_released_hint'),
+        };
+    }
+
     const api = {
         newMarkReadState: newMarkReadState,
         newestIncomingKey: newestIncomingKey,
@@ -469,6 +481,7 @@
         planSenderFocus: planSenderFocus,
         stateRevealingNode: stateRevealingNode,
         formatMessageTime: formatMessageTime,
+        releasedComposerState: releasedComposerState,
         firstUnreadIndex: firstUnreadIndex,
         SORT_KEYS: SORT_KEYS,
         FILTER_FLAGS: FILTER_FLAGS,

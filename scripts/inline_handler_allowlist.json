@@ -125,10 +125,6 @@
   },
   {
     "file": "static/chat.js",
-    "snippet": "onclick=\"reconnectActiveTransport('${type}'); setTimeout(() => loadNodeManagerDashboard(), 1800);\""
-  },
-  {
-    "file": "static/chat.js",
     "snippet": "onclick=\"refreshNodeMetrics('${escapeHtml(node.node_id)}')\""
   },
   {

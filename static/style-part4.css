@@ -5553,6 +5553,23 @@ html[data-theme="dark"] .radio-released-hint {
     background: #ad2833;
 }
 
+/* The dark theme paints every .is-primary blue with the same specificity; win explicitly. */
+html[data-theme] .mc-dialog .device-action-btn.is-danger,
+html[data-theme="dark"] .mc-dialog .device-action-btn.is-primary.is-danger {
+    background: #c62f3b !important;
+    border-color: #c62f3b !important;
+    color: #fff !important;
+}
+
+html[data-theme] .mc-dialog .device-action-btn.is-danger:hover {
+    background: #ad2833 !important;
+}
+
+.mc-dialog .device-action-btn,
+.mc-dialog .mc-dialog-input {
+    font-family: inherit;
+}
+
 @media (max-width: 480px) {
     .mc-dialog-actions {
         grid-auto-flow: row;

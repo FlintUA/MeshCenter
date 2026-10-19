@@ -354,7 +354,7 @@ async function deleteWaypoint(waypointId) {
     const id = String(waypointId);
     const item = waypointToolsItems.find(row => String(row?.waypoint_id) === id);
     const name = item?.name || `Waypoint ${id}`;
-    if (!window.confirm(window.I18N.t('waypoints.delete_named_confirm', { name }))) return;
+    if (!(await appConfirm({ title: window.I18N.t('dialog.title_delete_waypoint'), message: window.I18N.t('waypoints.delete_named_confirm', { name }), confirmLabel: window.I18N.t('dialog.delete'), danger: true }))) return;
     try {
         const response = await fetch(`/api/waypoints/${encodeURIComponent(id)}`, { method:'DELETE' });
         const payload = await response.json();
@@ -373,7 +373,7 @@ async function deleteWaypoint(waypointId) {
 async function deleteSelectedWaypoints() {
     const ids = [...waypointToolsSelectedIds];
     if (!ids.length) return;
-    if (!window.confirm(window.I18N.plural('waypoints.delete_selected_confirm', ids.length, { count: ids.length }))) return;
+    if (!(await appConfirm({ title: window.I18N.t('dialog.title_delete_waypoints'), message: window.I18N.plural('waypoints.delete_selected_confirm', ids.length, { count: ids.length }), confirmLabel: window.I18N.t('dialog.delete'), danger: true }))) return;
     try {
         const response = await fetch('/api/waypoints/delete', {
             method:'POST', headers:{'Content-Type':'application/json'},
@@ -394,7 +394,7 @@ async function deleteSelectedWaypoints() {
 }
 
 async function deleteAllWaypoints() {
-    if (!window.confirm(window.I18N.t('waypoints.delete_all_confirm'))) return;
+    if (!(await appConfirm({ title: window.I18N.t('dialog.title_delete_waypoints'), message: window.I18N.t('waypoints.delete_all_confirm'), confirmLabel: window.I18N.t('dialog.delete'), danger: true }))) return;
     try {
         const response = await fetch('/api/waypoints', { method:'DELETE' });
         const payload = await response.json();

@@ -449,6 +449,7 @@ function openCustomTelemetryExport() {
                             ${buildExportDateTimeFieldHtml('exportEnd', now)}
                         </label>
                     </div>
+                    <div class="export-range-error" id="exportRangeError" role="alert" hidden></div>
                 </div>
 
                 <div class="export-section">
@@ -595,7 +596,18 @@ function getTelemetryVisibleSeriesText(type) {
     return active.length > 0 ? active.join(' • ') : window.I18N.t('nodes.no_series_selected');
 }
 
+// UI1: validation text under the date fields (was a native alert()).
+function showExportRangeError(message) {
+    const box = document.getElementById('exportRangeError');
+    if (!box) return;
+    box.textContent = message;
+    box.hidden = false;
+}
+
 function runCustomTelemetryExport() {
+    const staleError = document.getElementById('exportRangeError');
+    if (staleError) staleError.hidden = true;
+
     const modal = document.getElementById('telemetryModal');
     const type = modal ? (modal.dataset.type || 'environment') : 'environment';
 
@@ -620,7 +632,7 @@ function runCustomTelemetryExport() {
         const endDate = readExportDateTime('exportEnd');
 
         if (!startDate || !endDate) {
-            alert(window.I18N.t('nodes.select_start_end_date'));
+            showExportRangeError(window.I18N.t('nodes.select_start_end_date'));
             return;
         }
 
@@ -628,7 +640,7 @@ function runCustomTelemetryExport() {
         const endTs = Math.floor(endDate.getTime() / 1000);
 
         if (!startTs || !endTs || startTs >= endTs) {
-            alert(window.I18N.t('nodes.invalid_date_range'));
+            showExportRangeError(window.I18N.t('nodes.invalid_date_range'));
             return;
         }
 

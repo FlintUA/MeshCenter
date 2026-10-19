@@ -135,7 +135,7 @@ async function deleteMediaItem(filename, event) {
     event?.preventDefault();
     event?.stopPropagation();
 
-    if (!confirm(window.I18N.t('media.delete_image_confirm', { filename }))) return;
+    if (!(await appConfirm({ title: window.I18N.t('dialog.title_delete_image'), message: window.I18N.t('media.delete_image_confirm', { filename }), confirmLabel: window.I18N.t('dialog.delete'), danger: true }))) return;
 
     try {
         const response = await fetch(`/api/camera/screenshot/${encodeURIComponent(filename)}`, {
@@ -157,8 +157,18 @@ async function deleteMediaItem(filename, event) {
 }
 
 async function deleteAllMedia() {
-    if (!confirm(window.I18N.t('media.delete_all_confirm'))) return;
-    if (!confirm(window.I18N.t('media.delete_all_confirm2'))) return;
+    // One danger dialog (the old second "are you sure" confirm is gone); says how many
+    // images are about to be deleted when the gallery is on screen.
+    const shown = document.querySelectorAll('#mediaGalleryContent .media-item').length;
+    const message = shown > 0
+        ? window.I18N.plural('media.delete_all_confirm_count', shown, { count: shown })
+        : window.I18N.t('media.delete_all_confirm');
+    if (!(await appConfirm({
+        title: window.I18N.t('dialog.title_delete_all_images'),
+        message,
+        confirmLabel: window.I18N.t('dialog.delete'),
+        danger: true,
+    }))) return;
 
     try {
         const response = await fetch('/api/camera/screenshots', { method: 'DELETE' });

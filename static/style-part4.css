@@ -5468,3 +5468,123 @@ html[data-theme="dark"] .radio-released-hint {
     opacity: .6;
     cursor: not-allowed;
 }
+
+/* UI1: the shared app dialog (static/app-dialog.js) - confirm / prompt / alert.
+   Reuses .modal-overlay/.modal-content for the theme; above every other modal. */
+.mc-dialog-overlay {
+    z-index: 3000;
+    padding: 12px;
+}
+
+.mc-dialog {
+    width: min(92vw, 420px);
+    max-width: 420px;
+    min-width: 0;
+    padding: 18px;
+    box-sizing: border-box;
+    overflow: visible;
+}
+
+.mc-dialog-title {
+    margin: 0 0 10px;
+    font-size: 17px;
+}
+
+.mc-dialog-message {
+    margin: 0 0 14px;
+    font-size: 13px;
+    line-height: 1.45;
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+    color: var(--mc-text-secondary, #64748b);
+}
+
+.mc-dialog-field {
+    margin: 0 0 12px;
+}
+
+.mc-dialog-label {
+    display: block;
+    margin-bottom: 5px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--mc-text-secondary, #64748b);
+}
+
+.mc-dialog-input {
+    width: 100%;
+    min-height: 38px;
+    padding: 6px 10px;
+    box-sizing: border-box;
+    border: 1px solid var(--mc-border, #d8e1ec);
+    border-radius: 8px;
+    background: var(--mc-bg-panel, #fff);
+    color: var(--mc-text-primary, #172033);
+    font-size: 14px;
+}
+
+.mc-dialog-input[aria-invalid="true"] {
+    border-color: #c62f3b;
+}
+
+.mc-dialog-error {
+    margin-top: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #c62f3b;
+}
+
+.mc-dialog-actions {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    gap: 9px;
+    margin-top: 16px;
+}
+
+.mc-dialog .device-action-btn.is-danger,
+.mc-dialog .device-action-btn.is-primary.is-danger {
+    background: #c62f3b;
+    border-color: #c62f3b;
+    color: #fff;
+}
+
+.mc-dialog .device-action-btn.is-danger:hover {
+    background: #ad2833;
+}
+
+@media (max-width: 480px) {
+    .mc-dialog-actions {
+        grid-auto-flow: row;
+        grid-template-columns: minmax(0, 1fr);
+    }
+    .mc-dialog-actions .device-action-btn[data-dialog-action="confirm"] {
+        order: -1;
+    }
+}
+
+html[data-theme="dark"] .mc-dialog-message,
+html[data-theme="dark"] .mc-dialog-label {
+    color: var(--mc-text-secondary);
+}
+
+html[data-theme="dark"] .mc-dialog-input {
+    background: var(--mc-bg-input, var(--mc-bg-panel));
+    border-color: var(--mc-border);
+    color: var(--mc-text-primary);
+}
+
+html[data-theme="dark"] .mc-dialog-error {
+    color: #ff8a93;
+}
+
+.export-range-error {
+    margin-top: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #c62f3b;
+}
+
+html[data-theme="dark"] .export-range-error {
+    color: #ff8a93;
+}

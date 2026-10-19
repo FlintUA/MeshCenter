@@ -24,6 +24,38 @@
     "reloading": "Wird neu geladen …",
     "undo": "Rückgängig"
   },
+  "dialog": {
+    "cancel": "Abbrechen",
+    "confirm": "Bestätigen",
+    "ok": "OK",
+    "delete": "Löschen",
+    "update": "Aktualisieren",
+    "restart": "Neu starten",
+    "reboot": "Neustart",
+    "shutdown": "Herunterfahren",
+    "forget": "Vergessen",
+    "remove": "Entfernen",
+    "switch": "Wechseln",
+    "send_anyway": "Trotzdem senden",
+    "discard": "Verwerfen",
+    "configure": "Einrichten",
+    "title_apply_update": "MeshCenter aktualisieren",
+    "title_restart_meshcenter": "MeshCenter neu starten",
+    "title_reboot": "Gerät neu starten",
+    "title_shutdown": "Gerät herunterfahren",
+    "title_restart_listener": "Listener neu starten",
+    "title_forget_wifi": "WLAN-Netzwerk vergessen",
+    "title_rtc_setup": "RTC einrichten",
+    "title_remove_connection": "Gespeicherte Verbindung entfernen",
+    "title_switch_profile": "Funkprofil wechseln",
+    "title_ignored_node": "Ignorierter Knoten",
+    "title_unsaved_changes": "Ungespeicherte Änderungen",
+    "title_delete_schedule": "Zeitplan löschen",
+    "title_delete_waypoint": "Waypoint löschen",
+    "title_delete_waypoints": "Waypoints löschen",
+    "title_delete_image": "Bild löschen",
+    "title_delete_all_images": "Alle Bilder löschen"
+  },
   "nav": {
     "chats": "Chats",
     "camera": "Kamera",
@@ -629,7 +661,6 @@
     "date_desc": "Datum ↓",
     "delete_all": "Alle löschen",
     "delete_all_confirm": "ALLE Bilder löschen? Diese Aktion kann nicht rückgängig gemacht werden.",
-    "delete_all_confirm2": "Bist du sicher, dass du die komplette Galerie dauerhaft löschen möchtest?",
     "delete_failed": "Löschen fehlgeschlagen",
     "delete_image_aria": "Bild löschen",
     "delete_image_confirm": "Bild „{filename}“ löschen?",
@@ -648,7 +679,13 @@
     "newest_first": "Neueste zuerst",
     "no_images_text": "In der Kamera aufgenommene Fotos erscheinen hier automatisch.",
     "no_images_yet": "Noch keine aufgenommenen Bilder",
-    "storage_used_free": "{used} MB belegt · {free} GB frei"
+    "storage_used_free": "{used} MB belegt · {free} GB frei",
+    "delete_all_confirm_count": {
+      "one": "ALLE {count} Bilder löschen? Diese Aktion kann nicht rückgängig gemacht werden.",
+      "few": "ALLE {count} Bilder löschen? Diese Aktion kann nicht rückgängig gemacht werden.",
+      "many": "ALLE {count} Bilder löschen? Diese Aktion kann nicht rückgängig gemacht werden.",
+      "other": "ALLE {count} Bilder löschen? Diese Aktion kann nicht rückgängig gemacht werden."
+    }
   },
   "devices": {
     "subtitle": "Periphere Geräte und Module, die dem aktiven Funkprofil zugeordnet sind",
@@ -846,7 +883,10 @@
     "unable_to_save_image": "Knotenbild konnte nicht gespeichert werden",
     "upload_failed": "Hochladen fehlgeschlagen.",
     "usb_port": "USB-Port",
-    "connection_disconnected": "Getrennt"
+    "connection_disconnected": "Getrennt",
+    "edit_tcp_title": "TCP-Verbindung bearbeiten",
+    "edit_tcp_confirm": "Speichern und verbinden",
+    "tcp_port_invalid": "Port von 1 bis 65535 eingeben."
   },
   "system": {
     "container_mode_notice": "Läuft in einem Container. Host-Funktionen (WLAN, Netzwerk, Neustart, Herunterfahren, Updates, Hardware-Einrichtung) sind deaktiviert. Uptime, Last und RAM sind Werte des Hosts; der Speicher zeigt das Datenvolume. Zum Aktualisieren das Image neu bauen.",

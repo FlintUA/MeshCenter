@@ -24,6 +24,38 @@
     "reloading": "Reloading…",
     "undo": "Undo"
   },
+  "dialog": {
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "ok": "OK",
+    "delete": "Delete",
+    "update": "Update",
+    "restart": "Restart",
+    "reboot": "Reboot",
+    "shutdown": "Shut down",
+    "forget": "Forget",
+    "remove": "Remove",
+    "switch": "Switch",
+    "send_anyway": "Send anyway",
+    "discard": "Discard",
+    "configure": "Configure",
+    "title_apply_update": "Update MeshCenter",
+    "title_restart_meshcenter": "Restart MeshCenter",
+    "title_reboot": "Restart device",
+    "title_shutdown": "Shut down device",
+    "title_restart_listener": "Restart listener",
+    "title_forget_wifi": "Forget Wi-Fi network",
+    "title_rtc_setup": "Set up RTC",
+    "title_remove_connection": "Remove saved connection",
+    "title_switch_profile": "Switch radio profile",
+    "title_ignored_node": "Ignored node",
+    "title_unsaved_changes": "Unsaved changes",
+    "title_delete_schedule": "Delete schedule",
+    "title_delete_waypoint": "Delete waypoint",
+    "title_delete_waypoints": "Delete waypoints",
+    "title_delete_image": "Delete image",
+    "title_delete_all_images": "Delete all images"
+  },
   "nav": {
     "chats": "Chats",
     "camera": "Camera",
@@ -629,7 +661,6 @@
     "date_desc": "Date ↓",
     "delete_all": "Delete All",
     "delete_all_confirm": "Delete ALL images? This action cannot be undone.",
-    "delete_all_confirm2": "Are you sure you want to permanently delete the complete gallery?",
     "delete_failed": "Delete failed",
     "delete_image_aria": "Delete image",
     "delete_image_confirm": "Delete image \"{filename}\"?",
@@ -648,7 +679,13 @@
     "newest_first": "Newest first",
     "no_images_text": "Photos captured in Camera will appear here automatically.",
     "no_images_yet": "No captured images yet",
-    "storage_used_free": "{used} MB used · {free} GB free"
+    "storage_used_free": "{used} MB used · {free} GB free",
+    "delete_all_confirm_count": {
+      "one": "Delete ALL {count} images? This action cannot be undone.",
+      "few": "Delete ALL {count} images? This action cannot be undone.",
+      "many": "Delete ALL {count} images? This action cannot be undone.",
+      "other": "Delete ALL {count} images? This action cannot be undone."
+    }
   },
   "devices": {
     "subtitle": "Peripheral devices and modules assigned to the active radio profile",
@@ -846,7 +883,10 @@
     "unable_to_save_image": "Unable to save node image",
     "upload_failed": "Upload failed.",
     "usb_port": "USB port",
-    "connection_disconnected": "Disconnected"
+    "connection_disconnected": "Disconnected",
+    "edit_tcp_title": "Edit TCP connection",
+    "edit_tcp_confirm": "Save and connect",
+    "tcp_port_invalid": "Enter a port from 1 to 65535."
   },
   "system": {
     "container_mode_notice": "Running in a container. Host-level controls (Wi-Fi, network, reboot, shutdown, updates, hardware setup) are disabled. Uptime, load and RAM shown here are the host's; disk shows the data volume. To update, rebuild the image.",

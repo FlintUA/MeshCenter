@@ -51,6 +51,7 @@ class FakeElement {
     }
     setAttribute(name, value) { this._attrs[name] = value; }
     getAttribute(name) { return this._attrs[name]; }
+    querySelectorAll() { return []; }
 }
 
 function buildSandbox({ fetchImpl, i18nStrings }) {

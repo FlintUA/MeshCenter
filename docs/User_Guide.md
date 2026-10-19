@@ -770,6 +770,10 @@ Expected results:
 > An `Author identity unknown` message matters only when creating a new
 > Git commit on that Raspberry Pi. It does not prevent normal `git pull` updates.
 
+### Updating from the Updates card
+
+`Workspace > System > Updates` checks GitHub for the latest **release** and, when it is newer than the running version, offers **Update**. The update always moves to that release's tag - never to whatever is currently on `main` - and works from branch `main` as well as from a detached `git checkout vX.Y.Z`. It refuses (and tells you why) when the checkout has uncommitted changes, local commits, or sits on another branch ("on branch X - update manually (git)"), and it never offers or performs a downgrade. If the release changes `requirements.txt` it does nothing but show the manual steps. After a successful update the card shows **Last update: 1.12.0 → 1.12.1**, a **Roll back** button (back to exactly that previous version, with a confirmation) and the equivalent manual command. Every start, finish, refusal and rollback is written to the System Log (source `update`). The restart takes a few seconds; the radio status reads "MeshCenter is restarting" meanwhile.
+
 ## 17. Troubleshooting
 
 ### "Something went wrong on the server. Reference: xxxxxxxx"

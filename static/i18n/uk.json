@@ -54,7 +54,8 @@
     "title_delete_waypoint": "Видалити waypoint",
     "title_delete_waypoints": "Видалити waypoints",
     "title_delete_image": "Видалити зображення",
-    "title_delete_all_images": "Видалити всі зображення"
+    "title_delete_all_images": "Видалити всі зображення",
+    "rollback": "Відкотити"
   },
   "nav": {
     "chats": "Чати",
@@ -1003,10 +1004,9 @@
     "updates_restart_timeout_hint": "Це може означати, що новий код не запустився, або процес просто повільно піднімається на цьому залізі. Якщо веб-інтерфейс усе ще недоступний — перевірте через SSH: sudo systemctl status meshcenter.service",
     "updates_keep_waiting": "Почекати ще",
     "updates_preflight_dirty": "Є незакомічені локальні зміни: {files}. Розберіться з ними (перевірте через SSH) перш ніж оновлюватися.",
-    "updates_preflight_diverged": "У цій копії є локальні коміти, яких немає у віддаленій гілці — безпечний fast-forward неможливий.",
-    "updates_preflight_up_to_date": "Уже на останньому коміті цієї гілки.",
-    "updates_preflight_no_upstream": "Для цієї гілки не налаштована відстежувана віддалена гілка.",
-    "updates_preflight_fetch_failed": "Не вдалося зв'язатися з GitHub, щоб отримати останні коміти.",
+    "updates_preflight_diverged": "У цій копії є локальні коміти, яких немає в релізі - безпечно оновити неможливо.",
+    "updates_preflight_up_to_date": "Уже встановлено останній реліз.",
+    "updates_preflight_fetch_failed": "Не вдалося зв’язатися з GitHub, щоб отримати реліз.",
     "updates_apply_confirm": "Оновити MeshCenter з {current} до {latest}? Сервіс перезапуститься автоматично.",
     "updates_blocked_deps_title": "Оновлення заблоковано — залежності змінилися",
     "updates_blocked_deps_body": "Це оновлення змінює файл(и) залежностей: {files}. Його НЕ було застосовано — вашу інсталяцію не змінено.",
@@ -1038,7 +1038,21 @@
     "reception_label": "Вхідні повідомлення",
     "reception_not_supported": "Не приймаються (лише надсилання)",
     "network_rescan_no_changes": "Сканування мережі завершено, змін не знайдено",
-    "reception_tcp_partial": "Текст, waypoint, інфо про вузли й телеметрія"
+    "reception_tcp_partial": "Текст, waypoint, інфо про вузли й телеметрія",
+    "updates_rollback": "Відкотити",
+    "updates_rollback_title": "Відкотити MeshCenter",
+    "updates_rollback_confirm": "Відкотити MeshCenter з {current} на {previous}? Служба перезапуститься автоматично. Ваші дані не зміняться.",
+    "updates_rollback_blocked_title": "Відкат заблоковано - залежності відрізняються",
+    "updates_rollback_blocked_body": "Відкат на {previous} змінює файл(и) залежностей: {files}. Його НЕ виконано - встановлення не змінено.",
+    "updates_rollback_unavailable": "Для запущеної версії відкат недоступний.",
+    "updates_last_update_ok": "Останнє оновлення: {from} → {to} ({when})",
+    "updates_last_update_failed": "Останнє оновлення не вдалося: {from} → {to} ({when})",
+    "updates_last_rollback_ok": "Відкат виконано: {from} → {to} ({when})",
+    "updates_last_rollback_failed": "Відкат не вдався: {from} → {to} ({when})",
+    "updates_preflight_branch": "Ви на гілці {branch} - оновіть вручну (git).",
+    "updates_preflight_ahead": "Ця копія вже містить реліз {version} або новіший - оновлювати нічого.",
+    "updates_preflight_tag_missing": "Не вдалося отримати тег релізу {tag} з GitHub.",
+    "updates_preflight_no_target": "Немає релізу для оновлення - спершу натисніть «Перевірити зараз»."
   },
   "settings": {
     "title": "Налаштування",

@@ -54,7 +54,8 @@
     "title_delete_waypoint": "Waypoint löschen",
     "title_delete_waypoints": "Waypoints löschen",
     "title_delete_image": "Bild löschen",
-    "title_delete_all_images": "Alle Bilder löschen"
+    "title_delete_all_images": "Alle Bilder löschen",
+    "rollback": "Zurückrollen"
   },
   "nav": {
     "chats": "Chats",
@@ -1003,10 +1004,9 @@
     "updates_restart_timeout_hint": "Das kann bedeuten, dass der neue Code nicht gestartet ist, oder der Prozess auf dieser Hardware einfach langsam ist. Wenn die Weboberfläche weiterhin nicht erreichbar ist, prüfe per SSH: sudo systemctl status meshcenter.service",
     "updates_keep_waiting": "Weiter warten",
     "updates_preflight_dirty": "Es gibt nicht committete lokale Änderungen: {files}. Kläre sie (per SSH prüfen) bevor du aktualisierst.",
-    "updates_preflight_diverged": "Dieser Checkout hat lokale Commits, die nicht im Remote-Branch sind - kein sicherer Fast-Forward möglich.",
-    "updates_preflight_up_to_date": "Bereits auf dem neuesten Commit dieses Branches.",
-    "updates_preflight_no_upstream": "Für diesen Branch ist kein Upstream-Tracking-Branch konfiguriert.",
-    "updates_preflight_fetch_failed": "GitHub konnte nicht erreicht werden, um die neuesten Commits zu holen.",
+    "updates_preflight_diverged": "Dieser Stand hat lokale Commits, die nicht Teil des Releases sind - sicheres Aktualisieren nicht möglich.",
+    "updates_preflight_up_to_date": "Bereits auf dem neuesten Release.",
+    "updates_preflight_fetch_failed": "GitHub war nicht erreichbar, das Release konnte nicht geholt werden.",
     "updates_apply_confirm": "MeshCenter von {current} auf {latest} aktualisieren? Der Dienst startet automatisch neu.",
     "updates_blocked_deps_title": "Update blockiert — Abhängigkeiten geändert",
     "updates_blocked_deps_body": "Dieses Update ändert folgende Abhängigkeitsdatei(en): {files}. Es wurde NICHT angewendet — Ihre Installation ist unverändert.",
@@ -1038,7 +1038,21 @@
     "reception_label": "Eingehende Nachrichten",
     "reception_not_supported": "Nicht empfangen (nur senden)",
     "network_rescan_no_changes": "Netzwerk-Scan abgeschlossen, keine Änderungen gefunden",
-    "reception_tcp_partial": "Text, Wegpunkte, Knoteninfo & Telemetrie"
+    "reception_tcp_partial": "Text, Wegpunkte, Knoteninfo & Telemetrie",
+    "updates_rollback": "Zurückrollen",
+    "updates_rollback_title": "MeshCenter zurückrollen",
+    "updates_rollback_confirm": "MeshCenter von {current} auf {previous} zurückrollen? Der Dienst startet automatisch neu. Ihre Daten bleiben unverändert.",
+    "updates_rollback_blocked_title": "Zurückrollen blockiert - Abhängigkeiten unterscheiden sich",
+    "updates_rollback_blocked_body": "Das Zurückrollen auf {previous} ändert Abhängigkeitsdatei(en): {files}. Es wurde NICHT angewendet - Ihre Installation ist unverändert.",
+    "updates_rollback_unavailable": "Für die laufende Version ist kein Zurückrollen verfügbar.",
+    "updates_last_update_ok": "Letztes Update: {from} → {to} ({when})",
+    "updates_last_update_failed": "Letztes Update fehlgeschlagen: {from} → {to} ({when})",
+    "updates_last_rollback_ok": "Zurückgerollt: {from} → {to} ({when})",
+    "updates_last_rollback_failed": "Zurückrollen fehlgeschlagen: {from} → {to} ({when})",
+    "updates_preflight_branch": "Auf Branch {branch} - bitte manuell aktualisieren (git).",
+    "updates_preflight_ahead": "Dieser Stand enthält Release {version} bereits oder ist neuer - nichts zu aktualisieren.",
+    "updates_preflight_tag_missing": "Release-Tag {tag} konnte nicht von GitHub geholt werden.",
+    "updates_preflight_no_target": "Kein Release zum Aktualisieren - bitte zuerst \"Jetzt prüfen\" drücken."
   },
   "settings": {
     "title": "Einstellungen",

@@ -20,6 +20,7 @@ import pytest
 from flask import Flask
 
 from api.api_updates import register_updates_routes
+from meshsrv import planned_restart
 
 
 def _handle_errors(f):
@@ -34,13 +35,26 @@ def _handle_errors(f):
 
 @pytest.fixture
 def api_env(tmp_path):
+    from meshsrv import update_service
+    update_service.configure(str(tmp_path / "update_check.json"))
     app = Flask(__name__)
-    register_updates_routes(app, lambda: "test-version", str(tmp_path), _handle_errors)
-    return {"app": app, "client": app.test_client()}
+    events = []
+    register_updates_routes(
+        app, lambda: "1.0.0", str(tmp_path), _handle_errors,
+        log_event=lambda title, level="INFO", details="", source="system": events.append((title, level, details, source)),
+    )
+    return {"app": app, "client": app.test_client(), "events": events}
+
+
+@pytest.fixture(autouse=True)
+def _no_planned_restart_leak():
+    planned_restart.clear()
+    yield
+    planned_restart.clear()
 
 
 def test_apply_returns_blocked_status_when_requirements_changed(api_env):
-    with patch("api.api_updates.update_service.git_preflight", return_value={"ok": True, "upstream": "origin/main"}), \
+    with patch("api.api_updates.update_service.git_preflight", return_value={"ok": True, "target_tag": "v1.0.1", "target_sha": "b" * 40, "detached": False, "branch": "main"}), \
          patch(
              "api.api_updates.update_service.apply_update",
              return_value={
@@ -65,11 +79,12 @@ def test_apply_returns_blocked_status_when_requirements_changed(api_env):
 
 
 def test_apply_restarts_normally_when_requirements_unchanged(api_env):
-    with patch("api.api_updates.update_service.git_preflight", return_value={"ok": True, "upstream": "origin/main"}), \
+    with patch("api.api_updates.update_service.git_preflight", return_value={"ok": True, "target_tag": "v1.0.1", "target_sha": "b" * 40, "detached": False, "branch": "main"}), \
          patch(
              "api.api_updates.update_service.apply_update",
              return_value={
                  "ok": True, "blocked": False, "previous_sha": "abc123", "output": "",
+                 "previous_version": "1.0.0", "to_version": "1.0.1", "target_tag": "v1.0.1", "target_sha": "b" * 40,
                  "requirements_changed": False, "changed_requirements_files": [],
              },
          ), \

@@ -99,6 +99,7 @@ class SerialPortSupervisor:
         port: str,
         radio_lock: threading.RLock,
         pause_listen: threading.Event,
+        is_planned_restart: Optional[Callable[[], bool]] = None,
         on_raw_line: Optional[Callable[[str], None]] = None,
         on_lifecycle_event: Optional[Callable[[str, Optional[bool]], None]] = None,
         on_log: Optional[Callable[..., None]] = None,
@@ -113,6 +114,9 @@ class SerialPortSupervisor:
         self._port = port
         self._radio_lock = radio_lock
         self._pause_listen = pause_listen
+        # UPD1: True while MeshCenter itself is being restarted (update, restart action, profile
+        # switch): the --listen child dying with the process is intentional, never an "unexpected exit".
+        self._is_planned_restart = is_planned_restart or (lambda: False)
         self._last_stop_request_at = float("-inf")
         self._claim_released_at = float("-inf")
         # ST1: visible counters (/api/radio_health "listener_exits") - how often the
@@ -416,9 +420,7 @@ class SerialPortSupervisor:
             # then logged every routine claim as ERROR "Listener stopped
             # unexpectedly" (~20-30/h per node). A stop shortly after our own stop
             # request is that request.
-            stop_was_intentional = self._pause_listen.is_set() or (
-                time.monotonic() - self._last_stop_request_at < INTENTIONAL_STOP_GRACE_S
-            )
+            stop_was_intentional = self._stop_is_intentional()
 
             if stop_was_intentional:
                 if current is not None:
@@ -768,6 +770,15 @@ class SerialPortSupervisor:
     def exit_stats(self) -> dict:
         """Counters of the listener's own exits (see __init__); a copy."""
         return dict(self._exit_stats)
+
+    def _stop_is_intentional(self) -> bool:
+        """A listener exit is intentional while a claim holds the pause flag, shortly after our
+        own stop request, or while MeshCenter itself is being restarted (UPD1)."""
+        return (
+            self._pause_listen.is_set()
+            or self._is_planned_restart()
+            or (time.monotonic() - self._last_stop_request_at < INTENTIONAL_STOP_GRACE_S)
+        )
 
     def restarting_after_claim(self, window: float = 45.0) -> bool:
         """True for a short while after a claim handed the port back: the listener

@@ -36,6 +36,7 @@ from camera import camera
 from camera.camera_manager import build_camera_manager
 from telemetry import telemetry
 from meshsrv import meshtastic_transport
+from meshsrv import planned_restart
 from meshsrv.info_parser import local_node_entry, parse_info_nodes
 from meshsrv.radio_manager import RadioConnectionManager
 from meshsrv.radio_release_store import RadioReleaseStore
@@ -1081,7 +1082,7 @@ camera_power_enabled_at_startup = register_camera_routes(
 register_camera_manager_routes(app, device_manager, handle_errors, camera_manager_state)
 register_system_routes(app, get_cpu_temperature=lambda: read_cpu_temperature(), get_app_version=lambda: APP_VERSION)
 register_cpu_history_routes(app, CPU_HISTORY_FILE)
-register_updates_routes(app, resolve_version=lambda: APP_VERSION, project_dir=PROJECT_DIR, handle_errors=handle_errors)
+register_updates_routes(app, resolve_version=lambda: APP_VERSION, project_dir=PROJECT_DIR, handle_errors=handle_errors, log_event=log_system_event)
 register_attachments_routes(app, handle_errors)
 
 
@@ -1413,6 +1414,7 @@ listener_supervisor = SerialPortSupervisor(
     port=MESHTASTIC_PORT,
     radio_lock=radio_lock,
     pause_listen=pause_listen,
+    is_planned_restart=planned_restart.active,
     on_raw_line=lambda line: _handle_listener_line(line),
     on_lifecycle_event=lambda event, **kwargs: radio_event(event, **kwargs),
     # Task 7 follow-up: title/source used to be hardcoded to "Node Time
@@ -6442,6 +6444,7 @@ def compute_radio_health_status(
     awaiting_identity=False,
     tcp_link=None,
     restarting_after_claim=False,
+    planned_restart=False,
 ):
     """Pure status/level/reason/recommendation decision for
     radio_health_worker() - split out the same way
@@ -6494,6 +6497,16 @@ def compute_radio_health_status(
                 "Radio released for external configuration",
                 "Reconnect the radio from Settings when configuration is complete",
             )
+
+    if planned_restart:
+        # UPD1: an update / "Restart MeshCenter" / profile switch / reboot is under way - the
+        # listener (and a TCP session) going away is the restart, not a fault.
+        return (
+            "PAUSED",
+            "INFO",
+            "MeshCenter is restarting",
+            "Wait a few seconds",
+        )
 
     if active_transport == "serial":
 
@@ -6768,6 +6781,7 @@ def radio_health_worker():
                     awaiting_identity=listener_supervisor.owns_recovery(),
                     tcp_link=tcp_link_status,
                     restarting_after_claim=listener_supervisor.restarting_after_claim(),
+                    planned_restart=planned_restart.active(),
                 )
 
                 previous_status = radio_health.get("status")
@@ -7517,55 +7531,30 @@ def api_devices_dashboard():
 
 
 def _restart_helper_killed_by_the_restart(error):
-    """True when the restart helper ended because of SIGTERM - i.e. the restart
-    it requested is already tearing this process group down (returncode -15, or
-    128+15 if a shell/sudo reported it that way)."""
-    return getattr(error, "returncode", None) in (-signal.SIGTERM, 128 + signal.SIGTERM)
+    """True when the restart helper ended because of SIGTERM - i.e. the restart it requested
+    is already tearing this process group down (see meshsrv/planned_restart.py)."""
+    return planned_restart.helper_killed_by_the_restart(error)
 
 
 def _restart_meshcenter_after_profile_switch():
     """Restart the service after the activation response reaches the browser."""
+    planned_restart.begin("radio profile switch")
     time.sleep(1.2)
     if runtime_env.is_container():
         # No systemd in a container: SIGTERM this gunicorn worker, the
         # master respawns a fresh one (see runtime_env.request_self_restart).
         runtime_env.request_self_restart()
         return
-    try:
-        subprocess.run(
-            ["sudo", "-n", "/usr/bin/systemctl", "restart", "meshcenter.service"],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=20,
-        )
-    except subprocess.CalledProcessError as error:
-        if _restart_helper_killed_by_the_restart(error):
-            # Expected, not a failure: `systemctl restart` stops THIS service first,
-            # and systemd's control-group kill takes the helper (a child of this very
-            # process) down with SIGTERM before it can report success. Every profile
-            # switch used to log a false ERROR "Radio profile restart failed ... died
-            # with SIGTERM" even though the restart worked.
-            log_system_event(
-                "Radio profile restart",
-                "INFO",
-                "MeshCenter is restarting to apply the selected radio profile",
-                source="radio",
-            )
-            return
-        log_system_event(
-            "Radio profile restart failed",
-            "ERROR",
-            str(error),
-            source="radio",
-        )
-    except Exception as error:
-        log_system_event(
-            "Radio profile restart failed",
-            "ERROR",
-            str(error),
-            source="radio",
-        )
+    # `systemctl restart` stops THIS service first and systemd's control-group kill takes the
+    # helper (a child of this very process) down with SIGTERM before it can report success:
+    # expected (INFO), not a failure - every profile switch used to log a false ERROR.
+    planned_restart.run_restart_command(
+        ["sudo", "-n", "/usr/bin/systemctl", "restart", "meshcenter.service"],
+        label="Radio profile restart",
+        log=log_system_event,
+        source="radio",
+        info_detail="MeshCenter is restarting to apply the selected radio profile",
+    )
 
 
 
@@ -9920,6 +9909,13 @@ def start_runtime():
         # observing it transiently empty between the clear and the update.
         with state_lock:
             return normalize_settings(settings)
+
+    # UPD1: resolve an update/rollback the previous process started (writes "Update
+    # finished" / "Update failed" to the System Log, records last_update for the card).
+    try:
+        update_service.reconcile_pending(APP_VERSION, log_system_event)
+    except Exception as error:
+        print(f"[UPDATES] Could not reconcile a pending update: {error}", flush=True)
 
     threading.Thread(
         target=update_service.check_worker,

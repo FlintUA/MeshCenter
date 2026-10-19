@@ -24,6 +24,38 @@
     "reloading": "Перезагрузка…",
     "undo": "Отменить"
   },
+  "dialog": {
+    "cancel": "Отмена",
+    "confirm": "Подтвердить",
+    "ok": "OK",
+    "delete": "Удалить",
+    "update": "Обновить",
+    "restart": "Перезапустить",
+    "reboot": "Перезагрузить",
+    "shutdown": "Выключить",
+    "forget": "Забыть",
+    "remove": "Удалить",
+    "switch": "Переключить",
+    "send_anyway": "Всё равно отправить",
+    "discard": "Не сохранять",
+    "configure": "Настроить",
+    "title_apply_update": "Обновить MeshCenter",
+    "title_restart_meshcenter": "Перезапустить MeshCenter",
+    "title_reboot": "Перезагрузить устройство",
+    "title_shutdown": "Выключить устройство",
+    "title_restart_listener": "Перезапустить прослушивание",
+    "title_forget_wifi": "Забыть сеть Wi-Fi",
+    "title_rtc_setup": "Настроить RTC",
+    "title_remove_connection": "Удалить сохранённое подключение",
+    "title_switch_profile": "Сменить профиль радио",
+    "title_ignored_node": "Игнорируемый узел",
+    "title_unsaved_changes": "Несохранённые изменения",
+    "title_delete_schedule": "Удалить расписание",
+    "title_delete_waypoint": "Удалить waypoint",
+    "title_delete_waypoints": "Удалить waypoints",
+    "title_delete_image": "Удалить изображение",
+    "title_delete_all_images": "Удалить все изображения"
+  },
   "nav": {
     "chats": "Чаты",
     "camera": "Камера",
@@ -629,7 +661,6 @@
     "date_desc": "Дата ↓",
     "delete_all": "Удалить все",
     "delete_all_confirm": "Удалить ВСЕ изображения? Это действие нельзя отменить.",
-    "delete_all_confirm2": "Вы уверены, что хотите безвозвратно удалить всю галерею?",
     "delete_failed": "Не удалось удалить",
     "delete_image_aria": "Удалить изображение",
     "delete_image_confirm": "Удалить изображение «{filename}»?",
@@ -648,7 +679,13 @@
     "newest_first": "Сначала новые",
     "no_images_text": "Фото, сделанные в разделе «Камера», появятся здесь автоматически.",
     "no_images_yet": "Пока нет сохранённых изображений",
-    "storage_used_free": "Занято {used} МБ · свободно {free} ГБ"
+    "storage_used_free": "Занято {used} МБ · свободно {free} ГБ",
+    "delete_all_confirm_count": {
+      "one": "Удалить ВСЕ {count} изображение? Это действие нельзя отменить.",
+      "few": "Удалить ВСЕ {count} изображения? Это действие нельзя отменить.",
+      "many": "Удалить ВСЕ {count} изображений? Это действие нельзя отменить.",
+      "other": "Удалить ВСЕ {count} изображений? Это действие нельзя отменить."
+    }
   },
   "devices": {
     "subtitle": "Периферийные устройства и модули, привязанные к активному профилю радиостанции",
@@ -846,7 +883,10 @@
     "unable_to_save_image": "Не удалось сохранить изображение узла",
     "upload_failed": "Загрузка не удалась.",
     "usb_port": "USB-порт",
-    "connection_disconnected": "Отключено"
+    "connection_disconnected": "Отключено",
+    "edit_tcp_title": "Изменить TCP-подключение",
+    "edit_tcp_confirm": "Сохранить и подключиться",
+    "tcp_port_invalid": "Введите порт от 1 до 65535."
   },
   "system": {
     "container_mode_notice": "Работает в контейнере. Функции уровня хоста (Wi-Fi, сеть, перезагрузка, выключение, обновления, настройка оборудования) отключены. Аптайм, нагрузка и ОЗУ — значения хоста; диск показывает том данных. Для обновления пересоберите образ.",

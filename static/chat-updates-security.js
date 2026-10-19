@@ -104,10 +104,10 @@ async function toggleUpdatesAutoCheck(checked) {
         if (data.ok) {
             appSettings = data.settings;
         } else {
-            alert(window.I18N.t('settings.unable_to_save_settings', { reason: data.error || window.I18N.t('errors.unknown_error') }));
+            showToast(window.I18N.t('settings.unable_to_save_settings', { reason: data.error || window.I18N.t('errors.unknown_error') }), 'error', { duration: 10000 });
         }
     } catch (error) {
-        alert(window.I18N.t('settings.unable_to_save_settings', { reason: error.message }));
+        showToast(window.I18N.t('settings.unable_to_save_settings', { reason: error.message }), 'error', { duration: 10000 });
     }
 }
 
@@ -356,7 +356,13 @@ async function applyUpdate(button) {
             current: _lastUpdatesStatus?.current_version || '?',
             latest: _lastUpdatesStatus?.latest_version || '?'
         });
-        if (!confirm(confirmMessage)) {
+        const proceed = await appConfirm({
+            title: window.I18N.t('dialog.title_apply_update'),
+            message: confirmMessage,
+            confirmLabel: window.I18N.t('dialog.update'),
+            danger: true,
+        });
+        if (!proceed) {
             if (button) button.disabled = false;
             return;
         }

@@ -740,7 +740,7 @@ async function toggleScheduleEnabled(id) {
 }
 
 async function deleteScheduleRule(id) {
-  if (!confirm(window.I18N.t('time.confirm_delete'))) return;
+  if (!await appConfirm({ title: window.I18N.t('dialog.title_delete_schedule'), message: window.I18N.t('time.confirm_delete'), confirmLabel: window.I18N.t('dialog.delete'), danger: true })) return;
   try {
     const resp = await fetch(`/api/schedules/${encodeURIComponent(id)}`, { method: 'DELETE' });
     if (!resp.ok) return;
@@ -985,9 +985,9 @@ async function openScheduleForm(id) {
   _attachDirtyListeners();
 }
 
-function closeScheduleForm() {
+async function closeScheduleForm() {
   if (_scheduleFormDirty) {
-    if (!confirm(window.I18N.t('time.unsaved_changes'))) return;
+    if (!await appConfirm({ title: window.I18N.t('dialog.title_unsaved_changes'), message: window.I18N.t('time.unsaved_changes'), confirmLabel: window.I18N.t('dialog.discard'), danger: false })) return;
   }
   _scheduleFormDirty = false;
   const modal = document.getElementById('scheduleModal');
@@ -1109,7 +1109,7 @@ async function saveScheduleForm() {
       return;
     }
     _scheduleFormDirty = false;
-    closeScheduleForm();
+    await closeScheduleForm();
     await loadSchedules();
   } catch (e) {
     console.warn('Failed to save schedule:', e);
@@ -1118,12 +1118,12 @@ async function saveScheduleForm() {
 
 async function deleteScheduleFromForm() {
   if (!scheduleEditingId) return;
-  if (!confirm(window.I18N.t('time.confirm_delete'))) return;
+  if (!await appConfirm({ title: window.I18N.t('dialog.title_delete_schedule'), message: window.I18N.t('time.confirm_delete'), confirmLabel: window.I18N.t('dialog.delete'), danger: true })) return;
   try {
     const resp = await fetch(`/api/schedules/${encodeURIComponent(scheduleEditingId)}`, { method: 'DELETE' });
     if (!resp.ok) return;
     _scheduleFormDirty = false;
-    closeScheduleForm();
+    await closeScheduleForm();
     await loadSchedules();
   } catch (e) {
     console.warn('Failed to delete schedule:', e);
@@ -2316,13 +2316,13 @@ async function toggleBrowserNotifications(enabled) {
         });
         const data = await response.json();
         if (!data.ok) {
-            alert(window.I18N.t('settings.unable_to_save_settings', { reason: data.error || window.I18N.t('errors.unknown_error') }));
+            showToast(window.I18N.t('settings.unable_to_save_settings', { reason: data.error || window.I18N.t('errors.unknown_error') }), 'error', { duration: 10000 });
             return;
         }
         appSettings = data.settings;
         updateBrowserNotificationsUi();
     } catch (error) {
-        alert(window.I18N.t('settings.unable_to_save_settings', { reason: error.message }));
+        showToast(window.I18N.t('settings.unable_to_save_settings', { reason: error.message }), 'error', { duration: 10000 });
     }
 }
 
@@ -2340,12 +2340,12 @@ async function updateBrowserNotificationCategory(key, checked) {
         });
         const data = await response.json();
         if (!data.ok) {
-            alert(window.I18N.t('settings.unable_to_save_settings', { reason: data.error || window.I18N.t('errors.unknown_error') }));
+            showToast(window.I18N.t('settings.unable_to_save_settings', { reason: data.error || window.I18N.t('errors.unknown_error') }), 'error', { duration: 10000 });
             return;
         }
         appSettings = data.settings;
     } catch (error) {
-        alert(window.I18N.t('settings.unable_to_save_settings', { reason: error.message }));
+        showToast(window.I18N.t('settings.unable_to_save_settings', { reason: error.message }), 'error', { duration: 10000 });
     }
 }
 
@@ -3642,7 +3642,7 @@ async function setLanguageSetting(value) {
         const data = await response.json();
 
         if (!data.ok) {
-            alert(window.I18N.t('settings.unable_to_save_settings', { reason: data.error || window.I18N.t('errors.unknown_error') }));
+            showToast(window.I18N.t('settings.unable_to_save_settings', { reason: data.error || window.I18N.t('errors.unknown_error') }), 'error', { duration: 10000 });
             return;
         }
 
@@ -3652,7 +3652,7 @@ async function setLanguageSetting(value) {
         // apply the new language.
         window.location.reload();
     } catch (error) {
-        alert(window.I18N.t('settings.unable_to_save_settings', { reason: error.message }));
+        showToast(window.I18N.t('settings.unable_to_save_settings', { reason: error.message }), 'error', { duration: 10000 });
     }
 }
 
@@ -3682,7 +3682,7 @@ async function setUnitSetting(name, value) {
         const data = await response.json();
 
         if (!data.ok) {
-            alert(window.I18N.t('settings.unable_to_save_settings', { reason: data.error || window.I18N.t('errors.unknown_error') }));
+            showToast(window.I18N.t('settings.unable_to_save_settings', { reason: data.error || window.I18N.t('errors.unknown_error') }), 'error', { duration: 10000 });
             return;
         }
 
@@ -3699,7 +3699,7 @@ async function setUnitSetting(name, value) {
         }
 
     } catch (error) {
-        alert(window.I18N.t('settings.unable_to_save_settings', { reason: error.message }));
+        showToast(window.I18N.t('settings.unable_to_save_settings', { reason: error.message }), 'error', { duration: 10000 });
     }
 }
 
@@ -7420,7 +7420,7 @@ if (sendForm) {
         if (currentChatType === 'dm' && currentChatId !== 'channel') {
             const isIgnored = await checkNodeIgnored(currentChatId);
             if (isIgnored) {
-                if (!confirm(`⚠️ ${window.I18N.t('chat.ignored_node_confirm', { name: currentChatName })}`)) {
+                if (!await appConfirm({ title: window.I18N.t('dialog.title_ignored_node'), message: window.I18N.t('chat.ignored_node_confirm', { name: currentChatName }), confirmLabel: window.I18N.t('dialog.send_anyway'), danger: false })) {
                     return;
                 }
             }
@@ -7501,11 +7501,11 @@ async function executeDeleteChat() {
         } else {
             const error = await response.json();
             const reason = window.I18N.tOrFallback('errors.' + (error.error_code || ''), error.error_params, error.error || window.I18N.t('errors.unknown_error'));
-            alert(window.I18N.t('chat.delete_chat_failed', { reason }));
+            showToast(window.I18N.t('chat.delete_chat_failed', { reason }), 'error', { duration: 10000 });
         }
     } catch (error) {
         console.error('Error deleting chat:', error);
-        alert(window.I18N.t('errors.network_error'));
+        showToast(window.I18N.t('errors.network_error'), 'error', { duration: 10000 });
     }
 }
 
@@ -7552,11 +7552,11 @@ async function executeClearChat() {
         } else {
             const error = await response.json();
             const reason = window.I18N.tOrFallback('errors.' + (error.error_code || ''), error.error_params, error.error || window.I18N.t('errors.unknown_error'));
-            alert(window.I18N.t('chat.clear_chat_failed', { reason }));
+            showToast(window.I18N.t('chat.clear_chat_failed', { reason }), 'error', { duration: 10000 });
         }
     } catch (error) {
         console.error('Error clearing chat:', error);
-        alert(window.I18N.t('errors.network_error'));
+        showToast(window.I18N.t('errors.network_error'), 'error', { duration: 10000 });
     }
 }
 
@@ -7643,11 +7643,11 @@ async function toggleIgnore(nodeId) {
             }
         } else {
             const error = await response.json();
-            alert(window.I18N.t('chat.toggle_ignore_failed', { reason: error.error || window.I18N.t('errors.unknown_error') }));
+            showToast(window.I18N.t('chat.toggle_ignore_failed', { reason: error.error || window.I18N.t('errors.unknown_error') }), 'error', { duration: 10000 });
         }
     } catch (error) {
         console.error('Error toggling ignore:', error);
-        alert(window.I18N.t('errors.network_error'));
+        showToast(window.I18N.t('errors.network_error'), 'error', { duration: 10000 });
     }
 }
 
@@ -7678,11 +7678,11 @@ async function toggleFavorite(nodeId) {
             );
         } else {
             const error = await response.json();
-            alert(window.I18N.t('chat.toggle_favorite_failed', { reason: error.error || window.I18N.t('errors.unknown_error') }));
+            showToast(window.I18N.t('chat.toggle_favorite_failed', { reason: error.error || window.I18N.t('errors.unknown_error') }), 'error', { duration: 10000 });
         }
     } catch (error) {
         console.error('Error toggling favorite:', error);
-        alert(window.I18N.t('errors.network_error'));
+        showToast(window.I18N.t('errors.network_error'), 'error', { duration: 10000 });
     }
 }
 
@@ -10754,7 +10754,7 @@ async function importNodesJSON(event) {
 }
 
 async function restartListener() {
-    if (!confirm(window.I18N.t('system.restart_listener_confirm'))) {
+    if (!await appConfirm({ title: window.I18N.t('dialog.title_restart_listener'), message: window.I18N.t('system.restart_listener_confirm'), confirmLabel: window.I18N.t('dialog.restart'), danger: true })) {
         return;
     }
 
@@ -11287,19 +11287,35 @@ async function editRadioConnection(transport) {
         const connections = await _fetchCurrentRadioConnections();
         const currentEndpoint = connections.tcp?.endpoint || {};
 
-        const newHost = window.prompt(window.I18N.t('node_manager.edit_tcp_host_prompt'), currentEndpoint.host || '');
-        if (newHost === null) return;
-        const trimmedHost = newHost.trim();
-        if (!trimmedHost) {
-            showToast(window.I18N.t('node_manager.tcp_host_required'), 'error');
-            return;
-        }
+        const values = await appPrompt({
+            title: window.I18N.t('node_manager.edit_tcp_title'),
+            confirmLabel: window.I18N.t('node_manager.edit_tcp_confirm'),
+            fields: [
+                {
+                    name: 'host',
+                    label: window.I18N.t('node_manager.edit_tcp_host_prompt'),
+                    value: currentEndpoint.host || '',
+                    inputmode: 'url',
+                    validate: (value) => (String(value).trim() ? '' : window.I18N.t('node_manager.tcp_host_required')),
+                },
+                {
+                    name: 'port',
+                    label: window.I18N.t('node_manager.edit_tcp_port_prompt'),
+                    value: String(currentEndpoint.port || 4403),
+                    inputmode: 'numeric',
+                    validate: (value) => {
+                        const text = String(value).trim();
+                        const port = Number(text);
+                        return /^\d+$/.test(text) && port >= 1 && port <= 65535 ? '' : window.I18N.t('node_manager.tcp_port_invalid');
+                    },
+                },
+            ],
+        });
+        if (!values) return;
+        const trimmedHost = values.host.trim();
+        const newPort = parseInt(values.port.trim(), 10);
 
-        const newPortText = window.prompt(window.I18N.t('node_manager.edit_tcp_port_prompt'), String(currentEndpoint.port || 4403));
-        if (newPortText === null) return;
-        const newPort = parseInt(newPortText.trim(), 10);
-
-        await connectToSavedTransport('tcp', { host: trimmedHost, port: Number.isFinite(newPort) && newPort > 0 ? newPort : 4403 });
+        await connectToSavedTransport('tcp', { host: trimmedHost, port: newPort });
         showToast(window.I18N.t('node_manager.connection_switched'), 'success');
         await loadNodeManagerDashboard();
     } catch (error) {
@@ -11309,7 +11325,7 @@ async function editRadioConnection(transport) {
 }
 
 async function removeRadioConnection(transport) {
-    const confirmed = window.confirm(window.I18N.t('node_manager.remove_connection_confirm', { transport: nodeManagerTransportLabel(transport) }));
+    const confirmed = await appConfirm({ title: window.I18N.t('dialog.title_remove_connection'), message: window.I18N.t('node_manager.remove_connection_confirm', { transport: nodeManagerTransportLabel(transport) }), confirmLabel: window.I18N.t('dialog.remove'), danger: true });
     if (!confirmed) return;
 
     try {
@@ -11931,7 +11947,7 @@ async function activateNodeManagerProfile(profileId) {
     const radioName = card?.querySelector('.node-profile-main strong')?.textContent?.trim()
         || cleanProfileId;
 
-    const confirmed = window.confirm(window.I18N.t('node_manager.switch_profile_confirm', { name: radioName }));
+    const confirmed = await appConfirm({ title: window.I18N.t('dialog.title_switch_profile'), message: window.I18N.t('node_manager.switch_profile_confirm', { name: radioName }), confirmLabel: window.I18N.t('dialog.switch'), danger: false });
     if (!confirmed) return;
 
     document.querySelectorAll('.node-profile-card').forEach(button => {
@@ -12171,7 +12187,7 @@ async function setupRtc(button) {
     // again when it's already on is a safe no-op (hardware_config.py's
     // enable_i2c() is idempotent), so there's no need to ask the user
     // which of the two steps they actually want.
-    if (!window.confirm(window.I18N.t('devices.rtc_setup_confirm'))) return;
+    if (!await appConfirm({ title: window.I18N.t('dialog.title_rtc_setup'), message: window.I18N.t('devices.rtc_setup_confirm'), confirmLabel: window.I18N.t('dialog.configure'), danger: false })) return;
 
     const originalText = button.textContent;
     button.disabled = true;
@@ -13138,7 +13154,7 @@ async function connectWifi(ssid, password) {
 }
 
 async function forgetWifi(ssid) {
-    if (!confirm(window.I18N.t('system.forget_wifi_confirm', { ssid }))) return;
+    if (!await appConfirm({ title: window.I18N.t('dialog.title_forget_wifi'), message: window.I18N.t('system.forget_wifi_confirm', { ssid }), confirmLabel: window.I18N.t('dialog.forget'), danger: true })) return;
 
     try {
         const response = await fetch('/api/system/wifi/forget', {
@@ -14205,23 +14221,30 @@ async function runSystemAction(action, button) {
     const config = {
         restart_meshcenter: {
             confirm: window.I18N.t('system.restart_meshcenter_confirm'),
+            title: window.I18N.t('dialog.title_restart_meshcenter'),
+            label: window.I18N.t('dialog.restart'),
             pending: window.I18N.t('system.restarting_meshcenter'),
             success: window.I18N.t('system.meshcenter_restart_requested')
         },
         reboot: {
             confirm: window.I18N.t('system.reboot_device_confirm'),
+            title: window.I18N.t('dialog.title_reboot'),
+            label: window.I18N.t('dialog.reboot'),
             pending: window.I18N.t('system.restarting_device'),
             success: window.I18N.t('system.device_restart_requested')
         },
         shutdown: {
             confirm: window.I18N.t('system.shutdown_device_confirm'),
+            title: window.I18N.t('dialog.title_shutdown'),
+            label: window.I18N.t('dialog.shutdown'),
             pending: window.I18N.t('system.shutting_down_device'),
             success: window.I18N.t('system.device_shutdown_requested')
         }
     };
 
     const selected = config[action];
-    if (!selected || !confirm(selected.confirm)) return;
+    if (!selected) return;
+    if (!(await appConfirm({ title: selected.title, message: selected.confirm, confirmLabel: selected.label, danger: true }))) return;
 
     const originalText = button?.textContent || '';
     if (button) {

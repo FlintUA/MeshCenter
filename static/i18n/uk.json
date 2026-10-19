@@ -24,6 +24,38 @@
     "reloading": "Перезавантаження…",
     "undo": "Скасувати"
   },
+  "dialog": {
+    "cancel": "Скасувати",
+    "confirm": "Підтвердити",
+    "ok": "OK",
+    "delete": "Видалити",
+    "update": "Оновити",
+    "restart": "Перезапустити",
+    "reboot": "Перезавантажити",
+    "shutdown": "Вимкнути",
+    "forget": "Забути",
+    "remove": "Видалити",
+    "switch": "Перемкнути",
+    "send_anyway": "Все одно надіслати",
+    "discard": "Не зберігати",
+    "configure": "Налаштувати",
+    "title_apply_update": "Оновити MeshCenter",
+    "title_restart_meshcenter": "Перезапустити MeshCenter",
+    "title_reboot": "Перезавантажити пристрій",
+    "title_shutdown": "Вимкнути пристрій",
+    "title_restart_listener": "Перезапустити прослуховування",
+    "title_forget_wifi": "Забути мережу Wi-Fi",
+    "title_rtc_setup": "Налаштувати RTC",
+    "title_remove_connection": "Видалити збережене підключення",
+    "title_switch_profile": "Змінити профіль радіо",
+    "title_ignored_node": "Ігнорований вузол",
+    "title_unsaved_changes": "Незбережені зміни",
+    "title_delete_schedule": "Видалити розклад",
+    "title_delete_waypoint": "Видалити waypoint",
+    "title_delete_waypoints": "Видалити waypoints",
+    "title_delete_image": "Видалити зображення",
+    "title_delete_all_images": "Видалити всі зображення"
+  },
   "nav": {
     "chats": "Чати",
     "camera": "Камера",
@@ -629,7 +661,6 @@
     "date_desc": "Дата ↓",
     "delete_all": "Видалити все",
     "delete_all_confirm": "Видалити ВСІ зображення? Цю дію не можна скасувати.",
-    "delete_all_confirm2": "Ви впевнені, що хочете безповоротно видалити всю галерею?",
     "delete_failed": "Не вдалося видалити",
     "delete_image_aria": "Видалити зображення",
     "delete_image_confirm": "Видалити зображення «{filename}»?",
@@ -648,7 +679,13 @@
     "newest_first": "Спочатку нові",
     "no_images_text": "Фото, зроблені в розділі «Камера», з'являться тут автоматично.",
     "no_images_yet": "Поки немає збережених зображень",
-    "storage_used_free": "Використано {used} МБ · вільно {free} ГБ"
+    "storage_used_free": "Використано {used} МБ · вільно {free} ГБ",
+    "delete_all_confirm_count": {
+      "one": "Видалити ВСЕ {count} зображення? Цю дію неможливо скасувати.",
+      "few": "Видалити ВСІ {count} зображення? Цю дію неможливо скасувати.",
+      "many": "Видалити ВСІ {count} зображень? Цю дію неможливо скасувати.",
+      "other": "Видалити ВСІ {count} зображень? Цю дію неможливо скасувати."
+    }
   },
   "devices": {
     "subtitle": "Периферійні пристрої та модулі, прив'язані до активного профілю радіостанції",
@@ -846,7 +883,10 @@
     "unable_to_save_image": "Не вдалося зберегти зображення вузла",
     "upload_failed": "Завантаження не вдалося.",
     "usb_port": "USB-порт",
-    "connection_disconnected": "Відключено"
+    "connection_disconnected": "Відключено",
+    "edit_tcp_title": "Змінити TCP-підключення",
+    "edit_tcp_confirm": "Зберегти та підключитися",
+    "tcp_port_invalid": "Введіть порт від 1 до 65535."
   },
   "system": {
     "container_mode_notice": "Працює в контейнері. Функції рівня хоста (Wi-Fi, мережа, перезавантаження, вимкнення, оновлення, налаштування обладнання) вимкнено. Аптайм, навантаження та ОЗП — значення хоста; диск показує том даних. Для оновлення перезберіть образ.",

@@ -89,7 +89,7 @@ function buildSandbox({ fetchImpl, i18nStrings }) {
         showToast: (message) => { sandbox._toasts.push(message); },
         appSettings: {},
         fetch: wrappedFetch,
-        confirm: () => true,
+        appConfirm: async () => true, // UI1: the in-app dialog replaced the native confirm()
         setTimeout,
         Date,
         _toasts: [],

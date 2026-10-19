@@ -76,11 +76,15 @@ class RadioConnectionManager:
             self._last_error = str(error or "")
             self._updated_at = time.time()
 
-    def _log(self, level, title, details):
+    def _log(self, level, title, details, source="radio"):
+        """One System Log entry: event=<title>, level, details=<full text>, source. (This used
+        to pass (level, "radio", title, details) positionally into log_system_event(title,
+        level, details, source): every entry came out with the fields shifted - event "ACTION",
+        source = the truncated details.)"""
         if self._log_event is None:
             return
         try:
-            self._log_event(level, "radio", title, details)
+            self._log_event(title, level, details, source=source)
         except Exception as error:
             print(f"[RADIO MANAGER] Log error: {error}", flush=True)
 
@@ -201,6 +205,7 @@ class RadioConnectionManager:
             "ACTION",
             "Radio reconnect requested",
             "Meshtastic listener restart requested after external configuration",
+            source="recovery",
         )
         return True, self.status(False)
 
@@ -263,7 +268,7 @@ class RadioConnectionManager:
             self._until = None
             self._last_error = ""
             self._updated_at = time.time()
-        self._log("ACTION", "Radio reconnect requested", "TCP release ended - reconnecting to the radio")
+        self._log("ACTION", "Radio reconnect requested", "TCP release ended - reconnecting to the radio", source="recovery")
         return True, self.status(False)
 
     def end_release(self):
@@ -282,7 +287,7 @@ class RadioConnectionManager:
             self._until = None
             self._last_error = ""
             self._updated_at = time.time()
-        self._log("ACTION", "Radio reconnect requested", "TCP release ended by an explicit connect")
+        self._log("ACTION", "Radio reconnect requested", "TCP release ended by an explicit connect", source="recovery")
         return True
 
     def restore_released(self, until, since=None, kind="tcp"):

@@ -585,3 +585,67 @@ def test_release_and_reconnect_are_never_counted_as_link_losses():
     status = supervisor.status()
     assert state["connected"] is True
     assert status["link_losses_1h"] == 0 and status["contention"] is False
+
+
+def test_manager_log_entries_land_in_the_system_log_with_the_right_fields(tmp_path, monkeypatch):
+    """Live on the NAS: entries came out shifted - event "ACTION", source = the truncated
+    details text ("TCP connection closed - MeshCenter will "), details = the title. The manager
+    called log_system_event(title, level, details, source) with (level, "radio", title, details)."""
+    import system_log
+
+    log_file = tmp_path / "system_events.jsonl"
+    monkeypatch.setattr(system_log, "SYSTEM_LOG_FILE", str(log_file))
+    monkeypatch.setattr(system_log, "DATA_DIR", str(tmp_path))
+
+    class Pause:
+        def set(self): pass
+        def clear(self): pass
+
+    store = RadioReleaseStore(lambda: str(tmp_path))
+    manager = RadioConnectionManager(
+        pause_event=Pause(), stop_listener=lambda: True, wait_serial_release=lambda **k: True,
+        serial_port="x", log_event=system_log.log_system_event,
+        transport_provider=lambda: "tcp", tcp_release=lambda: None, tcp_resume=lambda: None, store=store,
+    )
+    manager.release(duration_s=900)
+    manager.reconnect()
+    manager.release()
+    manager.end_release()
+
+    events = [json.loads(line) for line in log_file.read_text(encoding="utf-8").splitlines()]
+    by_event = [(e["event"], e["source"], e["level"], e["details"]) for e in events]
+    assert by_event[0] == (
+        "Radio released", "radio", "ACTION",
+        "TCP connection closed - MeshCenter will not reconnect until the chosen time has passed",
+    )
+    assert by_event[1] == (
+        "Radio reconnect requested", "recovery", "ACTION", "TCP release ended - reconnecting to the radio",
+    )
+    assert by_event[2][0] == "Radio released" and by_event[2][3].endswith("until you press Reconnect")
+    assert by_event[3] == (
+        "Radio reconnect requested", "recovery", "ACTION", "TCP release ended by an explicit connect",
+    )
+    for event, source, level, details in by_event:
+        assert event != "ACTION" and source in ("radio", "recovery") and len(details) > 20
+
+
+def test_a_failed_release_is_logged_as_an_error_with_the_reason(tmp_path, monkeypatch):
+    import system_log
+
+    log_file = tmp_path / "system_events.jsonl"
+    monkeypatch.setattr(system_log, "SYSTEM_LOG_FILE", str(log_file))
+    monkeypatch.setattr(system_log, "DATA_DIR", str(tmp_path))
+
+    def refuse():
+        raise RuntimeError("A reconnect attempt is still running - try again in a moment")
+
+    manager = RadioConnectionManager(
+        pause_event=threading.Event(), stop_listener=lambda: True, wait_serial_release=lambda **k: True,
+        serial_port="x", log_event=system_log.log_system_event,
+        transport_provider=lambda: "tcp", tcp_release=refuse, store=RadioReleaseStore(lambda: str(tmp_path)),
+    )
+    ok, _ = manager.release()
+    assert ok is False
+    event = json.loads(log_file.read_text(encoding="utf-8").splitlines()[-1])
+    assert (event["event"], event["level"], event["source"]) == ("Radio release failed", "ERROR", "radio")
+    assert "still running" in event["details"]

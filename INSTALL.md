@@ -7,7 +7,7 @@ so there is only one place to keep in sync with `install.sh` and
 
 ## Choose your installation method
 
-MeshCenter has two independent install paths - pick the one that matches
+MeshCenter has three install paths - pick the one that matches
 your situation, they are not interchangeable steps of the same process:
 
 - **[Automatic Installation](#automatic-installation)** - flash an SD card
@@ -23,6 +23,9 @@ your situation, they are not interchangeable steps of the same process:
   (see `install.sh`'s own preflight checks). The radio can be connected
   before or after this path - MeshCenter falls back to a placeholder
   configuration if none is found and lets you set it later via Settings.
+- **Docker (server mode)** - run MeshCenter in a container on an x86-64 server or
+  NAS (tested on a Synology DS920+). The radio is reached over TCP only; camera, USB/Bluetooth radio,
+  e-Paper, I2C and in-app update are not available. Step by step: **[docs/Docker_Installation.md](docs/Docker_Installation.md)**.
 
 ## System Requirements
 
@@ -38,7 +41,7 @@ your situation, they are not interchangeable steps of the same process:
 - 500MB free disk space · 512MB RAM · systemd
 
 **Not supported:**
-- Windows / macOS
+- Windows / macOS, natively (for a server, see "Docker (server mode)" above; Docker Desktop on Windows/macOS was only used for development and is not a supported setup)
 - Raspberry Pi OS 32-bit (lgpio compatibility issues)
 - Debian 11 (Bullseye) or older (Python 3.9/3.10 — below the 3.11 minimum) / Ubuntu 22.04 LTS or older (same reason)
 - Alpine Linux (musl libc — pip build failures)

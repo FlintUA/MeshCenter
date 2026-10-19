@@ -37,6 +37,9 @@ MeshCenter reads and uses the channels already stored on the radio. Channel crea
 
 ## 2. Clean installation
 
+> Running on an x86-64 server or NAS instead of a Raspberry Pi? See
+> **[Docker_Installation.md](Docker_Installation.md)** (TCP radio only).
+>
 > This section walks through the **Manual Installation** path (SSH onto an
 > already-running Pi, radio connected whenever convenient before or after)
 > step by step. If you'd rather flash an SD card once and have MeshCenter
@@ -601,7 +604,7 @@ MeshCenter supports both a Raspberry Pi Camera (CSI ribbon connector) and a USB/
 MeshCenter can talk to your Meshtastic node three ways, switchable under `Settings > Radio Connection > Connection type`:
 
 - **USB** (default, recommended) — a serial cable to the Raspberry Pi. Full send and receive. Unplugging and replugging the cable, or power-cycling the radio, recovers automatically; a different radio on the port is never adopted silently (see "A different radio was connected" below).
-- **TCP** — over the local network, if your radio exposes Meshtastic's own TCP API (port 4403). Full send and receive (text, waypoints, node info, position, telemetry and delivery acknowledgements), but no remote waypoint deletion over this path.
+- **TCP** — over the local network, if your radio exposes Meshtastic's own TCP API (port 4403). Full send and receive (text, waypoints, node info, position, telemetry and delivery acknowledgements), but no remote waypoint deletion over this path. A node serves one TCP client at a time; **Release radio** (Node Manager) hands it to another client. TCP is the only connection type in the Docker image — see [Docker_Installation.md](Docker_Installation.md).
 - **Bluetooth** — no cable, marked "Experimental" in the interface:
   - **No incoming messages, telemetry, or node info at all while Bluetooth is active** — not degraded, completely absent. You can send over Bluetooth, but MeshCenter will not receive anything until you switch back to USB or TCP.
   - **Switching connection types can take up to ~90–135 seconds in the worst case** (measured on real hardware) — it is not a quick toggle.

@@ -159,6 +159,10 @@ The fastest path is **Automatic Installation**:
 
 Prefer to install over SSH on an already-running Pi (or any Debian/Ubuntu Linux box) instead? That's **Manual Installation** — `curl -sSL https://raw.githubusercontent.com/FlintUA/MeshCenter/main/install.sh | bash`.
 
+**Server mode (Docker, no Raspberry Pi)** — runs MeshCenter in a container on an x86-64 server or NAS (tested: Synology DS920+, DSM 7.3).
+The radio is reached over **TCP only**, so it needs Wi-Fi or Ethernet with Meshtastic's TCP API (port 4403) and a fixed IP. Host-hardware features are unavailable in the container (USB/serial and Bluetooth radio, camera, e-Paper, I2C sensors/RTC, Wi-Fi manager, reboot, in-app update). There is no public image yet — you build it yourself.
+See **[docs/Docker_Installation.md](docs/Docker_Installation.md)**. A PC or server *without* Docker is already covered by Manual Installation above (any Debian/Ubuntu, USB radio, full features) — Docker is not the only non-Pi option.
+
 Full step-by-step instructions for both paths, system requirements, and the serial-access checklist that trips up most first installs: see **[INSTALL.md](INSTALL.md)**.
 
 The install has been validated end-to-end on a clean Raspberry Pi Zero 2 W with a RAK WisMesh TAP v2 (RAK3312), installing entirely from the documentation with no undocumented steps. Also works on Raspberry Pi 3, 4 and 5.
@@ -190,7 +194,7 @@ See **[docs/User_Guide.md](docs/User_Guide.md)** for the full, practical walkthr
 MeshCenter can talk to your Meshtastic node three ways, switchable in **Settings → Radio Connection**:
 
 - **USB** (default, recommended) — a serial cable to the Raspberry Pi. Full send and receive.
-- **TCP** — over the local network, if your radio exposes Meshtastic's TCP API. Full send and receive, but no delivery acknowledgements and no remote waypoint deletion.
+- **TCP** — over the local network, if your radio exposes Meshtastic's TCP API. Full send and receive, including delivery confirmations for direct messages ("delivered" only when the destination itself confirms), but no remote waypoint deletion. A node serves **one TCP client at a time** — the phone app, a second MeshCenter or a script evict each other; use **Release radio** in Node Manager to hand the radio over (see [docs/Docker_Installation.md](docs/Docker_Installation.md#one-meshtastic-tcp-client-at-a-time)).
 - **Bluetooth** (marked "Experimental") — no incoming messages/telemetry/node-info at all while active (send-only); switching connection types can take up to ~90–135 seconds in the worst case.
 
 See [docs/User_Guide.md](docs/User_Guide.md#12-radio-connection-type) for the full detail, and [Switching to another radio](docs/User_Guide.md#working-with-multiple-radios) for moving to a different physical device — each radio keeps its own, isolated data (messages, nodes, telemetry, waypoints).
@@ -270,6 +274,10 @@ Yes — multiple users on the same local network can use the interface at the sa
 ### Does MeshCenter require Internet access?
 
 No, not for core functionality — see [Outbound network use](#outbound-network-use) above for the specific optional features that do.
+
+### Can I run MeshCenter without a Raspberry Pi?
+
+Yes, in three ways: **natively on any Debian/Ubuntu machine** (Manual Installation in [INSTALL.md](INSTALL.md); USB radio, full features); **in Docker on an x86-64 server or NAS** (TCP radio only, host-hardware features unavailable — see [docs/Docker_Installation.md](docs/Docker_Installation.md)); Windows and macOS are not supported natively.
 
 ### Which Raspberry Pi models are supported?
 

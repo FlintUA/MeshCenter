@@ -461,6 +461,19 @@
         };
     }
 
+    // v1.12.2: the Node Manager profile card's connection badge. A released radio (serial or TCP)
+    // is a deliberate, neutral state - it used to read "Offline" in the warning colour.
+    function profileConnectionBadge(connection) {
+        const c = connection || {};
+        if (c.mode === 'released' || c.mode === 'releasing') {
+            return { state: 'released', labelKey: 'settings.radio_status_released' };
+        }
+        if (c.listener_running && c.mode === 'connected') {
+            return { state: 'connected', labelKey: 'settings.radio_status_connected' };
+        }
+        return { state: 'offline', labelKey: 'node_manager.badge_offline' };
+    }
+
     const api = {
         newMarkReadState: newMarkReadState,
         newestIncomingKey: newestIncomingKey,
@@ -482,6 +495,7 @@
         stateRevealingNode: stateRevealingNode,
         formatMessageTime: formatMessageTime,
         releasedComposerState: releasedComposerState,
+        profileConnectionBadge: profileConnectionBadge,
         firstUnreadIndex: firstUnreadIndex,
         SORT_KEYS: SORT_KEYS,
         FILTER_FLAGS: FILTER_FLAGS,

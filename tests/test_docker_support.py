@@ -496,3 +496,30 @@ def test_container_profile_restart_logs_nothing_and_never_calls_the_helper(serve
     monkeypatch.setattr(runtime_env, "request_self_restart", lambda: restarted.append(1))
     server_module._restart_meshcenter_after_profile_switch()
     assert restarted == [1] and events == []
+
+
+def test_dockerfile_has_oci_labels_that_come_from_the_build_args():
+    """v1.12.2: `docker image inspect` shows the version and the exact commit."""
+    text = _read("Dockerfile")
+    assert re.search(r"^ARG MESHCENTER_VERSION=", text, re.M) and re.search(r"^ARG MESHCENTER_REVISION=unknown", text, re.M)
+    label_block = text[text.index("LABEL "):text.index("USER ${PUID}:${PGID}")]
+    for key, value in {
+        "org.opencontainers.image.title": '"MeshCenter"',
+        "org.opencontainers.image.version": '"${MESHCENTER_VERSION}"',
+        "org.opencontainers.image.revision": '"${MESHCENTER_REVISION}"',
+        "org.opencontainers.image.source": '"https://github.com/FlintUA/MeshCenter"',
+        "org.opencontainers.image.licenses": '"MIT AND GPL-3.0-only"',
+    }.items():
+        assert f"{key}={value}" in label_block, key
+    # declared after the dependency layers, so a new revision never rebuilds them
+    assert text.index("LABEL ") > text.index("/tmp/adapter-requirements.txt")
+    assert text.index("ARG MESHCENTER_REVISION") > text.index("COPY . /app")
+
+
+def test_build_script_and_compose_pass_the_revision():
+    build = _read("deploy/docker/build.sh")
+    assert "git rev-parse HEAD" in build
+    assert '--build-arg "MESHCENTER_REVISION=${REVISION}"' in build
+    assert '--build-arg "MESHCENTER_VERSION=${VERSION}"' in build
+    assert "-dirty" in build, "a build from a modified tree is marked"
+    assert "MESHCENTER_REVISION: ${MESHCENTER_REVISION:-unknown}" in _read("deploy/docker/compose.yaml")

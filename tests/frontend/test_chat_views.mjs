@@ -540,3 +540,20 @@ console.log(`test_chat_views.mjs: ${passed} tests passed`);
     assert.equal(released.hint, 'T(chat.radio_released_hint)');
     console.log('ok - releasedComposerState');
 }
+
+// v1.12.2: the profile card's connection badge says "Released" (neutral) for a released radio
+{
+    const B = (connection) => JSON.parse(JSON.stringify(V.profileConnectionBadge(connection)));
+    const released = { state: 'released', labelKey: 'settings.radio_status_released' };
+    assert.deepEqual(B({ mode: 'released', listener_running: false, type: 'tcp' }), released, 'TCP release');
+    assert.deepEqual(B({ mode: 'released', listener_running: false, type: 'serial' }), released, 'serial release');
+    assert.deepEqual(B({ mode: 'releasing' }), released);
+    assert.deepEqual(B({ mode: 'connected', listener_running: true }), { state: 'connected', labelKey: 'settings.radio_status_connected' });
+    const offline = { state: 'offline', labelKey: 'node_manager.badge_offline' };
+    assert.deepEqual(B({ mode: 'connected', listener_running: false }), offline, 'connected without a listener is still offline');
+    assert.deepEqual(B({ mode: 'error', listener_running: false }), offline);
+    assert.deepEqual(B({ mode: 'reconnecting' }), offline);
+    assert.deepEqual(B(null), offline);
+    assert.deepEqual(B(undefined), offline);
+    console.log('ok - profileConnectionBadge');
+}

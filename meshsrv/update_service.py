@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import subprocess
 import threading
 import time
@@ -308,6 +309,71 @@ def _changed_requirements(project_dir: str, target: str) -> list[str]:
     return [line for line in diff.stdout.strip().splitlines() if line]
 
 
+# v1.12.2: host files an update never installs by itself (INSTALL.md, "Easy to forget"): the systemd
+# unit, the sudoers templates, the udev rule and the two privileged helper scripts. A change in one
+# of them does NOT block an update (only dependency files do) - the card shows a "manual step
+# needed" notice with the exact command instead. Keys are repo paths; deploy/docker/ is container-only.
+_MANUAL_STEP_FILES = (
+    "deploy/meshcenter.service",
+    "deploy/meshcenter.sudoers",
+    "deploy/meshcenter-wifi.sudoers",
+    "deploy/meshcenter-hw.sudoers",
+    "deploy/99-meshcenter-rtc.rules",
+    "scripts/meshcenter-network-helper",
+    "scripts/meshcenter-hw-config",
+)
+
+
+def _sudoers_command(src: str, name: str) -> str:
+    # rendered and validated BEFORE it replaces the live file (a broken sudoers file locks sudo out)
+    return (
+        f'sed "s|__MESH_USER__|$USER|g" {src} > /tmp/{name}.sudoers && sudo visudo -cf /tmp/{name}.sudoers '
+        f'&& sudo install -o root -g root -m 0440 /tmp/{name}.sudoers /etc/sudoers.d/{name}'
+    )
+
+
+def manual_step_commands(project_dir: str, files: list[str]) -> list[dict[str, str]]:
+    """The exact commands (same as install.sh) for each changed host file, in a stable order."""
+    base = str(project_dir).rstrip("/")
+
+    def path(rel: str) -> str:
+        return shlex.quote(f"{base}/{rel}")
+
+    out = []
+    for rel in _MANUAL_STEP_FILES:
+        if rel not in files:
+            continue
+        if rel == "deploy/meshcenter.service":
+            command = (
+                f'sed -e "s|__MESH_USER__|$USER|g" -e "s|__MESH_HOME__|$HOME|g" {path(rel)} '
+                "| sudo tee /etc/systemd/system/meshcenter.service > /dev/null "
+                "&& sudo systemctl daemon-reload && sudo systemctl restart meshcenter.service"
+            )
+        elif rel == "deploy/meshcenter.sudoers":
+            command = _sudoers_command(path(rel), "meshcenter")
+        elif rel == "deploy/meshcenter-wifi.sudoers":
+            command = _sudoers_command(path(rel), "meshcenter-wifi")
+        elif rel == "deploy/meshcenter-hw.sudoers":
+            command = _sudoers_command(path(rel), "meshcenter-hw")
+        elif rel == "deploy/99-meshcenter-rtc.rules":
+            command = (
+                f"sudo install -o root -g root -m 0644 {path(rel)} /etc/udev/rules.d/99-meshcenter-rtc.rules "
+                "&& sudo udevadm control --reload-rules && sudo udevadm trigger --subsystem-match=rtc"
+            )
+        else:
+            name = rel.rsplit("/", 1)[-1]
+            command = f"sudo install -o root -g root -m 0755 {path(rel)} /usr/local/sbin/{name}"
+        out.append({"file": rel, "command": command})
+    return out
+
+
+def manual_steps_between(project_dir: str, target: str) -> list[dict[str, str]]:
+    """Manual steps needed to go from HEAD to `target` (commit-ish): the host files that differ."""
+    diff = _git(project_dir, "diff", "--name-only", "HEAD", target, "--", *_MANUAL_STEP_FILES, timeout=10)
+    files = [line for line in diff.stdout.strip().splitlines() if line]
+    return manual_step_commands(project_dir, files)
+
+
 def _blocked_by_requirements(project_dir: str, files: list[str], previous_sha: str, *, manual_command: str) -> dict[str, Any]:
     with _lock:
         cache = _load_cache()
@@ -356,6 +422,8 @@ def apply_update(project_dir: str, preflight: dict[str, Any], current_version: s
         command = f"git checkout --detach {target_tag}" if detached else f"git merge --ff-only {target_tag}"
         return _blocked_by_requirements(project_dir, changed, previous_sha, manual_command=command)
 
+    manual_steps = manual_steps_between(project_dir, target_sha)
+
     if detached:
         moved = _git(project_dir, "checkout", "--quiet", "--detach", target_sha)
     else:
@@ -374,12 +442,14 @@ def apply_update(project_dir: str, preflight: dict[str, Any], current_version: s
             cache["pending_update"] = {
                 "kind": "update", "from": current_version, "to": to_version, "tag": target_tag,
                 "from_sha": previous_sha, "to_sha": target_sha, "started_at": int(time.time()),
+                "manual_steps": manual_steps,
             }
         _save_cache(cache)
 
     return {
         "ok": ok,
         "blocked": False,
+        "manual_steps": manual_steps,
         "previous_sha": previous_sha,
         "previous_version": current_version,
         "to_version": to_version,
@@ -440,6 +510,8 @@ def rollback(project_dir: str, preflight: dict[str, Any], current_version: str) 
         command = f"git checkout --detach {previous_sha}" if detached else f"git reset --keep {previous_sha}"
         return _blocked_by_requirements(project_dir, changed, head_sha, manual_command=command)
 
+    manual_steps = manual_steps_between(project_dir, previous_sha)
+
     if detached:
         moved = _git(project_dir, "checkout", "--quiet", "--detach", previous_sha)
     else:
@@ -457,11 +529,13 @@ def rollback(project_dir: str, preflight: dict[str, Any], current_version: str) 
             cache["pending_update"] = {
                 "kind": "rollback", "from": current_version, "to": previous_version, "tag": None,
                 "from_sha": head_sha, "to_sha": previous_sha, "started_at": int(time.time()),
+                "manual_steps": manual_steps,
             }
         _save_cache(cache)
 
     return {
-        "ok": ok, "blocked": False, "previous_sha": head_sha, "to_version": previous_version,
+        "ok": ok, "blocked": False, "manual_steps": manual_steps,
+        "previous_sha": head_sha, "to_version": previous_version,
         "output": (moved.stdout + moved.stderr).strip(),
         "requirements_changed": False, "changed_requirements_files": [],
     }
@@ -485,11 +559,14 @@ def reconcile_pending(current_version: str, log: Callable[..., None]) -> dict[st
         cache["last_update"] = {
             "kind": kind, "from": pending.get("from"), "to": pending.get("to"),
             "at": int(time.time()), "ok": ok,
+            "manual_steps": list(pending.get("manual_steps") or []),
         }
         _save_cache(cache)
     noun = "Rollback" if kind == "rollback" else "Update"
     if ok:
-        log(f"{noun} finished", "OK", f"MeshCenter {pending.get('from')} -> {pending.get('to')}", source="update")
+        steps = pending.get("manual_steps") or []
+        extra = f"; manual step needed: {', '.join(step['file'] for step in steps)}" if steps else ""
+        log(f"{noun} finished", "OK", f"MeshCenter {pending.get('from')} -> {pending.get('to')}{extra}", source="update")
     else:
         log(f"{noun} failed", "ERROR",
             f"{pending.get('from')} -> {pending.get('to')} was applied but {current_version} is running", source="update")

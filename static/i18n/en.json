@@ -1052,7 +1052,9 @@
     "updates_preflight_branch": "On branch {branch} - update manually (git).",
     "updates_preflight_ahead": "This checkout already contains release {version} or newer - nothing to update.",
     "updates_preflight_tag_missing": "Release tag {tag} could not be fetched from GitHub.",
-    "updates_preflight_no_target": "No release to update to - press Check now first."
+    "updates_preflight_no_target": "No release to update to - press Check now first.",
+    "updates_manual_title": "Manual step needed after this update",
+    "updates_manual_hint": "This update changes host files that MeshCenter never installs by itself (systemd unit, sudoers, udev rule or a privileged helper). The update was applied and nothing was blocked. Run the command for each file in a terminal on the device:"
   },
   "settings": {
     "title": "Settings",

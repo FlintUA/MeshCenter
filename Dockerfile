@@ -80,6 +80,12 @@ RUN ! /opt/core-venv/bin/python -c "import meshtastic" 2>/dev/null \
  && test ! -e /app/config.py \
  && test ! -e /app/weather_secrets.py
 
+# OCI image labels (v1.12.2): `docker image inspect` shows the version and the exact commit.
+# Declared last so a new revision never invalidates the dependency layers above.
+# The licence expression covers the whole image: MIT Core + the GPLv3 adapter environment.
+ARG MESHCENTER_REVISION=unknown
+LABEL org.opencontainers.image.title="MeshCenter"       org.opencontainers.image.version="${MESHCENTER_VERSION}"       org.opencontainers.image.revision="${MESHCENTER_REVISION}"       org.opencontainers.image.source="https://github.com/FlintUA/MeshCenter"       org.opencontainers.image.licenses="MIT AND GPL-3.0-only"
+
 USER ${PUID}:${PGID}
 EXPOSE 5000
 VOLUME ["/data", "/config"]

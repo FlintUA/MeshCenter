@@ -37,7 +37,8 @@ function extractFunction(name) {
 }
 
 class El {
-    constructor() { this.style = {}; this.textContent = ''; this.disabled = false; this.innerHTML = ''; }
+    constructor() { this.style = {}; this.textContent = ''; this.disabled = false; this.innerHTML = ''; this.copyButtons = []; }
+    querySelectorAll() { return this.copyButtons; }
 }
 
 function makeEnv({ status, fetchImpl, answer = true }) {
@@ -64,7 +65,7 @@ function makeEnv({ status, fetchImpl, answer = true }) {
     sandbox.I18N = I18N;
     vm.createContext(sandbox);
     for (const name of ['updatesRollbackCommand', 'renderUpdatesLastUpdate', 'copyUpdatesRollbackCommand',
-        'updatesRefusalMessage', 'renderUpdatesBlockedPanel', 'rollbackUpdate']) {
+        'updatesRefusalMessage', 'renderUpdatesBlockedPanel', 'rollbackUpdate', 'wireUpdatesCopyButtons', 'renderUpdatesManualSteps']) {
         vm.runInContext(extractFunction(name), sandbox);
     }
     return { sandbox, get, asked, toasts, fetches, polls, results, run: (code) => vm.runInContext(code, sandbox) };
@@ -191,6 +192,40 @@ const rolledStatus = {
     assert.match(say({ reason: 'fetch_failed' }), /Could not reach GitHub/);
     assert.match(say({ reason: 'rollback_unavailable' }), /No rollback is available/);
     assert.equal(say({ reason: 'weird', error: 'boom' }), 'boom');
+}
+
+// ---------------------------------------------------------------- v1.12.2: manual step needed
+{
+    const steps = [
+        { file: 'deploy/meshcenter.service', command: 'sed -e "s|__MESH_USER__|$USER|g" /x/deploy/meshcenter.service | sudo tee /etc/systemd/system/meshcenter.service' },
+        { file: 'scripts/meshcenter-hw-config', command: "sudo install -m 0755 '/x y/scripts/meshcenter-hw-config' /usr/local/sbin/meshcenter-hw-config" },
+    ];
+    const env = makeEnv({
+        status: { current_version: '1.12.2', last_update: { kind: 'update', from: '1.12.1', to: '1.12.2', at: 1, ok: true, manual_steps: steps } },
+        fetchImpl: async () => ({}),
+    });
+    const box = env.get('updatesManualStep');
+    const button = { listeners: {}, getAttribute: (n) => (n === 'data-updates-copy' ? steps[0].command : ''), addEventListener(type, fn) { this.listeners[type] = fn; } };
+    box.copyButtons = [button];
+    env.run('renderUpdatesManualSteps(_lastUpdatesStatus)');
+    assert.equal(box.style.display, 'block');
+    assert.match(box.innerHTML, /Manual step needed after this update/);
+    assert.match(box.innerHTML, /nothing was blocked/);
+    assert.match(box.innerHTML, /<code>deploy\/meshcenter\.service<\/code>/);
+    assert.match(box.innerHTML, /<code>scripts\/meshcenter-hw-config<\/code>/);
+    assert.match(box.innerHTML, /sudo install -m 0755/);
+    assert.equal((box.innerHTML.match(/data-updates-copy=/g) || []).length, 2, 'one Copy button per command');
+    assert.doesNotMatch(box.innerHTML, /onclick=/);
+    button.listeners.click();
+    assert.equal(env.sandbox.copied, steps[0].command, 'Copy puts the exact command on the clipboard');
+
+    // not shown: no steps, a failed update, or no update at all
+    for (const last of [{ kind: 'update', ok: true, manual_steps: [] }, { kind: 'update', ok: false, manual_steps: steps }, null, undefined]) {
+        const e2 = makeEnv({ status: { current_version: '1.12.2', last_update: last }, fetchImpl: async () => ({}) });
+        e2.run('renderUpdatesManualSteps(_lastUpdatesStatus)');
+        assert.equal(e2.get('updatesManualStep').style.display, 'none');
+        assert.equal(e2.get('updatesManualStep').innerHTML, '');
+    }
 }
 
 console.log('OK - updates card (last update from -> to, rollback dialog / blocked / refused, refusal sentences)');

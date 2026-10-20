@@ -55,6 +55,7 @@ function renderUpdatesStatus(status) {
     }
 
     renderUpdatesLastUpdate(status);
+    renderUpdatesManualSteps(status);
 
     const autoCheckEl = document.getElementById('updatesAutoCheckEnabled');
     if (autoCheckEl) autoCheckEl.checked = appSettings?.updates?.auto_check !== false;
@@ -345,12 +346,43 @@ function renderUpdatesResult(html) {
     if (!panel) return;
     panel.style.display = 'block';
     panel.innerHTML = html;
-    // Copy buttons carry their text in data-updates-copy (no inline handler built from a template literal).
-    panel.querySelectorAll('[data-updates-copy]').forEach((button) => {
+    wireUpdatesCopyButtons(panel);
+}
+
+// Copy buttons carry their text in data-updates-copy (no inline handler built from a template literal).
+function wireUpdatesCopyButtons(container) {
+    container.querySelectorAll('[data-updates-copy]').forEach((button) => {
         button.addEventListener('click', () => {
             if (navigator.clipboard) navigator.clipboard.writeText(button.getAttribute('data-updates-copy') || '');
         });
     });
+}
+
+// v1.12.2: an update that changes host files MeshCenter never installs by itself (systemd unit,
+// sudoers templates, udev rule, privileged helpers) is NOT blocked; this notice says which files
+// and gives the exact command for each. Shown with the "Last update" line until the next update.
+function renderUpdatesManualSteps(status) {
+    const box = document.getElementById('updatesManualStep');
+    if (!box) return;
+    const last = status.last_update;
+    const steps = last && last.ok && Array.isArray(last.manual_steps) ? last.manual_steps : [];
+    if (!steps.length) {
+        box.style.display = 'none';
+        box.innerHTML = '';
+        return;
+    }
+    box.innerHTML = `
+        <div class="updates-result-error">⚠️ ${escapeHtml(window.I18N.t('system.updates_manual_title'))}</div>
+        <div class="updates-result-hint">${escapeHtml(window.I18N.t('system.updates_manual_hint'))}</div>
+        ${steps.map((step) => `
+            <div class="updates-result-hint"><code>${escapeHtml(step.file)}</code></div>
+            <div class="updates-rollback-row">
+                <code class="updates-rollback-command">${escapeHtml(step.command)}</code>
+                <button type="button" class="btn btn-xs" data-updates-copy="${escapeHtml(step.command)}">${escapeHtml(window.I18N.t('modals.copy'))}</button>
+            </div>`).join('')}
+    `;
+    box.style.display = 'block';
+    wireUpdatesCopyButtons(box);
 }
 
 // Polls /api/system/info after a restart, staged per the design worked out

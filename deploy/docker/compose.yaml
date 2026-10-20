@@ -17,6 +17,7 @@ services:
       context: ../..
       args:
         MESHCENTER_VERSION: ${MESHCENTER_VERSION:-dev}
+        MESHCENTER_REVISION: ${MESHCENTER_REVISION:-unknown}
         PUID: ${PUID:-1026}
         PGID: ${PGID:-100}
     user: "${PUID:-1026}:${PGID:-100}"

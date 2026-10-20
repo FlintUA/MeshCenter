@@ -2337,6 +2337,8 @@ body.node-manager-open #messagesView {
 .node-profile-badge.active { background: #e6f7ec; color: #16803c; }
 .node-profile-badge.connected { background: #e6f7ec; color: #16803c; }
 .node-profile-badge.offline { background: #fff4d8; color: #986500; }
+/* v1.12.2: released = neutral (same family as .device-status-released), not the offline warning colour */
+.node-profile-badge.released { background: rgba(100, 130, 190, .14); color: #475a7a; }
 
 .node-manager-hero-card {
     align-items: center;

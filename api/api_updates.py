@@ -31,6 +31,10 @@ def register_updates_routes(app, resolve_version, project_dir, handle_errors, lo
     def _short(sha):
         return str(sha or "")[:7]
 
+    def _manual_note(result):
+        steps = result.get("manual_steps") or []
+        return f"; manual step needed after the restart: {', '.join(step['file'] for step in steps)}" if steps else ""
+
     def _blocked_response(result):
         print(
             f"[UPDATES] blocked: requirements changed "
@@ -108,7 +112,7 @@ def register_updates_routes(app, resolve_version, project_dir, handle_errors, lo
 
         log("Update started", "ACTION",
             f"{current} -> {result['to_version']} (tag {result['target_tag']} at {_short(result['target_sha'])}; "
-            f"previous commit {_short(result['previous_sha'])})",
+            f"previous commit {_short(result['previous_sha'])})" + _manual_note(result),
             source="update")
         planned_restart.begin("update")
         threading.Thread(target=_restart_after_update, args=("Update restart",), daemon=True).start()
@@ -120,6 +124,7 @@ def register_updates_routes(app, resolve_version, project_dir, handle_errors, lo
             "previous_version": result.get("previous_version"),
             "to_version": result["to_version"],
             "requirements_changed": False,
+            "manual_steps": result.get("manual_steps") or [],
             "restarted": True,
         }), 202
 
@@ -154,7 +159,7 @@ def register_updates_routes(app, resolve_version, project_dir, handle_errors, lo
             return jsonify({"ok": False, "error": "git rollback failed", "detail": result}), 500
 
         log("Rollback started", "ACTION",
-            f"{current} -> {result['to_version']} (commit {_short(preflight.get('previous_sha'))})",
+            f"{current} -> {result['to_version']} (commit {_short(preflight.get('previous_sha'))})" + _manual_note(result),
             source="update")
         planned_restart.begin("rollback")
         threading.Thread(target=_restart_after_update, args=("Rollback restart",), daemon=True).start()
@@ -163,5 +168,6 @@ def register_updates_routes(app, resolve_version, project_dir, handle_errors, lo
             "ok": True,
             "blocked": False,
             "to_version": result["to_version"],
+            "manual_steps": result.get("manual_steps") or [],
             "restarted": True,
         }), 202

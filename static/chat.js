@@ -11429,7 +11429,7 @@ async function loadNodeManagerDashboard(showFeedback = false) {
             const itemRadio = item.radio || {};
             const itemConnection = item.connection || {};
             const active = Boolean(item.active || item.profile_id === profile.profile_id);
-            const connected = Boolean(itemConnection.listener_running && itemConnection.mode === 'connected');
+            const connectionBadge = window.MCViews.profileConnectionBadge(itemConnection);
             const identity = itemRadio.identity_status || 'NOT_CHECKED';
             return `
                 <button type="button" class="node-profile-card ${active ? 'is-active' : ''}"
@@ -11442,7 +11442,7 @@ async function loadNodeManagerDashboard(showFeedback = false) {
                     </span>
                     <span class="node-profile-badges">
                         ${active ? `<span class="node-profile-badge active">${escapeHtml(window.I18N.t('node_manager.badge_active'))}</span>` : `<span class="node-profile-badge saved">${escapeHtml(window.I18N.t('node_manager.badge_saved'))}</span>`}
-                        ${active ? `<span class="node-profile-badge ${connected ? 'connected' : 'offline'}">${connected ? escapeHtml(window.I18N.t('settings.radio_status_connected')) : escapeHtml(window.I18N.t('node_manager.badge_offline'))}</span>` : ''}
+                        ${active ? `<span class="node-profile-badge ${connectionBadge.state}">${escapeHtml(window.I18N.t(connectionBadge.labelKey))}</span>` : ''}
                         <span class="node-profile-badge identity">${deviceDashboardValue(identity)}</span>
                     </span>
                 </button>`;

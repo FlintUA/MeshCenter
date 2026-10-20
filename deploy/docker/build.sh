@@ -9,6 +9,10 @@ set -eu
 cd "$(dirname "$0")/../.."
 VERSION="$(git describe --tags --always 2>/dev/null || echo dev)"
 VERSION="${VERSION#v}"
-echo "Building meshcenter:${VERSION} (linux/amd64)"
-docker build --platform linux/amd64 --build-arg "MESHCENTER_VERSION=${VERSION}" -t "meshcenter:${VERSION}" .
+# The exact commit goes into the image labels (org.opencontainers.image.revision); "-dirty"
+# marks a build from a tree with uncommitted changes.
+REVISION="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+if [ "${REVISION}" != "unknown" ] && [ -n "$(git status --porcelain 2>/dev/null)" ]; then REVISION="${REVISION}-dirty"; fi
+echo "Building meshcenter:${VERSION} (linux/amd64, revision ${REVISION})"
+docker build --platform linux/amd64 --build-arg "MESHCENTER_VERSION=${VERSION}" --build-arg "MESHCENTER_REVISION=${REVISION}" -t "meshcenter:${VERSION}" .
 if [ "${1:-}" != "" ]; then docker tag "meshcenter:${VERSION}" "meshcenter:$1"; echo "also tagged meshcenter:$1"; fi

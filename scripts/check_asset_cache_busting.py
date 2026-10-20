@@ -69,7 +69,10 @@ CURRENT_ASSETS = {
     'static/app-dialog.js',
     'static/chat-updates-security.js',
     'static/chat-telemetry.js',
-    'static/media.js',
+    'static/style-part2.css',
+    'static/style-part3.css',
+    'static/targets.js',
+    'static/ui-kit.css',
 }
 
 # `<link rel="stylesheet" href="{{ url_for('static', filename='X') }}?v=TOKEN">`

@@ -6,7 +6,7 @@
 //
 // This is the executable counterpart to the reviewer's Finding 1 / "Blocker 1"
 // requirement: chat.js must route its node/channel selection through the SAME
-// store files.js already uses — not keep a private currentChatId and never
+// store files.js already uses - not keep a private currentChatId and never
 // call store.select()/store.selected()/store.subscribe(). The earlier
 // test_files_ui.mjs exercises files.js against the real store but leaves
 // chat.js entirely untested; this file closes that gap by loading the REAL
@@ -31,9 +31,9 @@ const viewsSource = readFileSync(path.join(staticDir, 'chat-views.js'), 'utf8');
 const chatSourceRaw = readFileSync(path.join(staticDir, 'chat.js'), 'utf8');
 
 // chat.js self-invokes two bootstrap entry points at load time:
-//   * init()               — the full page bootstrap (settings, radio health,
+//   * init() - the full page bootstrap (settings, radio health,
 //                           telemetry, camera, message polling), and
-//   * initializeWorkspace()— theme/panel/map-layout bootstrap.
+//   * initializeWorkspace()- theme/panel/map-layout bootstrap.
 // Both are page-lifetime concerns orthogonal to the selection wiring under
 // test; the integration tests drive the real openChat/selectNode/showChatList/
 // renderChatItem directly. Strip only those two trailing auto-invocations.
@@ -93,7 +93,7 @@ class FakeElement {
     // The browser keeps an element's `id` as a live property that also registers
     // the element with its document. Mirroring that here (instead of a plain
     // field) is what lets getElementById() resolve a detached element's id to
-    // null — the exact real-browser behavior the PR 6 correction guards against.
+    // null - the exact real-browser behavior the PR 6 correction guards against.
     get id() { return this._id; }
     set id(value) {
         this._id = String(value);
@@ -238,7 +238,7 @@ class FakeElement {
     insertBefore(child, ref) {
         // Move the child out of any current parent (including this one) so a
         // re-insert never duplicates it, then splice it before `ref` (or append
-        // when `ref` is absent) — matching the browser's insertBefore semantics.
+        // when `ref` is absent) - matching the browser's insertBefore semantics.
         if (child.parentNode) child.parentNode.removeChild(child);
         const i = ref ? this._children.indexOf(ref) : -1;
         if (i >= 0) this._children.splice(i, 0, child);
@@ -285,7 +285,7 @@ class FakeDocument {
     }
     getElementById(id) {
         // A detached element is NOT returned by getElementById() in a real
-        // browser — this is the exact gap the PR 6 correction closes. Only
+        // browser - this is the exact gap the PR 6 correction closes. Only
         // return a memoized element that is still connected to the document; a
         // detached one resolves to null, forcing the caller to re-own it rather
         // than silently re-adopting a stale node.
@@ -671,7 +671,7 @@ async function test_store_selection_resyncs_cards_without_touching_open_chat() {
     assert.equal(cardA.selectBtn.getAttribute('aria-pressed'), 'false', 'card A select button must be aria-pressed=false');
 
     // Clearing the selection (store present, selection null) means NOTHING is
-    // selected — the open DM A stays the open conversation but no card
+    // selected - the open DM A stays the open conversation but no card
     // re-highlights. This is the final-correction behavior: no currentChatId
     // fallback reappears after the store clears.
     store.clearSelection();
@@ -707,7 +707,7 @@ async function test_render_chat_item_highlight_reads_store() {
 async function test_chat_selection_propagates_to_files_counterparty() {
     // Cross-surface: opening a node chat in chat.js selects the node in the
     // store, and files.js's onStoreSelection turns that into its counterparty
-    // filter — observable as a transfers fetch carrying ?counterparty=!aaaaaaaa.
+    // filter - observable as a transfers fetch carrying ?counterparty=!aaaaaaaa.
     const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
     const store = sandbox.window.MeshCenterTargets;
 
@@ -787,7 +787,7 @@ async function test_files_toggle_off_clears_selection_without_fallback() {
     assert.equal(dmItemA.classList.contains('selected'), false, 'DM item A must unselect');
     assert.equal(dmItemA.getAttribute('aria-pressed'), 'false');
 
-    // The open conversation is untouched (still DM A) — no fallback reappears.
+    // The open conversation is untouched (still DM A) - no fallback reappears.
     assert.equal(sandbox._document.getElementById('chatTitle').textContent, '💬 Alice', 'the open conversation must stay DM A');
     console.log('PASS: test_files_toggle_off_clears_selection_without_fallback');
 }
@@ -940,7 +940,7 @@ async function test_keyboard_enter_space_activate_target_controls() {
 
 async function test_channel_targets_render_into_sidebar() {
     // Requirement (item 2): the global right sidebar renders a Channels section
-    // from the shared store's channelTargets(), alongside the Nodes list — there
+    // from the shared store's channelTargets(), alongside the Nodes list - there
     // is no files-local targets pane. renderChannelTargets() paints each channel
     // as a native <button class="channel-card"> carrying its canonical channel id.
     const sandbox = buildSandbox({
@@ -967,7 +967,7 @@ async function test_channel_targets_render_into_sidebar() {
 
 async function test_channel_card_aria_pressed_syncs_with_store() {
     // Requirement (item 10): sidebar channel cards mirror the shared store's
-    // selection exactly like node cards and chat items — selecting a channel via
+    // selection exactly like node cards and chat items - selecting a channel via
     // the store toggles aria-pressed on the matching #channelsList .channel-card.
     const sandbox = buildSandbox({
         fetchImpl: defaultRoutes({
@@ -997,7 +997,7 @@ async function test_channel_card_aria_pressed_syncs_with_store() {
 
 async function test_node_card_key_actions_are_siblings_not_nested() {
     // Requirement (item 13): the MCA key actions render as SIBLING buttons of the
-    // .node-card-select selection button — never nested inside it. The key-row
+    // .node-card-select selection button - never nested inside it. The key-row
     // buttons carry data-files-action + data-contact (for files.js's delegated
     // handler) with type="button", and the row never wraps the selection button.
     const sandbox = buildSandbox({
@@ -1111,7 +1111,7 @@ async function test_node_card_is_flat_accessible_container() {
 }
 
 async function test_node_card_key_row_states() {
-    // Section 2: every trust/request state renders the right key row — the ready
+    // Section 2: every trust/request state renders the right key row - the ready
     // state shows the "files available" status, each actionable state renders the
     // right data-files-action button, and local + no-binding nodes render nothing.
     const ID = '!aaaaaaaa';
@@ -1238,7 +1238,7 @@ async function test_node_details_visual_clear_vs_selection_clear() {
 
 async function test_node_details_panel_follows_shared_selection() {
     // Section 4: the node-details panel is driven by the shared store selection
-    // through the subscription — a channel selection closes the panel (keeping
+    // through the subscription - a channel selection closes the panel (keeping
     // the channel selected), a node selection fetches details WITHOUT auto-
     // opening a DM, and a toggle-off clears both selection and panel.
     const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
@@ -1268,7 +1268,7 @@ async function test_node_details_panel_follows_shared_selection() {
 // A sandbox whose /api/messages requests never settle until the test resolves
 // them, and whose renderNodeDetails is replaced with a spy so the test observes
 // exactly which node (if any) the panel was asked to render. The spy sits at
-// the application boundary — the same seam the guard protects — so the assertion
+// the application boundary - the same seam the guard protects - so the assertion
 // is "what identity/content reached the panel", not a fetch-count proxy.
 function makeDeferredNodeDetailsSandbox() {
     const pending = [];   // each entry is (body) => resolve that /api/messages request
@@ -1297,7 +1297,7 @@ function flushAsync() {
 }
 
 async function test_node_details_stale_response_never_renders_after_reselect() {
-    // Scenario 1: select A (delayed), select B, then resolve A — A must never
+    // Scenario 1: select A (delayed), select B, then resolve A - A must never
     // render after B is selected; B remains selected and displayed.
     const { store, pending, rendered } = makeDeferredNodeDetailsSandbox();
 
@@ -1317,7 +1317,7 @@ async function test_node_details_stale_response_never_renders_after_reselect() {
 }
 
 async function test_node_details_stale_response_after_channel_select() {
-    // Scenario 2: select A (delayed), select a channel, resolve A — the node
+    // Scenario 2: select A (delayed), select a channel, resolve A - the node
     // details stay cleared and the channel selection remains intact.
     const { sandbox, store, pending, rendered } = makeDeferredNodeDetailsSandbox();
 
@@ -1338,7 +1338,7 @@ async function test_node_details_stale_response_after_channel_select() {
 }
 
 async function test_node_details_stale_response_after_clear() {
-    // Scenario 3: select A (delayed), clear the selection, resolve A — details
+    // Scenario 3: select A (delayed), clear the selection, resolve A - details
     // stay cleared and A does not reappear.
     const { sandbox, store, pending, rendered } = makeDeferredNodeDetailsSandbox();
 
@@ -1358,7 +1358,7 @@ async function test_node_details_stale_response_after_clear() {
 }
 
 async function test_node_details_out_of_order_responses() {
-    // Scenario 4: resolve requests out of order — only the newest still-valid
+    // Scenario 4: resolve requests out of order - only the newest still-valid
     // request may update the panel, regardless of arrival order.
     const { store, pending, rendered } = makeDeferredNodeDetailsSandbox();
 
@@ -1378,7 +1378,7 @@ async function test_node_details_out_of_order_responses() {
 }
 
 async function test_refresh_sidebar_targets_age_limit_join_and_force() {
-    // Section 5: refreshSidebarTargets is the single joinable controller — a
+    // Section 5: refreshSidebarTargets is the single joinable controller - a
     // normal call is age-limited to <=1/60s, a forced call bypasses the age
     // limit, and concurrent calls join one in-flight refresh instead of issuing
     // their own.
@@ -1419,7 +1419,7 @@ function makeInlineNodeCard(nodeId) {
 }
 
 // Arms the #nodeDetails slot so `querySelector(':scope > .node-detail-card')`
-// reports a rendered detail card — the signal positionNodeDetailSlot() uses to
+// reports a rendered detail card - the signal positionNodeDetailSlot() uses to
 // decide the card is present and must be kept inline. The detail card is a REAL
 // child of the slot (not just a querySelector mock) so the tests can assert its
 // subtree survives a detach/reinsert unchanged.
@@ -1479,7 +1479,7 @@ function seedNodeCache(sandbox, nodes) {
 // Registers a set of connected compact cards as the #nodesList children that
 // positionNodeDetailSlot()/syncSelectedNodeCard() discover. The cards are marked
 // connected (parentNode === nodesList) but are NOT appended to nodesList's own
-// child list — in a real browser the rebuild's `nodesList.innerHTML = ...` parses
+// child list - in a real browser the rebuild's `nodesList.innerHTML = ...` parses
 // fresh cards as connected children, which the fake DOM's string-only innerHTML
 // cannot reproduce; this fixture stands in for those parsed children so they
 // survive the wipe the way the browser's would.
@@ -1554,8 +1554,8 @@ async function test_fake_dom_get_element_by_id_returns_null_for_detached() {
 
 async function test_position_node_detail_slot_descendant_not_sibling() {
     // Same-card expansion: with a node selected AND its detail card rendered, the
-    // stable slot is appended INSIDE the selected node's compact card — one outer
-    // boundary — never as a sibling of the card or at the list end.
+    // stable slot is appended INSIDE the selected node's compact card - one outer
+    // boundary - never as a sibling of the card or at the list end.
     const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
     const doc = sandbox._document;
     const store = sandbox.window.MeshCenterTargets;
@@ -1579,7 +1579,7 @@ async function test_position_node_detail_slot_descendant_not_sibling() {
 }
 
 async function test_position_node_detail_slot_moves_on_node_change() {
-    // Selecting a different node moves the SAME slot into that node's card —
+    // Selecting a different node moves the SAME slot into that node's card -
     // never creating a second slot, never leaving a copy behind in the old card.
     const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
     const doc = sandbox._document;
@@ -1685,7 +1685,7 @@ async function test_render_sidebar_node_cards_rebuild_preserves_slot_and_detail_
 
     const slot = armDetailSlot(doc);
     const detailCard = slot._children[0];
-    nodesList.appendChild(slot);   // a REAL child of #nodesList — destroyed unless detached first
+    nodesList.appendChild(slot);   // a REAL child of #nodesList - destroyed unless detached first
     store.select('node', '!bbbbbbbb');
 
     sandbox.renderSidebarNodeCards();
@@ -1782,7 +1782,7 @@ async function test_node_actions_menu_owned_inside_slot_and_opens() {
 
 async function test_node_actions_menu_survives_and_opens_after_rebuild() {
     // Because the menu is owned inside the stable slot, a node-list rebuild (which
-    // preserves the slot) must not destroy the menu — it must still exist, still
+    // preserves the slot) must not destroy the menu - it must still exist, still
     // live inside the repositioned slot, and still open.
     const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
     const doc = sandbox._document;
@@ -1813,7 +1813,7 @@ async function test_node_actions_menu_survives_and_opens_after_rebuild() {
 async function test_no_duplicate_node_details_or_actions_menu() {
     // After rendering (and re-rendering) through the real entry point, the whole
     // document tree must contain exactly one #nodeDetails and one
-    // #nodeActionsMenu — no phantom duplicates from re-discovery or re-render.
+    // #nodeActionsMenu - no phantom duplicates from re-discovery or re-render.
     const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
     const doc = sandbox._document;
     const store = sandbox.window.MeshCenterTargets;

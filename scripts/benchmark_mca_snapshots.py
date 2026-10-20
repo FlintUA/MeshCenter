@@ -16,30 +16,30 @@ clone workflow (per the Step 1.6A.1 verification brief) wants.
 
 What it measures, for each N in `--counts` (default 0, 100, 1000, 5000):
 
-1. **Snapshot build (full)** — `build_attachments_snapshot()`, the §3.3
+1. **Snapshot build (full)** - `build_attachments_snapshot()`, the §3.3
    "read-only pass" over `attachments`/`attachment_recipients`/
    `attachment_deliveries`/`attachment_events` plus the idempotency index.
    This is the O(N) cost the *first* publish and the legacy un-migrated
    fallback pay; it is NOT the per-tick path, which is incremental (below).
    It is reported to show the cost the incremental design eliminates.
-2. **Incremental publication** — `AttachmentsSnapshotPublisher.refresh()`
+2. **Incremental publication** - `AttachmentsSnapshotPublisher.refresh()`
    with exactly one attachment dirtied (a relevant write) each call: the
    publisher drains that one dirty id, rebuilds that one projection + its
    bounded timeline, and swaps the snapshot atomically. This is the true
    per-tick cost under a relevant-write workload. The *rebuild* is O(1) in N
    (only the one dirty projection is re-fetched), but each publish still
-   materializes a fresh immutable container — the `records` tuple plus the
-   `by_id`/`idempotency` dicts — so the complete snapshot stays
+   materializes a fresh immutable container - the `records` tuple plus the
+   `by_id`/`idempotency` dicts - so the complete snapshot stays
    reference-atomic; that shallow reference copy is O(N). Measured
    (~22 ms at N=5000 vs ~3.6 s for the full build on a Pi Zero 2 W) the
    residual is a flat O(1) rebuild plus a linear reference copy, not a full
    O(N) rebuild.
-3. **Worker-tick row scan** — the existing `_due_rows()` query (a
+3. **Worker-tick row scan** - the existing `_due_rows()` query (a
    `LIMIT`-bounded scan over the AUTOMATIC_STATES rows), reproduced
    verbatim here so the benchmark does not need to import `sender`/
    `receiver` (which would drag in `nacl`/`cbor2`). `LIMIT` bounds only the
    *rows returned*; the `ORDER BY created_at` sort is not covered by an
-   index, so the query still walks/sorts every matching row — it scales
+   index, so the query still walks/sorts every matching row - it scales
    with N (measured ~linear). Reported to show that this pre-existing scan
    (not the snapshot publisher) is the other N-dependent per-tick cost.
 
@@ -48,13 +48,13 @@ Plus one fixed (N-independent) microbenchmark: the **command drain**
 commands through `CommandRegistry`), which sizes `MAX_COMMANDS_PER_TICK`.
 
 Two *integrated* measurements close out the verification brief (they are
-not arithmetically derived from the per-N numbers above — each is its own
+not arithmetically derived from the per-N numbers above - each is its own
 directly-timed/directly-read sample):
 
 4. **Integrated-tick saturation workload** (`--active-count` /
-   `--duration` / `--relevant-every`): the *whole* worker tick — the
+   `--duration` / `--relevant-every`): the *whole* worker tick - the
    `_due_rows()` scan, the unrelated ACK-quota + Relay-health writes, a
-   relevant state/event write, and the snapshot publish — timed as one
+   relevant state/event write, and the snapshot publish - timed as one
    sample per tick in a tight loop (no `DEFAULT_TICK_SECONDS` sleep). This
    is a **saturation** figure (how fast the worker *could* churn); the
    operational duty cycle is `per-tick / 5 s` (the publish alone is
@@ -65,7 +65,7 @@ directly-timed/directly-read sample):
    registry retained simultaneously, then one incremental publish and one
    defensive full build on top. Reports baseline / retained / live-peak /
    process-peak RSS plus `/proc/meminfo` MemAvailable and SwapUsed and
-   `/proc/vmstat` `oom_kill` before/after — all directly read, never summed
+   `/proc/vmstat` `oom_kill` before/after - all directly read, never summed
    from the separate measurements.
 
 Memory is reported as peak RSS (`resource.getrusage`, Linux-only; `None` on
@@ -83,7 +83,7 @@ exercise the `MAX_DETAIL_EVENTS` slice), a subset of sent rows carrying a
 `ContentDescriptor` construction runs. All values are synthetic; no real
 attachment, identity, key, token, or path is ever touched.
 
-Usage (run from the repo root, or anywhere — the script bootstraps its own
+Usage (run from the repo root, or anywhere - the script bootstraps its own
 import path):
 
     python3 scripts/benchmark_mca_snapshots.py
@@ -425,7 +425,7 @@ def _bench_n(conn: sqlite3.Connection, workspace_manager: MCAWorkspaceManager, i
         )
 
     # Warm up once (page cache + first-object allocation), then measure the
-    # steady-state per-tick cost — the honest number the cadence constant
+    # steady-state per-tick cost - the honest number the cadence constant
     # is sized from.
     build()
 
@@ -543,22 +543,22 @@ def _bench_active_writes(
 
     Runs the *whole* worker tick in a tight loop (no `DEFAULT_TICK_SECONDS`
     sleep between ticks) for `duration_seconds`, so the per-tick timings here
-    are a **saturation** figure — how fast the worker *could* churn if a
-    relevant write arrived every single tick — not the operational duty
+    are a **saturation** figure - how fast the worker *could* churn if a
+    relevant write arrived every single tick - not the operational duty
     cycle. A real Meshtastic network cannot produce thousands of relevant
     writes per minute; operationally the worker runs one tick per
     `DEFAULT_TICK_SECONDS` (5 s), so the operational duty cycle is
     `per-tick / 5 s` (of which the publish alone is `per-publish / 5 s`,
     ~0.3%). This saturation loop, by contrast, never sleeps, so its
     publication time is a large fraction of wall time; the two numbers
-    answer different questions — saturation is the *ceiling*, the /5 s
+    answer different questions - saturation is the *ceiling*, the /5 s
     ratio is the *real cadence*.
 
     Each timed tick runs, in order, the integrated worker path in one sample:
     (0) the `_due_rows()` row scan (reproduced verbatim, including its
-    unindexed `ORDER BY created_at` sort — see the `worker_tick_scan`
+    unindexed `ORDER BY created_at` sort - see the `worker_tick_scan`
     measurement), (1) the two *unrelated* writes every tick (ACK quota +
-    Relay health — no snapshot trigger, so they must NOT force a rebuild),
+    Relay health - no snapshot trigger, so they must NOT force a rebuild),
     (2) on every `relevant_every`-th tick a *relevant* write (advance an
     attachment state + append an event) that DOES dirty that attachment and
     force an incremental rebuild of just it, and (3) the snapshot publish
@@ -767,7 +767,7 @@ def _bench_combined_memory(active_count: int, workspace_manager: MCAWorkspaceMan
     pages all alive, live-peak VmRSS while a transient *second* full snapshot
     (the defensive build) is simultaneously materialized on top of the
     retained one, process-wide ru_maxrss, and /proc/meminfo MemAvailable +
-    SwapUsed plus /proc/vmstat `oom_kill` before/after — so a run that
+    SwapUsed plus /proc/vmstat `oom_kill` before/after - so a run that
     exhausted RAM or touched swap is visible as such, not inferred."""
     gc.collect()
     baseline_rss = _current_rss_kb()

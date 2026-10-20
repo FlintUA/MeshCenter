@@ -1,8 +1,8 @@
-# Raw-HEX color audit — Stage 0 baseline
+# Raw-HEX color audit - Stage 0 baseline
 
 _Generated 2026-09-03 for the theme-registry Stage 0 preparatory task._
 
-Inventory of every unique 6-digit HEX literal across the 5 theming-relevant CSS files (`static/style-part1.css`–`style-part4.css`, `static/ui-kit.css`), classified for later token-normalization stages. **No values were changed and no components were touched** — this is a read-only inventory.
+Inventory of every unique 6-digit HEX literal across the 5 theming-relevant CSS files (`static/style-part1.css`-`style-part4.css`, `static/ui-kit.css`), classified for later token-normalization stages. **No values were changed and no components were touched** - this is a read-only inventory.
 
 - Files scanned: `static/style-part1.css`, `static/style-part2.css`, `static/style-part3.css`, `static/style-part4.css`, `static/ui-kit.css` (18,707 lines total)
 - Total HEX occurrences: **2019**
@@ -17,24 +17,24 @@ Each occurrence was checked for (1) whether it sits inside a `/* ... */` comment
 - **Chart/telemetry colors are not in CSS at all.** `chat-telemetry.js` sets Chart.js colors in JS (only 6 HEX literals there, out of scope for this CSS audit); the CSS side just themes the chart's *container* (`.telemetry-chart-container`), and the `<canvas>` itself is forced transparent (`style-part4.css:3265-3266`).
 - **No per-node/avatar hash-color palette or Leaflet marker-color override exists in *our own* CSS.** `.base-node-avatar` / `.node-manager-avatar` rules are plain container chrome (border/background/hover), not a distinct-color-per-entity palette; the "EMBEDDED MAP WORKSPACE (Leaflet)" section (`style-part4.css:558`) only themes MeshCenter's own map toolbar/popup chrome, not Leaflet's own default marker icons.
 
-So every live declaration found in the 5 files is a **product UI color** — either a general surface/text/border/gradient color, or (the one subtype worth distinguishing now) a **semantic status color** that later stages should map to a semantic token (e.g. `--mc-success`) rather than a plain surface token. A future stage that adds a real data-viz/vendor-override CSS section should re-run this audit rather than assume the same holds.
+So every live declaration found in the 5 files is a **product UI color** - either a general surface/text/border/gradient color, or (the one subtype worth distinguishing now) a **semantic status color** that later stages should map to a semantic token (e.g. `--mc-success`) rather than a plain surface token. A future stage that adds a real data-viz/vendor-override CSS section should re-run this audit rather than assume the same holds.
 
-**Scope caveat — read before treating this as "no vendor colors exist anywhere":** this audit only grepped the 5 files listed above. Leaflet's own stylesheet (`https://unpkg.com/leaflet@1.9.4/dist/leaflet.css`, loaded via `<link>` straight from the CDN in `templates/index.html:15`) is a separate, external file and was **not** part of this grep at all — its absence from the registry below means "out of scope," not "checked and found clean." Leaflet's own default marker-icon colors (its classic blue pin, etc.) are real vendor colors; they just live outside the 5 files this Stage 0 task was scoped to. If a later stage wants to theme or override Leaflet's own chrome, that stylesheet needs its own separate look, not an assumption based on this document.
+**Scope caveat - read before treating this as "no vendor colors exist anywhere":** this audit only grepped the 5 files listed above. Leaflet's own stylesheet (`https://unpkg.com/leaflet@1.9.4/dist/leaflet.css`, loaded via `<link>` straight from the CDN in `templates/index.html:15`) is a separate, external file and was **not** part of this grep at all - its absence from the registry below means "out of scope," not "checked and found clean." Leaflet's own default marker-icon colors (its classic blue pin, etc.) are real vendor colors; they just live outside the 5 files this Stage 0 task was scoped to. If a later stage wants to theme or override Leaflet's own chrome, that stylesheet needs its own separate look, not an assumption based on this document.
 
 ## Summary by category
 
 | Category | Unique values | Description |
 |---|---|---|
-| `semantic-status-candidate` | 41 | Semantic status color (success/warning/danger/info) — normalization candidate, maps to a semantic token |
-| `mixed:semantic-status-candidate+ui-normalization-candidate` | 16 | Mixed — same HEX reused as both a semantic-status color and a general surface color at different sites |
-| `ui-normalization-candidate` | 911 | General product UI color (surface/text/border/shadow/gradient) — normalization candidate |
-| `theme-family-token-value` | 14 | *(added Stage 4.1, not part of the Stage 0 baseline — see the addendum section at the end of this doc)* Canonical `--mc-*` token value for a non-Original theme family — this HEX **is** the token's declared value, not raw color leaking into component CSS |
+| `semantic-status-candidate` | 41 | Semantic status color (success/warning/danger/info) - normalization candidate, maps to a semantic token |
+| `mixed:semantic-status-candidate+ui-normalization-candidate` | 16 | Mixed - same HEX reused as both a semantic-status color and a general surface color at different sites |
+| `ui-normalization-candidate` | 911 | General product UI color (surface/text/border/shadow/gradient) - normalization candidate |
+| `theme-family-token-value` | 14 | *(added Stage 4.1, not part of the Stage 0 baseline - see the addendum section at the end of this doc)* Canonical `--mc-*` token value for a non-Original theme family - this HEX **is** the token's declared value, not raw color leaking into component CSS |
 
 ## Full registry (grouped by HEX value)
 
 Each row lists every `file:line` occurrence of that HEX value across the 5 files. Comment-only occurrences (design-review notes) are marked `[comment]` inline and were excluded from the category verdict.
 
-### Semantic status color (success/warning/danger/info) — normalization candidate, maps to a semantic token
+### Semantic status color (success/warning/danger/info) - normalization candidate, maps to a semantic token
 
 _41 unique values_
 
@@ -82,7 +82,7 @@ _41 unique values_
 | `#FFF3D8` | 1 | static/style-part3.css:3724 |
 | `#FFF4D8` | 1 | static/style-part4.css:1768 |
 
-### Mixed — same HEX reused as both a semantic-status color and a general surface color at different sites
+### Mixed - same HEX reused as both a semantic-status color and a general surface color at different sites
 
 _16 unique values_
 
@@ -105,7 +105,7 @@ _16 unique values_
 | `#FF9299` | 2 | static/style-part3.css:3738, static/style-part4.css:4017 |
 | `#FFF7DF` | 2 | static/style-part2.css:1588, static/ui-kit.css:3111 |
 
-### General product UI color (surface/text/border/shadow/gradient) — normalization candidate
+### General product UI color (surface/text/border/shadow/gradient) - normalization candidate
 
 _911 unique values_
 
@@ -1023,9 +1023,9 @@ _911 unique values_
 | `#FFFAF0` | 1 | static/style-part2.css:1269 |
 | `#FFFFFF` | 46 | static/style-part1.css:1824, static/style-part1.css:2833, static/style-part1.css:2957, static/style-part1.css:3026, static/style-part1.css:3098, static/style-part2.css:407, static/style-part2.css:526, static/style-part2.css:735, static/style-part2.css:1215, static/style-part2.css:1766, static/style-part2.css:1816, static/style-part2.css:3387, static/style-part3.css:207, static/style-part3.css:354, static/style-part3.css:361, static/style-part3.css:417, static/style-part3.css:422, static/style-part3.css:516, static/style-part3.css:1289, static/style-part3.css:1460, static/style-part3.css:1958, static/style-part3.css:1977, static/style-part3.css:3018, static/style-part4.css:1222, static/style-part4.css:2032, static/style-part4.css:2033, static/style-part4.css:2251, static/style-part4.css:2345, static/style-part4.css:2352, static/style-part4.css:2416, static/style-part4.css:2512, static/style-part4.css:2751, static/style-part4.css:2883, static/style-part4.css:3147, static/style-part4.css:3189, static/style-part4.css:3277 [comment], static/style-part4.css:3386, static/ui-kit.css:2065, static/ui-kit.css:2100, static/ui-kit.css:2211, static/ui-kit.css:2732, static/ui-kit.css:3072, static/ui-kit.css:3089, static/ui-kit.css:3126, static/ui-kit.css:3127, static/ui-kit.css:3133 |
 
-## Addendum (Stage 4.1) — theme-family token values
+## Addendum (Stage 4.1) - theme-family token values
 
-_Added by the theme-registry Stage 4.1 PR (MeshCenter Sharp), not part of the original 2026-09-03 Stage 0 baseline snapshot above — this is a separately-dated, ongoing addendum, not a regeneration of that baseline._
+_Added by the theme-registry Stage 4.1 PR (MeshCenter Sharp), not part of the original 2026-09-03 Stage 0 baseline snapshot above - this is a separately-dated, ongoing addendum, not a regeneration of that baseline._
 
 The Stage 0 taxonomy (`semantic-status-candidate` / `ui-normalization-candidate` / the `mixed:` variant) predates any `--mc-*` tokens existing at all - it classifies *raw* HEX still leaking into component CSS that a later stage should migrate to a token. Starting with Stage 4 (new theme families - Sharp, Gunmetal, Alpine, Teal Dark, Teal Light), each stage's own PR introduces brand-new HEX values that are the opposite case: they *are* the canonical token declarations themselves (`html[data-theme-family="..."] { --mc-*: #... }`), plus their swatch-preview mirrors in the family picker CSS. Neither existing category fits, so this addendum uses a new `theme-family-token-value` verdict for them instead of force-fitting into `ui-normalization-candidate`.
 

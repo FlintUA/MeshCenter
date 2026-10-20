@@ -1,17 +1,17 @@
 // ============================================================
-// CSRF — project-wide X-CSRF-Token helper
+// CSRF - project-wide X-CSRF-Token helper
 // (docs/attachments/internal-rest-api.md §2.3). No build step, no
 // dependencies; loaded before the other API scripts in index.html.
 //
 // One small wrapper around window.fetch that transparently adds the
 // session's CSRF token (read from a <meta name="csrf-token"> tag) to
 // same-origin /api/ requests whose method is anything other than GET/HEAD
-// (POST/PUT/PATCH/DELETE/OPTIONS and any future method — the same rule the
+// (POST/PUT/PATCH/DELETE/OPTIONS and any future method - the same rule the
 // backend enforces, so the two can't drift). It never touches GET/HEAD,
 // cross-origin URLs, or non-/api/ paths, so the token can't leak to the
 // Leaflet CDN, the weather/map providers, or any other third party.
 // Caller-supplied options (body, method, credentials, signal, cache, mode,
-// redirect, Headers, FormData, Request, ...) are preserved untouched — the
+// redirect, Headers, FormData, Request, ...) are preserved untouched - the
 // helper builds a shallow copy rather than mutating the caller's objects,
 // inherits a Request input's own headers when init.headers isn't supplied,
 // and it never forces a Content-Type (so FormData keeps its automatic
@@ -40,8 +40,8 @@
     var TOKEN_META_SELECTOR = 'meta[name="csrf-token"]';
     var CSRF_HEADER = 'X-CSRF-Token';
     // Same rule as the backend's _CSRF_SAFE_METHODS: only GET and HEAD are
-    // safe. Every other explicit method — including OPTIONS and any future
-    // verb — mutates and needs the token. No four-method allowlist that can
+    // safe. Every other explicit method - including OPTIONS and any future
+    // verb - mutates and needs the token. No four-method allowlist that can
     // drift out of sync with api/api_auth.py.
     var SAFE_METHODS = { GET: true, HEAD: true };
 
@@ -90,7 +90,7 @@
         if (!isUnsafeMethod(extractMethod(input, init))) return false;
         var url = resolveURL(input);
         if (!url) return false;
-        // Same-origin /api/ paths only — never cross-origin (Leaflet CDN,
+        // Same-origin /api/ paths only - never cross-origin (Leaflet CDN,
         // weather/map providers), never the rest of the site.
         if (url.origin !== window.location.origin) return false;
         return url.pathname.indexOf('/api/') === 0;
@@ -150,7 +150,7 @@
     }
 
     function showReloadPrompt() {
-        // At most one persistent prompt per page lifetime — several requests
+        // At most one persistent prompt per page lifetime - several requests
         // failing at once (e.g. a burst of parallel fetches after the session
         // token went stale) must not stack a wall of identical banners.
         if (reloadPromptShown) return;

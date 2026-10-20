@@ -42,7 +42,7 @@ Completed
 
 In Progress
 
-- Documentation — this pass (H2-A): README/docs accuracy audit, a generated API route reference (`docs/API_ROUTES.md`), and CI checks that keep docs from drifting from the code again
+- Documentation - this pass (H2-A): README/docs accuracy audit, a generated API route reference (`docs/API_ROUTES.md`), and CI checks that keep docs from drifting from the code again
 
 - Design System
 
@@ -52,11 +52,11 @@ In Progress
 
 - Better accessibility
 
-- Performance optimization — see [Phase 3](#phase-3) for the telemetry-specific work already done
+- Performance optimization - see [Phase 3](#phase-3) for the telemetry-specific work already done
 
 Also current:
 
-- Finishing the four-language interface: the i18n *infrastructure* is complete and live (language switching, the MCAttach/Files workspace fully translated in all four languages) — what remains is writing the actual German/Russian/Ukrainian translations (currently English placeholder text) for the rest of the interface, and wiring the JavaScript-rendered chat interface into the translation system at all
+- Finishing the four-language interface: the i18n *infrastructure* is complete and live (language switching, the MCAttach/Files workspace fully translated in all four languages) - what remains is writing the actual German/Russian/Ukrainian translations (currently English placeholder text) for the rest of the interface, and wiring the JavaScript-rendered chat interface into the translation system at all
 
 ---
 
@@ -70,7 +70,7 @@ Completed
 
 - Sensor history
 
-- Bounded, debounced telemetry storage (10,000 local / 1,000 per remote node / 40,000 total records, flushed to disk at most once every 60 seconds instead of on every reading — see `docs/architecture/Architecture.md#data-storage`)
+- Bounded, debounced telemetry storage (10,000 local / 1,000 per remote node / 40,000 total records, flushed to disk at most once every 60 seconds instead of on every reading - see `docs/architecture/Architecture.md#data-storage`)
 
 Planned
 
@@ -156,7 +156,7 @@ Third-party modules
 
 Custom widgets
 
-External integrations — candidates under consideration: Telegram notifications, MQTT integration (brokers and/or a bridge), Grafana/InfluxDB exporters, an APRS gateway, Home Assistant, Node-RED
+External integrations - candidates under consideration: Telegram notifications, MQTT integration (brokers and/or a bridge), Grafana/InfluxDB exporters, an APRS gateway, Home Assistant, Node-RED
 
 Also under consideration for the Network Map specifically: signal-quality overlays, routing/traceroute visualization, favorite-node emphasis, last-heard indicators
 

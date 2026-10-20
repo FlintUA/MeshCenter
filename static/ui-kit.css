@@ -2202,7 +2202,7 @@ html[data-theme="dark"] { color-scheme: dark; }
 html[data-theme="light"] { color-scheme: light; }
 
 /* ============================================================
-   DARK THEME POLISH — darker navigation, stronger panel framing
+   DARK THEME POLISH - darker navigation, stronger panel framing
    and higher contrast About content.
    ============================================================ */
 html[data-theme="dark"] {
@@ -2308,7 +2308,7 @@ html[data-theme="dark"] .about-project-card {
 }
 
 /* ============================================================
-   DARK THEME — camera workspace and Management Tools contrast
+   DARK THEME - camera workspace and Management Tools contrast
    ============================================================ */
 /* raw: media-stage surface (frame + stream canvas) - no exact --mc-* match
    yet (checked against every dark-mode token, incl. --mc-bg-media-stage
@@ -2356,7 +2356,7 @@ html[data-theme="dark"] #nodesManagementList::-webkit-scrollbar-thumb:hover {
 }
 
 /* ==========================================================
-   DARK THEME — chat workspace, controls and residual contrast
+   DARK THEME - chat workspace, controls and residual contrast
    ========================================================== */
 html[data-theme="dark"] {
 }
@@ -2486,7 +2486,7 @@ html[data-theme="dark"] :is(
     color: var(--mc-chat-muted) !important;
 }
 
-/* Management list names and counters — keep hierarchy but never lose contrast. */
+/* Management list names and counters - keep hierarchy but never lose contrast. */
 html[data-theme="dark"] .nodes-management-item .name,
 html[data-theme="dark"] #nodesManagementList .name,
 html[data-theme="dark"] #nodesManagementList strong {
@@ -2505,7 +2505,7 @@ html[data-theme="dark"] .nodes-tools-total {
 }
 
 /* ==========================================================
-   DARK THEME — node position actions and search controls
+   DARK THEME - node position actions and search controls
    ========================================================== */
 html[data-theme="dark"] {
 }
@@ -2598,7 +2598,7 @@ body.dark-theme .quality-fair{color:#f0c75e!important;}
 body.dark-theme .quality-poor{color:#ff7d7d!important;}
 
 /* ==========================================================
-   DARK THEME — Weather card
+   DARK THEME - Weather card
    Match the standard MeshCenter dark surfaces used by About,
    System and node cards. Keep weather states readable without
    reintroducing light panels inside the dark sidebar.
@@ -2668,7 +2668,7 @@ html[data-theme="dark"] .weather-forecast-temperature {
     color: #edf4fb !important;
 }
 
-/* Refresh/status pill — dark by default, state colors remain semantic. */
+/* Refresh/status pill - dark by default, state colors remain semantic. */
 html[data-theme="dark"] .weather-state-badge {
     background: #223349 !important;
     border-color: #3a526d !important;
@@ -2743,7 +2743,7 @@ html[data-theme="dark"] #nodeDetails .node-detail-radio .radio-param {
 }
 
 /* ============================================================
-   CAMERA PREVIEW — RESPONSIVE, NON-CROPPING STREAM
+   CAMERA PREVIEW - RESPONSIVE, NON-CROPPING STREAM
    ============================================================ */
 .video-view {
     overflow: hidden !important;
@@ -3529,7 +3529,7 @@ html[data-theme="dark"] .settings-select {
 }
 
 /* ============================================================
-   UNIFIED POPOVER SURFACES — Stage 2C.7.4
+   UNIFIED POPOVER SURFACES - Stage 2C.7.4
    Workspace and Notifications use one shared visual language.
    ============================================================ */
 

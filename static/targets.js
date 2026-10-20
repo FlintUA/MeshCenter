@@ -4,21 +4,21 @@
  * normalized node+channel target model, the MCA capability overlays, the
  * selected {kind,id} target, subscription/event notification, and
  * generation protection (a `generation` counter consumers guard on; there is
- * no epoch/context guard — a data-context change is a full page reload, see
+ * no epoch/context guard - a data-context change is a full page reload, see
  * ADR-0012 §6). Loaded before files.js and chat.js so every
- * workspace — the Nodes/sidebar area, the Files contact list + Send-dialog
+ * workspace - the Nodes/sidebar area, the Files contact list + Send-dialog
  * recipients, the Files counterparty filter, and future desktop/mobile
- * redesigns — reads the SAME model instead of each re-merging the raw
+ * redesigns - reads the SAME model instead of each re-merging the raw
  * endpoints.
  *
  * A "target" has exactly two kinds: `node` (a canonical `!xxxxxxxx` transport
  * address) and `channel` (a radio channel id). An "MCA Contact" is NOT a
- * third kind — it is the security/capability state attached to a *node*
+ * third kind - it is the security/capability state attached to a *node*
  * target. A node from `/api/nodes_management` and an MCA binding from
  * `/api/mca/contacts` with the same canonical address are one target; an
  * MCA-only contact (missing from the node list) stays available as a node
  * target (its canonical id is the fallback display name). Nodes are NEVER
- * matched/deduped by display name — identity is `{kind, id}` alone.
+ * matched/deduped by display name - identity is `{kind, id}` alone.
  *
  * Sources merged (each keeps its own last-known-good slice + degraded flag,
  * so a transient failure never silently replaces a valid slice with empty):
@@ -27,11 +27,11 @@
  *   GET /api/mca/key-requests    -> worker-published key-request capability
  *   GET /api/base_status         -> local node identity
  *   GET /api/chats               -> CACHED channel projection (no
- *                                   `refresh_channels` — this store never
+ *                                   `refresh_channels` - this store never
  *                                   forces radio channel discovery)
  *
  * The capability matrix (can_send_file / can_request_key /
- * file_unavailable_reason) is computed in ONE place — computeCapability() —
+ * file_unavailable_reason) is computed in ONE place - computeCapability() -
  * and is never re-derived in a UI component. A node must never become
  * sendable merely because it exists in `/api/nodes_management`: only a
  * trusted worker-published MCA binding (`trust_state === "ready"`) produces
@@ -76,7 +76,7 @@
     // ---- single internal state object --------------------------------------
 
     var state = {
-        generation: 0,          // bumped on every successful merge — consumers guard on it
+        generation: 0,          // bumped on every successful merge - consumers guard on it
         loading: {},            // sourceKey -> in-flight Promise (joinable)
         degraded: {},           // sourceKey -> true while serving last-known-good
         lastGood: {
@@ -105,8 +105,8 @@
         // matching the backend's own lowercased emission), then accept ONLY the
         // canonical shape. The explicit length pin matters: a bare `$` anchor
         // matches before a trailing newline, so `length !== 9` also rejects a
-        // trailing "\n"/"\r". Anything else — empty, short, long, non-hex,
-        // whitespace, newline — returns '' so it is never keyed, deduped, or
+        // trailing "\n"/"\r". Anything else - empty, short, long, non-hex,
+        // whitespace, newline - returns '' so it is never keyed, deduped, or
         // selected as a node identity.
         var normalized = String(id == null ? '' : id).toLowerCase();
         if (normalized.length !== 9 || !CONTACT_ID_RE.test(normalized)) return '';
@@ -194,7 +194,7 @@
             return result;
         }, function (err) {
             if (timer) clearTimeout(timer);
-            // No raw exception text escapes — a timeout/abort or network
+            // No raw exception text escapes - a timeout/abort or network
             // failure is reported to the caller as status 0, never as a
             // thrown message the UI would surface verbatim.
             return { status: 0, data: null };
@@ -225,7 +225,7 @@
                 delete state.degraded[name];
             } else {
                 // Non-200 / empty: preserve last-known-good and mark degraded.
-                // A 503 "not ready" is treated the same — it must not wipe a
+                // A 503 "not ready" is treated the same - it must not wipe a
                 // previously valid slice.
                 state.degraded[name] = true;
             }
@@ -269,7 +269,7 @@
         var order = [];
 
         // Pass 1: MCA bindings seed a node target (source = mca_only until a
-        // matching node is seen). Bindings carry no display name — the node
+        // matching node is seen). Bindings carry no display name - the node
         // slice (or the canonical id fallback) supplies it.
         bindings.forEach(function (b) {
             var id = canonicalNodeId(b.contact_id);
@@ -336,7 +336,7 @@
         });
 
         // Pass 2b: ensure the local node is present even when the node list
-        // does not (yet) include it — its identity comes from base_status.
+        // does not (yet) include it - its identity comes from base_status.
         var localId = canonicalNodeId(state.localNodeId);
         if (localId && !byNodeId[localId]) {
             byNodeId[localId] = {
@@ -438,7 +438,7 @@
     function refresh(force) {
         // Every merge bumps `generation`; a concurrent refresh joins the
         // in-flight per-source promises (loadSource) rather than issuing its
-        // own, and every response is merged — there is no epoch guard that
+        // own, and every response is merged - there is no epoch guard that
         // drops a response, because a data-context change (radio profile
         // switch) is a full process restart + full page reload (ADR-0012 §6),
         // so no in-flight fetch can outlive its context in-page.
@@ -472,14 +472,14 @@
     //
     // This runs a "wave": join every source read currently in flight, then issue
     // exactly one forced fresh refresh that bypasses the per-source join guard.
-    // The cutoff is `followUp.started` — false until the forced refresh actually
+    // The cutoff is `followUp.started` - false until the forced refresh actually
     // issues its HTTP requests, flipped true the instant it does:
     //   * a command whose terminal state was reached BEFORE the wave starts may
     //     share that wave (its committed result is included in the fresh read),
     //     so it joins `followUp.promise`;
     //   * a command reached WHILE a wave's refresh is already running must not
     //     join it (that refresh predates the command), so it starts/joins exactly
-    //     ONE subsequent wave instead — `followUp` is replaced by the new wave
+    //     ONE subsequent wave instead - `followUp` is replaced by the new wave
     //     (which joins the running one via `state.loading` below), and further
     //     commands arriving during it coalesce the same way.
     // Nothing here loops: a wave only begins when a new terminal callback calls
@@ -551,7 +551,7 @@
     function select(kind, id) {
         // Selection canonicalizes and validates by kind. A node selection
         // passes through canonicalNodeId() (so an invalid/empty/malformed id
-        // — the review's "invalid/disappeared target" case — clears selection
+        // - the review's "invalid/disappeared target" case - clears selection
         // instead of silently selecting a non-address); a channel selection
         // only lowercases (the node-id regex is never applied to channel ids).
         var canonical = kind === 'channel'

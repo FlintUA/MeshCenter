@@ -1,4 +1,4 @@
-# MeshCenter — Known Issues
+# MeshCenter - Known Issues
 
 ## KI-001: e-Paper driver hang on start (Waveshare 2.13" color HAT) - RESOLVED
 Status: resolved 2026-08-13, on dev node (.104)

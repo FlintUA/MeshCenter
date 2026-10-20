@@ -1,4 +1,4 @@
-"""tests/test_manifest.py — meshsrv/attachments/manifest.py (ADR-0006).
+"""tests/test_manifest.py - meshsrv/attachments/manifest.py (ADR-0006).
 
 Round-trips the manifest blob format and sealed-envelope sealing/opening,
 plus the tamper/wrong-recipient rejection cases the ADR-0006 trust chain

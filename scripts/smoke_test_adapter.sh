@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# smoke_test_adapter.sh — extract -> clean venv -> install -> import ->
+# smoke_test_adapter.sh - extract -> clean venv -> install -> import ->
 # health-check for a built meshcenter-meshtastic-adapter-<version>.tar.gz
 # archive. Called by build-release.sh right after building the Adapter
 # archive; also runnable standalone against any already-built archive.

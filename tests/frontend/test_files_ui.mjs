@@ -2,7 +2,7 @@
 //
 // Dependency-free behavior tests for static/files.js (the MCAttach Files
 // workspace). This repo has no build step, no package.json, and no JS test
-// framework (CI's own JS gate is `node --check` — syntax only), so rather than
+// framework (CI's own JS gate is `node --check` - syntax only), so rather than
 // introduce jest/a browser runner as new project infrastructure, this uses
 // Node's built-in `vm` to execute the REAL files.js source against a small
 // stub DOM/fetch/I18N/notification surface, and Node's built-in `assert`.
@@ -504,7 +504,7 @@ async function test_command_reports_success_only_on_terminal_succeeded() {
     // Confirm the destructive action.
     dispatch(sandbox, { 'data-files-action': 'modal-confirm' });
 
-    // Queued progress first — success must NOT have been shown yet.
+    // Queued progress first - success must NOT have been shown yet.
     await waitFor(() => sandbox._notifications.some((n) => n.kind === 'progress'));
     assert.ok(
         !sandbox._notifications.some((n) => n.kind === 'update' && n.type === 'success'),
@@ -692,7 +692,7 @@ async function test_send_readiness_gate_blocks_create() {
 async function test_confirm_rendering_escapes_untrusted_text() {
     // The payload smuggles an <img onerror=...> as the untrusted node display
     // name AND the untrusted Relay provider display name. Both must be rendered
-    // through esc() (literal text) — never assembled into live markup.
+    // through esc() (literal text) - never assembled into live markup.
     const PAYLOAD = '<img src=x onerror="window.__filesXss=1">';
     const full = 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718';
     const sandbox = buildSandbox({
@@ -1091,7 +1091,7 @@ async function test_filter_select_all_six_values_issue_correct_api_request() {
         assert.equal(select.value, value, 'the select must reflect the chosen filter value');
     }
 
-    // An unknown value must be ignored — setFilter() bails on a value with no
+    // An unknown value must be ignored - setFilter() bails on a value with no
     // FILTER_API mapping, so no request is issued.
     const before = queries.length;
     select.value = 'bogus';
@@ -1595,9 +1595,9 @@ async function test_provider_command_awaits_refresh() {
 }
 
 async function test_provider_card_shows_status_fields() {
-    // F3: the shared provider card must render the live status fields — upload
+    // F3: the shared provider card must render the live status fields - upload
     // readiness, last-checked timestamp, last check result, latency, last error
-    // — with numeric-only latency and a safe fallback for a null error code.
+    // - with numeric-only latency and a safe fallback for a null error code.
     const sandbox = buildSandbox({
         fetchImpl: defaultRoutes(async (url) => {
             if (url === '/api/mca/providers') {
@@ -1626,7 +1626,7 @@ async function test_provider_card_shows_status_fields() {
     assert.match(html, /Latency/, 'the provider card must show latency');
     assert.match(html, /42 ms/, 'the provider card must render numeric-only latency');
     assert.match(html, /Last error/, 'the provider card must show the last error');
-    assert.match(html, /—/, 'a null error code must render the em-dash fallback, not raw text');
+    assert.match(html, />-</, 'a null error code must render the plain-hyphen fallback, not raw text');
 
     console.log('PASS: test_provider_card_shows_status_fields');
 }
@@ -1634,7 +1634,7 @@ async function test_provider_card_shows_status_fields() {
 async function test_command_awaits_inflight_then_fresh_refresh() {
     // G1: when a command's terminal projection refresh is ALREADY in flight at
     // settle time, the terminal callback must JOIN that read, then issue a fresh
-    // read, and only then announce success — never while the earlier read is
+    // read, and only then announce success - never while the earlier read is
     // still unresolved (the old boolean guard returned an instantly-resolved
     // promise and announced success early).
     let listCalls = 0;
@@ -1691,7 +1691,7 @@ async function test_command_awaits_inflight_then_fresh_refresh() {
 async function test_send_does_not_act_on_cached_providers_before_fresh() {
     // G2.1: a new Send dialog must not render/select the cached provider list,
     // nor check readiness against it, before this dialog's own fresh provider
-    // response arrives — the fresh load owns the select and readiness.
+    // response arrives - the fresh load owns the select and readiness.
     let providerCalls = 0;
     let readinessCalls = 0;
     let releaseFresh;
@@ -1735,7 +1735,7 @@ async function test_send_does_not_act_on_cached_providers_before_fresh() {
 async function test_stale_send_settings_do_not_update_new_dialog() {
     // G2.2: a settings response started for an older Send dialog must not update
     // a newer one. Dialog 1's settings fetch (bluetooth) is held and released
-    // AFTER dialog 2 opens with its own serial fetch — the stale response is dropped.
+    // AFTER dialog 2 opens with its own serial fetch - the stale response is dropped.
     // (activate() is required so guardedLoad onDone callbacks actually run.)
     let settingsCalls = 0;
     let releaseOld;
@@ -1767,7 +1767,7 @@ async function test_stale_send_settings_do_not_update_new_dialog() {
     await waitFor(() => settingsCalls === 3);
     await waitFor(() => (sandbox._document.getElementById('filesSendStatus').innerHTML || '').includes('serial'));
 
-    // Release dialog 1's held bluetooth response — it must not overwrite dialog 2.
+    // Release dialog 1's held bluetooth response - it must not overwrite dialog 2.
     releaseOld();
     await new Promise((r) => setTimeout(r, 30));
 
@@ -1841,14 +1841,14 @@ async function test_provider_error_codes_are_localized() {
     assert.match(html, /Connection failed/, 'ConnectionError must render its localized label');
     assert.doesNotMatch(html, /ConnectionError/, 'the raw ConnectionError class name must not be rendered verbatim');
     assert.match(html, /Provider key mismatch/, 'service_public_key_mismatch must render its localized label');
-    assert.match(html, /—/, 'a null error code must render the em-dash fallback');
+    assert.match(html, />-</, 'a null error code must render the plain-hyphen fallback');
 
     console.log('PASS: test_provider_error_codes_are_localized');
 }
 
 async function test_counterparty_filter_out_of_order_responses() {
     // P3: switching counterparty A -> B issues distinct fetches, and a stale A
-    // response that resolves AFTER B must be dropped — never overwrite B's list.
+    // response that resolves AFTER B must be dropped - never overwrite B's list.
     let releaseA;
     const gateA = new Promise((r) => { releaseA = r; });
     const sandbox = buildSandbox({
@@ -1929,7 +1929,7 @@ async function test_counterparty_filter_a_b_a_switching() {
     activate(sandbox);
 
     // Let the initial (empty) transfers response render so the list element
-    // exists before the fast switch — a gated A and a dropped B mean no response
+    // exists before the fast switch - a gated A and a dropped B mean no response
     // paints below, so the list must already be on the page to assert against.
     await waitFor(() => sandbox._document.elements.get('filesArchiveList') !== undefined);
 
@@ -1939,7 +1939,7 @@ async function test_counterparty_filter_a_b_a_switching() {
     sandbox.window.MeshCenterTargets.toggleSelect('node', '!bbbbbbbb');
     sandbox.window.MeshCenterTargets.toggleSelect('node', '!aaaaaaaa');
 
-    // Let B's fast response resolve while the query is already back to A — it
+    // Let B's fast response resolve while the query is already back to A - it
     // must be dropped and never paint B's list.
     await new Promise((r) => setTimeout(r, 30));
     assert.ok(
@@ -1956,7 +1956,7 @@ async function test_counterparty_filter_a_b_a_switching() {
     assert.ok(!html.includes('from-b.pdf'), 'B list must not survive');
 
     // The second A joined the still-in-flight first A (same query key), so no
-    // duplicate A request was issued — exactly one request per distinct query.
+    // duplicate A request was issued - exactly one request per distinct query.
     assert.deepEqual(
         cps.filter(Boolean),
         ['!aaaaaaaa', '!bbbbbbbb'],
@@ -2036,7 +2036,7 @@ async function test_counterparty_filter_reset_returns_full_list() {
 
 async function test_counterparty_detail_invalidation_on_switch_to_empty() {
     // P3 review: switching counterparty while a detail fetch is still in flight
-    // must invalidate it — a late detail response for the OLD counterparty can
+    // must invalidate it - a late detail response for the OLD counterparty can
     // never paint into the new (empty) view.
     let releaseDetail;
     const gateDetail = new Promise((r) => { releaseDetail = r; });
@@ -2076,7 +2076,7 @@ async function test_counterparty_detail_invalidation_on_switch_to_empty() {
     const body = sandbox._document.elements.get('filesDetailBody');
     assert.ok(!body.innerHTML.includes('a-detail.pdf'), 'detail panel must be cleared on switch to empty B');
 
-    // Release the stale A detail response — it must be dropped, not painted.
+    // Release the stale A detail response - it must be dropped, not painted.
     releaseDetail();
     await new Promise((r) => setTimeout(r, 30));
     assert.ok(!body.innerHTML.includes('a-detail.pdf'), 'late A detail must not paint after switching to empty B');
@@ -2086,7 +2086,7 @@ async function test_counterparty_detail_invalidation_on_switch_to_empty() {
 
 async function test_counterparty_switch_to_nonempty_selects_first_card() {
     // P3 review: switching to a NON-empty counterparty must select the FIRST
-    // card of the new result and show only its detail — never the previous
+    // card of the new result and show only its detail - never the previous
     // counterparty's detail, and never a non-first card.
     const sandbox = buildSandbox({
         fetchImpl: defaultRoutes(async (url) => {
@@ -2149,7 +2149,7 @@ async function test_key_action_does_not_change_selection() {
     // Requirement (item 9): key actions (request key / confirm / accept / reject)
     // live on the right node card as siblings of the node-select button, and a
     // key-action click must NOT select/deselect the node or reload transfers.
-    // `request key` opens a confirm dialog first, so the POST is deferred — but
+    // `request key` opens a confirm dialog first, so the POST is deferred - but
     // neither the store selection nor the transfers list may move on the click.
     const cps = [];
     const sandbox = buildSandbox({
@@ -2254,7 +2254,7 @@ async function test_second_contact_click_deselects_returns_full_list() {
 async function test_channel_selection_clears_node_counterparty() {
     // Finding 1: a channel selected in the shared store STAYS selected (the
     // store retains it, with can_send_file=false) but is never a file
-    // counterparty — Files clears any prior node counterparty rather than
+    // counterparty - Files clears any prior node counterparty rather than
     // keeping the stale filter.
     const cps = [];
     const sandbox = buildSandbox({
@@ -2288,7 +2288,7 @@ async function test_channel_selection_clears_node_counterparty() {
 
 async function test_no_separate_contacts_or_targets_pane() {
     // Requirement (item 1): the Files workspace must have NO separate contacts
-    // or targets panel — the only right-side target list is the shared global
+    // or targets panel - the only right-side target list is the shared global
     // sidebar. files.js must not render (or reference) its own contact list.
     assert.ok(!source.includes('filesContactsList'), 'files.js must not reference a files-local contact list');
     assert.ok(!source.includes('filesContactsPane'), 'files.js must not reference a files-local contacts pane');
@@ -2300,7 +2300,7 @@ async function test_no_separate_contacts_or_targets_pane() {
 async function test_channel_selection_shows_unsupported_notice() {
     // Requirement (item 6): a channel selection stays in the store (no
     // counterparty) and shows the compact "channel transfers unsupported" notice
-    // above the transfer list; a node or no selection hides it — including the
+    // above the transfer list; a node or no selection hides it - including the
     // none→channel and channel→none transitions, where the counterparty itself
     // does not change.
     const cps = [];
@@ -2337,7 +2337,7 @@ async function test_channel_selection_shows_unsupported_notice() {
 
 async function test_send_dialog_preselects_valid_node() {
     // Finding 1: the Send dialog pre-selects a recipient only when the shared
-    // store's selection is a valid, still-sendable node — here a trusted node.
+    // store's selection is a valid, still-sendable node - here a trusted node.
     const sandbox = buildSandbox({
         fetchImpl: defaultRoutes(async (url) => {
             if (url === '/api/mca/contacts') {
@@ -2419,9 +2419,9 @@ async function test_send_dialog_no_fallback_for_invalid_channel_disappeared() {
 }
 
 async function test_same_query_detail_invalidation_on_empty_poll() {
-    // P3 review (second pass): the list can change under the SAME query key —
+    // P3 review (second pass): the list can change under the SAME query key -
     // the selected transfer completed and left the pending filter, was deleted,
-    // or the server returned an empty list — with no direction/filter/
+    // or the server returned an empty list - with no direction/filter/
     // counterparty switch. That selection change (to null) must invalidate the
     // in-flight detail too, so a late old-detail response cannot repaint a
     // transfer that is no longer shown.
@@ -2451,7 +2451,7 @@ async function test_same_query_detail_invalidation_on_empty_poll() {
     activate(sandbox);
     await waitFor(() => sandbox._document.elements.get('filesArchiveList').innerHTML.includes('from-a.pdf'));
 
-    // Same-query poll now returns empty — the selection disappears without any
+    // Same-query poll now returns empty - the selection disappears without any
     // query-key change.
     dispatch(sandbox, { 'data-files-action': 'refresh' });
     await waitFor(() => !sandbox._document.elements.get('filesArchiveList').innerHTML.includes('from-a.pdf'));
@@ -2459,7 +2459,7 @@ async function test_same_query_detail_invalidation_on_empty_poll() {
     const body = sandbox._document.elements.get('filesDetailBody');
     assert.ok(!body.innerHTML.includes('a-detail.pdf'), 'detail panel must be cleared when the selection disappears');
 
-    // Release the stale detail — it must be dropped, not painted.
+    // Release the stale detail - it must be dropped, not painted.
     releaseDetail();
     await new Promise((r) => setTimeout(r, 30));
     assert.ok(!body.innerHTML.includes('a-detail.pdf'), 'late detail for the now-missing transfer must not appear');
@@ -2471,7 +2471,7 @@ async function test_same_query_replaces_selection_no_transient_stale_detail() {
     // P3 review (second pass): the same query key replacing A with B (A left the
     // pending filter and B became the first row) is a selection change, not a
     // query change. It must invalidate A's in-flight detail so A's late response
-    // never paints — not even transiently — while B's coalesced detail is still
+    // never paints - not even transiently - while B's coalesced detail is still
     // pending.
     let releaseDetailA, releaseDetailB;
     const gateDetailA = new Promise((r) => { releaseDetailA = r; });
@@ -2513,11 +2513,11 @@ async function test_same_query_replaces_selection_no_transient_stale_detail() {
 
     const body = sandbox._document.elements.get('filesDetailBody');
     // While B's detail is still pending (A's detail is still in flight and held),
-    // the panel must be empty — not showing A's stale detail.
+    // the panel must be empty - not showing A's stale detail.
     assert.ok(!body.innerHTML.includes('a-detail.pdf'), 'panel must be cleared while the new selection is pending');
 
     // Release the late A detail: it must be dropped, and the coalesced B detail
-    // fires next — A's content must never paint, even transiently.
+    // fires next - A's content must never paint, even transiently.
     releaseDetailA();
     await new Promise((r) => setTimeout(r, 30));
     assert.ok(!body.innerHTML.includes('a-detail.pdf'), 'late A detail must not paint even transiently');
@@ -2588,7 +2588,7 @@ async function test_reactivation_issues_fresh_transfers_request() {
 async function test_contact_command_awaits_fresh_store_refresh() {
     // Finding 2 (PR 5 final correction): a contact command's terminal callback
     // must join the shared store's in-flight pre-command read, then force ONE
-    // fresh read — success must not announce on a stale projection, and exactly
+    // fresh read - success must not announce on a stale projection, and exactly
     // one fresh /api/mca/contacts fetch must follow the joined read (never a
     // plain store.refresh() that would re-join the stale in-flight read).
     let contactsCalls = 0;

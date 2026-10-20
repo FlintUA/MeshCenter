@@ -62,7 +62,7 @@ def _csrf_token_matches(expected, provided):
     """Constant-time CSRF comparison that fails closed on malformed input.
 
     secrets.compare_digest() only accepts two ASCII-only str (or two
-    bytes-like) values — anything else raises TypeError. A token that is
+    bytes-like) values - anything else raises TypeError. A token that is
     missing, empty, non-string, or non-ASCII must produce the exact 403
     csrf_invalid envelope like a wrong token, never a 500, so this validates
     the shape first and only hands genuinely comparable ASCII strings to

@@ -2,21 +2,21 @@
 //
 // Dependency-free behavior tests for static/targets.js (PR 4 shared target
 // model). This repo has no build step and no JS test framework (CI's JS gate
-// is `node --check` — syntax only), so, mirroring test_files_ui.mjs, this
+// is `node --check` - syntax only), so, mirroring test_files_ui.mjs, this
 // uses Node's built-in `vm` to execute the REAL targets.js source against a
 // minimal fetch/global surface, and Node's built-in `assert`.
 // Runnable as `node tests/frontend/test_targets_ui.mjs`.
 //
 // Covers the PR 4 frontend-store requirements:
-//   merge/dedup — a node from /api/nodes_management and an MCA binding with
+//   merge/dedup - a node from /api/nodes_management and an MCA binding with
 //       the same canonical `!xxxxxxxx` address become ONE target; never
 //       dedupe by display name; an MCA-only contact stays available as a node
 //       target; a node without a binding is `trust_state === "unknown"`.
-//   selection  — select/clearSelection/selected + canonical-id casing; the
+//   selection - select/clearSelection/selected + canonical-id casing; the
 //       subscriber notification (generation + selection) on refresh/select.
-//   channel    — channel targets are navigation-only (never sendable, never
+//   channel - channel targets are navigation-only (never sendable, never
 //       key-requestable, reason `channel_not_supported`).
-//   races      — the per-source in-flight guard (a concurrent refresh joins,
+//   races - the per-source in-flight guard (a concurrent refresh joins,
 //       never double-fetches) and the last-known-good/degraded preservation
 //       (a transient failure never wipes a valid slice).
 
@@ -439,7 +439,7 @@ async function testGenerationIncrementsPerMerge() {
 
 async function testRefreshNeverDropsResponsesAcrossGenerations() {
     // Finding 4 (epoch/context guard): the store has no epoch guard that drops
-    // "stale" responses — a refresh always merges the responses it awaits. A
+    // "stale" responses - a refresh always merges the responses it awaits. A
     // second refresh issued mid-flight joins the first's in-flight sources
     // (no double fetch) and BOTH merge, advancing generation twice. A dropped
     // response would leave one of these generations unmerged.
@@ -499,7 +499,7 @@ async function testNetworkErrorPreservesLastKnownGood() {
 
 async function testRefreshAfterCommandJoinsInFlightThenForcesFreshRead() {
     // A command's terminal follow-up must (a) join an in-flight pre-command
-    // read and (b) issue exactly one forced fresh read after it — never
+    // read and (b) issue exactly one forced fresh read after it - never
     // resolve on the stale pre-command projection (which a plain refresh()
     // would return via the per-source join guard).
     let contactsCalls = 0;
@@ -543,7 +543,7 @@ async function testRefreshAfterCommandJoinsInFlightThenForcesFreshRead() {
 
 async function testRefreshAfterCommandCoalescesConcurrentCallbacks() {
     // Two terminal callbacks that fire while the same pre-command read is in
-    // flight coalesce onto ONE follow-up — they await the same fresh read, never
+    // flight coalesce onto ONE follow-up - they await the same fresh read, never
     // chain two sequential fresh reads.
     let contactsCalls = 0;
     let releasePre;
@@ -574,7 +574,7 @@ async function testRefreshAfterCommandCoalescesConcurrentCallbacks() {
 async function testRefreshAfterCommandPreservesLastKnownGoodOnFreshFailure() {
     // A failed forced fresh read marks the slice degraded but must not wipe the
     // last-known-good projection, and the follow-up resolves (never rejects with
-    // raw exception text — the store's api() already normalizes failures).
+    // raw exception text - the store's api() already normalizes failures).
     let contactsCalls = 0;
     let releasePre;
     const gatePre = new Promise((r) => { releasePre = r; });
@@ -631,7 +631,7 @@ function heldContacts() {
 async function testRefreshAfterCommandDoesNotJoinAlreadyRunningWave() {
     // A command whose terminal state is reached WHILE a prior command's forced
     // refresh is already running must NOT resolve on that refresh (it predates
-    // the command) — it must schedule exactly ONE subsequent fresh read and
+    // the command) - it must schedule exactly ONE subsequent fresh read and
     // resolve only after that subsequent projection is applied.
     const hc = heldContacts();
     const { store } = makeSandbox(delegatingHandler(hc.handle));
@@ -702,7 +702,7 @@ async function testRefreshAfterCommandCoalescesWithinActiveWave() {
 }
 
 async function testRefreshAfterCommandReleasesGuardAfterSettle() {
-    // After a wave settles — success OR failure — the guard is released, so a
+    // After a wave settles - success OR failure - the guard is released, so a
     // NEW command starts a fresh wave (a new read) rather than joining the
     // already-settled promise (which would resolve instantly on stale data).
     const hc = heldContacts();

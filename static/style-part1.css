@@ -1,6 +1,6 @@
-/* style-part1.css — часть 1 из 4 механического сплита style.css
+/* style-part1.css - часть 1 из 4 механического сплита style.css
    (2026-08-21). Порядок частей в <link> ЗНАЧИМ: в файле есть 213
-   селекторов, повторяющихся в разных частях — при равной
+   селекторов, повторяющихся в разных частях - при равной
    специфичности побеждает то, что идёт позже. НЕ переставлять
    <link>-теги местами, НЕ переносить правила между частями без
    проверки на дублирующиеся селекторы по всему набору файлов. */
@@ -906,7 +906,7 @@ body {
 .rescan-nodes-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 
 /* ===== NODE DETAILS ===== */
-/* PR 6 correction: #nodeDetails is the inline detail slot — a child of the
+/* PR 6 correction: #nodeDetails is the inline detail slot - a child of the
    selected .node-card (same-card expansion), so the compact card and its detail
    card share one outer border. No top margin: the compact card's key row already
    carries a border-top/padding separating the two portions. */
@@ -3273,7 +3273,7 @@ body {
     }
 }
 
-/* The settings panel can be narrower than the viewport (side panels open) —
+/* The settings panel can be narrower than the viewport (side panels open) -
    respond to the panel's own width, not the window's, via a container query. */
 @container settings-panel (max-width: 900px) {
     .settings-grid {

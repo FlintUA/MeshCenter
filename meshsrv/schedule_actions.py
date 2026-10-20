@@ -207,7 +207,7 @@ def _do_send_data_report(action: dict, rule: dict):
 
     if age_s > threshold_s:
         age_label = _format_age(age_s)
-        message = f"{message}  [{age_label}]" if fmt == 'compact' else f"{message}\n— data {age_label} —"
+        message = f"{message}  [{age_label}]" if fmt == 'compact' else f"{message}\n- data {age_label} -"
     elif policy == 'skip_if_stale':
         from meshsrv.notification_service import push_notification
         push_notification(

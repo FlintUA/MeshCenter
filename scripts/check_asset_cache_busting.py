@@ -49,7 +49,7 @@ INDEX_HTML = REPO_ROOT / 'templates' / 'index.html'
 I18N_JS = REPO_ROOT / 'static' / 'i18n.js'
 
 # The single canonical cache-busting token for the current frontend release.
-CURRENT_VERSION = '20261020-upd1'
+CURRENT_VERSION = '20261021-dash1'
 
 # Browser assets changed in the current release. Every entry must be referenced
 # in index.html with CURRENT_VERSION (and, for i18n.js, its CATALOG_VERSION must
@@ -69,7 +69,10 @@ CURRENT_ASSETS = {
     'static/app-dialog.js',
     'static/chat-updates-security.js',
     'static/chat-telemetry.js',
-    'static/media.js',
+    'static/style-part2.css',
+    'static/style-part3.css',
+    'static/targets.js',
+    'static/ui-kit.css',
 }
 
 # `<link rel="stylesheet" href="{{ url_for('static', filename='X') }}?v=TOKEN">`

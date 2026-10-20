@@ -1,8 +1,8 @@
-"""Backend Protocol v1 — the transport-neutral contract Core uses to talk to
+"""Backend Protocol v1 - the transport-neutral contract Core uses to talk to
 a Meshtastic radio, regardless of whether the concrete implementation reaches
 it over USB serial or BLE (and, later, TCP).
 
-Interface only (Task 43.5) — no implementation here, and nothing in this
+Interface only (Task 43.5) - no implementation here, and nothing in this
 module imports `meshtastic` or references protobuf/`SerialInterface`/
 `BLEInterface` types. See docs/BACKEND_API.md for the JSON wire shape this
 maps onto once the adapter crosses a process boundary (Task 48), and for the
@@ -51,7 +51,7 @@ class TransportErrorCode(str, Enum):
     # This means the adapter subprocess ITSELF was never reached at all -
     # never started, failed to start, or crashed before ever completing a
     # round-trip. Matches the plan document's own acceptance-test wording
-    # ("статус транспорта — 'adapter unavailable'", pip-uninstall-meshtastic
+    # ("статус транспорта - 'adapter unavailable'", pip-uninstall-meshtastic
     # scenario) - deliberately not reusing UNKNOWN, so a caller/UI can tell
     # "radio not connected" apart from "the whole adapter is missing" at a
     # glance, not by string-matching last_error.message.
@@ -140,7 +140,7 @@ class TransportErrorCode(str, Enum):
 
 
 # ---------------------------------------------------------------------------
-# Neutral models — plain data, no protobuf/library types anywhere below.
+# Neutral models - plain data, no protobuf/library types anywhere below.
 # ---------------------------------------------------------------------------
 
 @dataclass

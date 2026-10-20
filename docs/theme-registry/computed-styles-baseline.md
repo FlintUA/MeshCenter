@@ -1,4 +1,4 @@
-# Computed-styles snapshot — Stage 0 baseline
+# Computed-styles snapshot - Stage 0 baseline
 
 Computed `background-color` / `color` / `border-color` / `box-shadow` for one representative element per component category, sampled from the Stage 0 fixture pages (`.theme_stage0_scratch/fixtures/fixture_{light,dark}.html`) in headless Chromium. This is the 'before' reference future stages diff against.
 

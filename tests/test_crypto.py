@@ -1,4 +1,4 @@
-"""tests/test_crypto.py — meshsrv/attachments/crypto.py (ADR-0006).
+"""tests/test_crypto.py - meshsrv/attachments/crypto.py (ADR-0006).
 
 Zero-I/O unit tests for chunk/header AEAD encryption and nonce
 construction. No Relay, no manifest blob, no database.

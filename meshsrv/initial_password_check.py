@@ -16,9 +16,9 @@ FILENAME = "initial_password.txt"
 
 MSG_VALID = (
     "A plaintext copy of your current password is stored in data/initial_password.txt "
-    "— change your password in Settings → Security, then delete the file."
+    "- change your password in Settings → Security, then delete the file."
 )
-MSG_OBSOLETE = "data/initial_password.txt is an obsolete plaintext password file — delete it."
+MSG_OBSOLETE = "data/initial_password.txt is an obsolete plaintext password file - delete it."
 
 
 def _candidates(text):

@@ -169,7 +169,7 @@ step_preflight() {
         fail "Not enough disk space. Need ${MIN_FREE_MB}MB, have ${FREE_MB}MB free."
     log "Disk space: ${FREE_MB}MB free ✓"
 
-    # RAM — detect device and swap need
+    # RAM - detect device and swap need
     RAM_MB=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
     log "RAM: ${RAM_MB}MB"
 
@@ -253,7 +253,7 @@ try:
     with socketserver.TCPServer(("", PORT), Handler) as httpd:
         httpd.serve_forever()
 except Exception:
-    pass  # port busy or no permission — just don't start
+    pass  # port busy or no permission - just don't start
 PYEOF
 
     PROGRESS_PID=$!
@@ -265,7 +265,7 @@ PYEOF
         log "Watch progress at: http://$(hostname).local or http://$(detect_local_ip)"
     else
         PROGRESS_PID=""
-        log "Progress server not started (port $PROGRESS_PORT busy or no permission — OK)"
+        log "Progress server not started (port $PROGRESS_PORT busy or no permission - OK)"
     fi
 }
 
@@ -307,24 +307,24 @@ step_system_packages() {
     sudo systemctl enable avahi-daemon --quiet 2>/dev/null || true
     sudo systemctl start  avahi-daemon         2>/dev/null || true
 
-    # Camera support (Picamera2) — optional, must be installed before the
+    # Camera support (Picamera2) - optional, must be installed before the
     # venv is created so --system-site-packages can see it. Not fatal if
     # unavailable (e.g. non-Pi hardware or repo without picamera2 packages).
     if apt-cache show python3-picamera2 &>/dev/null; then
         sudo apt-get install -y python3-picamera2 rpicam-apps --no-install-recommends -qq \
-            || warn "Camera packages failed to install — camera feature will be unavailable."
+            || warn "Camera packages failed to install - camera feature will be unavailable."
     else
-        warn "python3-picamera2 not available on this system — camera feature will be unavailable."
+        warn "python3-picamera2 not available on this system - camera feature will be unavailable."
     fi
 
-    # e-Paper display support (gpiozero/spidev) — optional and off by default,
+    # e-Paper display support (gpiozero/spidev) - optional and off by default,
     # matching EPAPER_ENABLED=False in config.example.py: not every install
     # has a HAT wired up, so this isn't installed unless explicitly requested.
     # To enable: INSTALL_EPAPER=yes curl -sSL .../install.sh | bash
     if [[ "${INSTALL_EPAPER:-no}" == "yes" ]]; then
         log "Installing e-Paper display packages (python3-gpiozero + python3-spidev)..."
         sudo apt-get install -y python3-gpiozero python3-spidev --no-install-recommends -qq \
-            || warn "e-Paper packages failed to install — e-Paper display feature will be unavailable."
+            || warn "e-Paper packages failed to install - e-Paper display feature will be unavailable."
     else
         log "e-Paper support skipped (set INSTALL_EPAPER=yes to install python3-gpiozero/python3-spidev)"
     fi
@@ -335,7 +335,7 @@ step_system_packages() {
 # ─── Step 3: Swap (for Pi Zero 2W and devices with < 1GB RAM) ────────────────
 step_swap() {
     if [[ "$NEEDS_SWAP" != "true" ]]; then
-        progress "3/9 Swap not needed for ${DEVICE_NAME} — skipping"
+        progress "3/9 Swap not needed for ${DEVICE_NAME} - skipping"
         return 0
     fi
 
@@ -351,7 +351,7 @@ step_swap() {
         sudo dphys-swapfile swapon
         log "Swap increased to ${SWAP_INSTALL_MB}MB for installation ✓"
     else
-        warn "dphys-swapfile not found — skipping swap setup"
+        warn "dphys-swapfile not found - skipping swap setup"
     fi
 }
 
@@ -382,7 +382,7 @@ step_venv() {
     progress "5/9 Installing Python dependencies (may take several minutes on ${DEVICE_NAME})..."
 
     # --system-site-packages is required so Picamera2 (installed system-wide
-    # in step 2) is visible inside the venv — see CLAUDE.md / INSTALL.md.
+    # in step 2) is visible inside the venv - see CLAUDE.md / INSTALL.md.
     python3 -m venv --system-site-packages "${INSTALL_DIR}/venv"
     # shellcheck source=/dev/null
     source "${INSTALL_DIR}/venv/bin/activate"
@@ -467,7 +467,7 @@ step_config() {
     mkdir -p "${INSTALL_DIR}/data"
 
     if [[ -f "${INSTALL_DIR}/config.py" ]]; then
-        log "config.py already exists — not overwritten ✓"
+        log "config.py already exists - not overwritten ✓"
         return 0
     fi
 
@@ -634,7 +634,7 @@ step_systemd() {
 
     # Render the repo's sudoers templates (service restart/reboot/poweroff,
     # Wi-Fi management, and the hardware-config helper above) instead of a
-    # partial hand-rolled set — the UI's System, Wi-Fi and hardware actions
+    # partial hand-rolled set - the UI's System, Wi-Fi and hardware actions
     # depend on all three being present.
     sed "s|__MESH_USER__|${MESH_USER}|g" "${INSTALL_DIR}/deploy/meshcenter.sudoers" \
         | sudo tee /etc/sudoers.d/${SERVICE_NAME} > /dev/null
@@ -700,7 +700,7 @@ step_done() {
 
     echo ""
     echo -e "${GREEN}╔══════════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║   MeshCenter ${VERSION} — installed!          ${NC}"
+    echo -e "${GREEN}║   MeshCenter ${VERSION} - installed!          ${NC}"
     echo -e "${GREEN}╠══════════════════════════════════════════════╣${NC}"
     echo -e "${GREEN}║   Open in browser:                           ${NC}"
     echo -e "${GREEN}║   http://$(hostname).local:${APP_PORT}        ${NC}"
@@ -711,7 +711,7 @@ step_done() {
     if [[ -n "$RADIO_PORT" ]]; then
     echo -e "${GREEN}║   Radio:  ${RADIO_PORT} (auto-detected)       ${NC}"
     else
-    echo -e "${YELLOW}║   Radio:  not detected — connect via Settings${NC}"
+    echo -e "${YELLOW}║   Radio:  not detected - connect via Settings${NC}"
     fi
     echo -e "${GREEN}╠══════════════════════════════════════════════╣${NC}"
     echo -e "${GREEN}║   Log:    ${LOG_FILE}                         ${NC}"

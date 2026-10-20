@@ -1,12 +1,12 @@
-/* style-part4.css — часть 4 из 4 механического сплита style.css
+/* style-part4.css - часть 4 из 4 механического сплита style.css
    (2026-08-21). Порядок частей в <link> ЗНАЧИМ: в файле есть 213
-   селекторов, повторяющихся в разных частях — при равной
+   селекторов, повторяющихся в разных частях - при равной
    специфичности побеждает то, что идёт позже. НЕ переставлять
    <link>-теги местами, НЕ переносить правила между частями без
    проверки на дублирующиеся селекторы по всему набору файлов. */
 
 /* ============================================================
-   MESSAGE ACTIONS — Stage 1
+   MESSAGE ACTIONS - Stage 1
    ============================================================ */
 .message .bubble {
     padding-right: 34px;
@@ -232,7 +232,7 @@
 
 
 /* ============================================================
-   MESSAGE REPLY UI — Stage 2
+   MESSAGE REPLY UI - Stage 2
    ============================================================ */
 .reply-composer[hidden] {
     display: none !important;
@@ -859,7 +859,7 @@
 
 
 /* ============================================================
-   MAP SELECTION UX — stable viewport, larger markers, selected label
+   MAP SELECTION UX - stable viewport, larger markers, selected label
    ============================================================ */
 .meshcenter-map-marker-dot {
     width: 15px;
@@ -3112,7 +3112,7 @@ body[data-theme="dark"] .waypoint-create-footer .primary {
 body[data-theme="dark"] .node-detail-card {
     /* Step 3 regression fix: stays transparent so it reads as the body of
        the compact .node-card above it (see the base rule's own comment),
-       not a second nested box — only the divider line gets a dark-theme
+       not a second nested box - only the divider line gets a dark-theme
        color. */
     background: transparent !important;
     border-color: var(--mc-border) !important;
@@ -4720,7 +4720,7 @@ html[data-theme="dark"] #notificationsCard {
 
 .files-layout {
     display: grid;
-    /* PR 5: two panes only — Transfers (flexible) + Details (fixed band). The
+    /* PR 5: two panes only - Transfers (flexible) + Details (fixed band). The
        separate Contacts pane is gone; the right-side target list is the global
        sidebar. */
     grid-template-columns: minmax(0, 1fr) minmax(320px, 400px);
@@ -4873,7 +4873,7 @@ html[data-theme="dark"] #notificationsCard {
 }
 /* PR post-simplification regression fix: provider/state/size/date/expiry are
    grouped into one wrapping row so they never fight the file name for width
-   on narrow panels — see MCAttach_UI_Regressions_PostSimplification.md step 1. */
+   on narrow panels - see MCAttach_UI_Regressions_PostSimplification.md step 1. */
 .files-transfer-meta {
     display: flex;
     flex-wrap: wrap;

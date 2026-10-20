@@ -6,73 +6,73 @@ Total tokens with at least one consumer: 114
 
 ## `--mc-accent` (12 consumers)
 
-- `static/style-part4.css:3322` — `.notification-item-action`
-- `static/ui-kit.css:48` — `.btn:focus-visible`
-- `static/ui-kit.css:1572` — `.about-tab:hover`
-- `static/ui-kit.css:1573` — `.about-tab.active`
-- `static/ui-kit.css:1585` — `.about-aliases span`
-- `static/ui-kit.css:1586` — `.about-link-list a:hover strong`
-- `static/ui-kit.css:1588` — `.about-primary-link`
-- `static/ui-kit.css:1589` — `.about-resource-card:hover`
-- `static/ui-kit.css:1589` — `.about-resource-card b`
-- `static/ui-kit.css:1590` — `.about-version`
-- `static/ui-kit.css:3613` — `:root`
-- `static/ui-kit.css:4190` — `html[data-theme-family="sharp"]`
+- `static/style-part4.css:3322` - `.notification-item-action`
+- `static/ui-kit.css:48` - `.btn:focus-visible`
+- `static/ui-kit.css:1572` - `.about-tab:hover`
+- `static/ui-kit.css:1573` - `.about-tab.active`
+- `static/ui-kit.css:1585` - `.about-aliases span`
+- `static/ui-kit.css:1586` - `.about-link-list a:hover strong`
+- `static/ui-kit.css:1588` - `.about-primary-link`
+- `static/ui-kit.css:1589` - `.about-resource-card:hover`
+- `static/ui-kit.css:1589` - `.about-resource-card b`
+- `static/ui-kit.css:1590` - `.about-version`
+- `static/ui-kit.css:3613` - `:root`
+- `static/ui-kit.css:4190` - `html[data-theme-family="sharp"]`
 
 ## `--mc-accent-soft` (5 consumers)
 
-- `static/ui-kit.css:1572` — `.about-tab:hover`
-- `static/ui-kit.css:1577` — `.about-project-card`
-- `static/ui-kit.css:1584` — `.about-card-icon`
-- `static/ui-kit.css:1585` — `.about-aliases span`
-- `static/ui-kit.css:1589` — `.about-resource-icon`
+- `static/ui-kit.css:1572` - `.about-tab:hover`
+- `static/ui-kit.css:1577` - `.about-project-card`
+- `static/ui-kit.css:1584` - `.about-card-icon`
+- `static/ui-kit.css:1585` - `.about-aliases span`
+- `static/ui-kit.css:1589` - `.about-resource-icon`
 
 ## `--mc-bg-app` (3 consumers)
 
-- `static/ui-kit.css:88` — `body`
-- `static/ui-kit.css:1137` — `.workspace-theme-swatch--bg`
-- `static/ui-kit.css:1566` — `.about-view`
+- `static/ui-kit.css:88` - `body`
+- `static/ui-kit.css:1137` - `.workspace-theme-swatch--bg`
+- `static/ui-kit.css:1566` - `.about-view`
 
 ## `--mc-bg-media-stage` (3 consumers)
 
-- `static/style-part1.css:2835` — `.video-frame-wrap`
-- `static/ui-kit.css:149` — `.video-frame-wrap,
+- `static/style-part1.css:2835` - `.video-frame-wrap`
+- `static/ui-kit.css:149` - `.video-frame-wrap,
 .media-preview`
-- `static/ui-kit.css:728` — `.video-frame-wrap`
+- `static/ui-kit.css:728` - `.video-frame-wrap`
 
 ## `--mc-bg-muted` (13 consumers)
 
-- `static/style-part1.css:230` — `.chat-item:hover`
-- `static/style-part1.css:252` — `.chat-icon`
-- `static/style-part2.css:1045` — `.camera-defaults-btn:hover`
-- `static/style-part2.css:2391` — `.base-reference-location.reference-is-disabled`
-- `static/style-part3.css:980` — `.time-card`
-- `static/style-part3.css:1223` — `.weather-card`
-- `static/ui-kit.css:337` — `.media-sort-label,
+- `static/style-part1.css:230` - `.chat-item:hover`
+- `static/style-part1.css:252` - `.chat-icon`
+- `static/style-part2.css:1045` - `.camera-defaults-btn:hover`
+- `static/style-part2.css:2391` - `.base-reference-location.reference-is-disabled`
+- `static/style-part3.css:980` - `.time-card`
+- `static/style-part3.css:1223` - `.weather-card`
+- `static/ui-kit.css:337` - `.media-sort-label,
 .media-icon-btn`
-- `static/ui-kit.css:441` — `.mc-refresh-btn,
+- `static/ui-kit.css:441` - `.mc-refresh-btn,
 .media-refresh-btn,
 .system-refresh-btn,
 .media-primary-btn`
-- `static/ui-kit.css:2945` — `.workspace-nav-btn:hover`
-- `static/ui-kit.css:2951` — `.workspace-nav-btn.active`
-- `static/ui-kit.css:2960` — `.workspace-nav-icon`
-- `static/ui-kit.css:3613` — `:root`
-- `static/ui-kit.css:3884` — `html[data-theme="dark"]`
+- `static/ui-kit.css:2945` - `.workspace-nav-btn:hover`
+- `static/ui-kit.css:2951` - `.workspace-nav-btn.active`
+- `static/ui-kit.css:2960` - `.workspace-nav-icon`
+- `static/ui-kit.css:3613` - `:root`
+- `static/ui-kit.css:3884` - `html[data-theme="dark"]`
 
 ## `--mc-bg-panel` (38 consumers)
 
-- `static/style-part1.css:1591` — `.modal-content`
-- `static/style-part3.css:546` — `.camera-preset-group select,
+- `static/style-part1.css:1591` - `.modal-content`
+- `static/style-part3.css:546` - `.camera-preset-group select,
 .camera-white-balance-group select`
-- `static/style-part4.css:698` — `[data-theme="light"] .map-fit-btn`
-- `static/style-part4.css:700` — `[data-theme="light"] .meshcenter-map-popup .leaflet-popup-content-wrapper,
+- `static/style-part4.css:698` - `[data-theme="light"] .map-fit-btn`
+- `static/style-part4.css:700` - `[data-theme="light"] .meshcenter-map-popup .leaflet-popup-content-wrapper,
 [data-theme="light"] .meshcenter-map-popup .leaflet-popup-tip`
-- `static/style-part4.css:766` — `.map-header.mc-workspace-header`
-- `static/style-part4.css:4052` — `.schedule-input,
+- `static/style-part4.css:766` - `.map-header.mc-workspace-header`
+- `static/style-part4.css:4052` - `.schedule-input,
 .schedule-select`
-- `static/style-part4.css:4086` — `.timer-duration-input`
-- `static/ui-kit.css:121` — `.video-panel,
+- `static/style-part4.css:4086` - `.timer-duration-input`
+- `static/ui-kit.css:121` - `.video-panel,
 .media-panel,
 .system-panel,
 .settings-header,
@@ -80,62 +80,62 @@ Total tokens with at least one consumer: 114
 .node-details,
 .node-detail-card,
 .node-position-card`
-- `static/ui-kit.css:143` — `.video-header,
+- `static/ui-kit.css:143` - `.video-header,
 .media-header,
 .system-header,
 .settings-header`
-- `static/ui-kit.css:255` — `.node-card`
-- `static/ui-kit.css:261` — `.node-card:hover`
-- `static/ui-kit.css:297` — `.node-details`
-- `static/ui-kit.css:314` — `.media-content`
-- `static/ui-kit.css:322` — `.media-item`
-- `static/ui-kit.css:590` — `.settings-panel`
-- `static/ui-kit.css:605` — `.settings-header.mc-workspace-header`
-- `static/ui-kit.css:669` — `.settings-panel > .settings-header`
-- `static/ui-kit.css:1094` — `.workspace-theme-family-card`
-- `static/ui-kit.css:1138` — `.workspace-theme-swatch--panel`
-- `static/ui-kit.css:1392` — `html[data-theme="dark"] .node-card`
-- `static/ui-kit.css:1400` — `html[data-theme="dark"] .chat-item`
-- `static/ui-kit.css:1631` — `.about-shell`
-- `static/ui-kit.css:1646` — `.about-header.mc-workspace-header`
-- `static/ui-kit.css:1680` — `.about-tabs`
-- `static/ui-kit.css:1810` — `.about-tabs`
-- `static/ui-kit.css:1830` — `.about-project-card`
-- `static/ui-kit.css:1842` — `.about-footer`
-- `static/ui-kit.css:2013` — `html[data-theme="dark"] :is(
+- `static/ui-kit.css:255` - `.node-card`
+- `static/ui-kit.css:261` - `.node-card:hover`
+- `static/ui-kit.css:297` - `.node-details`
+- `static/ui-kit.css:314` - `.media-content`
+- `static/ui-kit.css:322` - `.media-item`
+- `static/ui-kit.css:590` - `.settings-panel`
+- `static/ui-kit.css:605` - `.settings-header.mc-workspace-header`
+- `static/ui-kit.css:669` - `.settings-panel > .settings-header`
+- `static/ui-kit.css:1094` - `.workspace-theme-family-card`
+- `static/ui-kit.css:1138` - `.workspace-theme-swatch--panel`
+- `static/ui-kit.css:1392` - `html[data-theme="dark"] .node-card`
+- `static/ui-kit.css:1400` - `html[data-theme="dark"] .chat-item`
+- `static/ui-kit.css:1631` - `.about-shell`
+- `static/ui-kit.css:1646` - `.about-header.mc-workspace-header`
+- `static/ui-kit.css:1680` - `.about-tabs`
+- `static/ui-kit.css:1810` - `.about-tabs`
+- `static/ui-kit.css:1830` - `.about-project-card`
+- `static/ui-kit.css:1842` - `.about-footer`
+- `static/ui-kit.css:2013` - `html[data-theme="dark"] :is(
     .chat-item, .node-card, .system-card, .settings-card,
     .about-card, .about-resource-card, .about-release-card,
     .about-note, .about-footer,
     .system-log-card, .radio-health-card,
     .wifi-card, .auto-recovery-card
 )`
-- `static/ui-kit.css:3092` — `.devices-empty-tags span`
-- `static/ui-kit.css:3274` — `.devices-panel`
-- `static/ui-kit.css:3305` — `.node-manager-panel.mc-workspace-panel`
-- `static/ui-kit.css:3318` — `.devices-header.mc-workspace-header`
-- `static/ui-kit.css:3367` — `html[data-theme="dark"] .devices-panel`
-- `static/ui-kit.css:3372` — `html[data-theme="dark"] .devices-header.mc-workspace-header`
-- `static/ui-kit.css:3394` — `.mc-workspace-panel`
-- `static/ui-kit.css:3412` — `.video-panel.mc-workspace-panel,
+- `static/ui-kit.css:3092` - `.devices-empty-tags span`
+- `static/ui-kit.css:3274` - `.devices-panel`
+- `static/ui-kit.css:3305` - `.node-manager-panel.mc-workspace-panel`
+- `static/ui-kit.css:3318` - `.devices-header.mc-workspace-header`
+- `static/ui-kit.css:3367` - `html[data-theme="dark"] .devices-panel`
+- `static/ui-kit.css:3372` - `html[data-theme="dark"] .devices-header.mc-workspace-header`
+- `static/ui-kit.css:3394` - `.mc-workspace-panel`
+- `static/ui-kit.css:3412` - `.video-panel.mc-workspace-panel,
 .media-panel.mc-workspace-panel,
 .devices-panel.mc-workspace-panel,
 .system-panel.mc-workspace-panel,
 .settings-panel.mc-workspace-panel,
 .about-shell.mc-workspace-panel`
-- `static/ui-kit.css:3613` — `:root`
-- `static/ui-kit.css:3884` — `html[data-theme="dark"]`
+- `static/ui-kit.css:3613` - `:root`
+- `static/ui-kit.css:3884` - `html[data-theme="dark"]`
 
 ## `--mc-bg-subtle` (18 consumers)
 
-- `static/style-part2.css:1034` — `.camera-defaults-btn`
-- `static/style-part3.css:980` — `.time-card`
-- `static/style-part3.css:1223` — `.weather-card`
-- `static/style-part3.css:1876` — `.chat-list-container`
-- `static/style-part3.css:1930` — `.chat-list-container`
-- `static/style-part4.css:4132` — `.schedule-action-params`
-- `static/ui-kit.css:108` — `.base-sidebar,
+- `static/style-part2.css:1034` - `.camera-defaults-btn`
+- `static/style-part3.css:980` - `.time-card`
+- `static/style-part3.css:1223` - `.weather-card`
+- `static/style-part3.css:1876` - `.chat-list-container`
+- `static/style-part3.css:1930` - `.chat-list-container`
+- `static/style-part4.css:4132` - `.schedule-action-params`
+- `static/ui-kit.css:108` - `.base-sidebar,
 .sidebar`
-- `static/ui-kit.css:135` — `.system-card,
+- `static/ui-kit.css:135` - `.system-card,
 .node-detail-pane .node-detail-section,
 .node-detail-overview-card,
 .node-detail-radio-card,
@@ -144,130 +144,130 @@ Total tokens with at least one consumer: 114
 .node-event-history,
 .node-tool-result,
 .camera-image-controls`
-- `static/ui-kit.css:156` — `.video-controls,
+- `static/ui-kit.css:156` - `.video-controls,
 .video-info-bar,
 .camera-image-controls,
 .media-content`
-- `static/ui-kit.css:350` — `.system-card`
-- `static/ui-kit.css:397` — `.system-card,
+- `static/ui-kit.css:350` - `.system-card`
+- `static/ui-kit.css:397` - `.system-card,
 .settings-card`
-- `static/ui-kit.css:520` — `.media-content::-webkit-scrollbar-track,
+- `static/ui-kit.css:520` - `.media-content::-webkit-scrollbar-track,
 .nodes-scroll::-webkit-scrollbar-track,
 .settings-view::-webkit-scrollbar-track,
 .system-view::-webkit-scrollbar-track`
-- `static/ui-kit.css:568` — `.system-layout::-webkit-scrollbar-track`
-- `static/ui-kit.css:652` — `.settings-grid::-webkit-scrollbar-track`
-- `static/ui-kit.css:1218` — `.workspace-theme-fixed-label`
-- `static/ui-kit.css:1823` — `.about-card,
+- `static/ui-kit.css:568` - `.system-layout::-webkit-scrollbar-track`
+- `static/ui-kit.css:652` - `.settings-grid::-webkit-scrollbar-track`
+- `static/ui-kit.css:1218` - `.workspace-theme-fixed-label`
+- `static/ui-kit.css:1823` - `.about-card,
 .about-resource-card,
 .about-release-card,
 .about-note`
-- `static/ui-kit.css:3613` — `:root`
-- `static/ui-kit.css:3884` — `html[data-theme="dark"]`
+- `static/ui-kit.css:3613` - `:root`
+- `static/ui-kit.css:3884` - `html[data-theme="dark"]`
 
 ## `--mc-bg-workspace` (17 consumers)
 
-- `static/style-part3.css:2350` — `.node-info-panel`
-- `static/style-part4.css:697` — `[data-theme="light"] .map-toolbar`
-- `static/style-part4.css:744` — `.map-view`
-- `static/ui-kit.css:94` — `.app-container,
+- `static/style-part3.css:2350` - `.node-info-panel`
+- `static/style-part4.css:697` - `[data-theme="light"] .map-toolbar`
+- `static/style-part4.css:744` - `.map-view`
+- `static/ui-kit.css:94` - `.app-container,
 .main-layout`
-- `static/ui-kit.css:103` — `.chat-area,
+- `static/ui-kit.css:103` - `.chat-area,
 .video-view,
 .workspace-view,
 .media-view,
 .system-view,
 .settings-view`
-- `static/ui-kit.css:162` — `.main-content-tabs`
-- `static/ui-kit.css:251` — `.nodes-section,
+- `static/ui-kit.css:162` - `.main-content-tabs`
+- `static/ui-kit.css:251` - `.nodes-section,
 .nodes-controls,
 .nodes-scroll`
-- `static/ui-kit.css:371` — `.settings-view`
-- `static/ui-kit.css:1619` — `.about-view`
-- `static/ui-kit.css:1702` — `.about-content`
-- `static/ui-kit.css:1815` — `.about-content`
-- `static/ui-kit.css:3264` — `.devices-view`
-- `static/ui-kit.css:3295` — `.node-manager-view`
-- `static/ui-kit.css:3330` — `.devices-content`
-- `static/ui-kit.css:3377` — `html[data-theme="dark"] .devices-content`
-- `static/ui-kit.css:3613` — `:root`
-- `static/ui-kit.css:3884` — `html[data-theme="dark"]`
+- `static/ui-kit.css:371` - `.settings-view`
+- `static/ui-kit.css:1619` - `.about-view`
+- `static/ui-kit.css:1702` - `.about-content`
+- `static/ui-kit.css:1815` - `.about-content`
+- `static/ui-kit.css:3264` - `.devices-view`
+- `static/ui-kit.css:3295` - `.node-manager-view`
+- `static/ui-kit.css:3330` - `.devices-content`
+- `static/ui-kit.css:3377` - `html[data-theme="dark"] .devices-content`
+- `static/ui-kit.css:3613` - `:root`
+- `static/ui-kit.css:3884` - `html[data-theme="dark"]`
 
 ## `--mc-body-size` (6 consumers)
 
-- `static/style-part3.css:1499` — `.workspace-page-subtitle,
+- `static/style-part3.css:1499` - `.workspace-page-subtitle,
 .video-subtitle,
 .media-subtitle,
 .system-subtitle,
 .settings-subtitle`
-- `static/style-part3.css:1585` — `.settings-card-text,
+- `static/style-part3.css:1585` - `.settings-card-text,
 .map-settings-description,
 .reference-location-description`
-- `static/style-part3.css:1813` — `.video-header .workspace-page-subtitle,
+- `static/style-part3.css:1813` - `.video-header .workspace-page-subtitle,
 .media-header .workspace-page-subtitle,
 .system-header .workspace-page-subtitle`
-- `static/style-part4.css:1805` — `.node-manager-header .workspace-page-subtitle`
-- `static/ui-kit.css:630` — `.settings-header .workspace-page-subtitle`
-- `static/ui-kit.css:1671` — `.about-header .workspace-page-subtitle`
+- `static/style-part4.css:1805` - `.node-manager-header .workspace-page-subtitle`
+- `static/ui-kit.css:630` - `.settings-header .workspace-page-subtitle`
+- `static/ui-kit.css:1671` - `.about-header .workspace-page-subtitle`
 
 ## `--mc-border` (100 consumers)
 
-- `static/style-part2.css:1034` — `.camera-defaults-btn`
-- `static/style-part2.css:2391` — `.base-reference-location.reference-is-disabled`
-- `static/style-part3.css:37` — `.log-history-placeholder`
-- `static/style-part3.css:297` — `.node-detail-state-btn:hover`
-- `static/style-part3.css:337` — `.node-detail-tabs`
-- `static/style-part3.css:346` — `.node-detail-tab`
-- `static/style-part3.css:546` — `.camera-preset-group select,
+- `static/style-part2.css:1034` - `.camera-defaults-btn`
+- `static/style-part2.css:2391` - `.base-reference-location.reference-is-disabled`
+- `static/style-part3.css:37` - `.log-history-placeholder`
+- `static/style-part3.css:297` - `.node-detail-state-btn:hover`
+- `static/style-part3.css:337` - `.node-detail-tabs`
+- `static/style-part3.css:346` - `.node-detail-tab`
+- `static/style-part3.css:546` - `.camera-preset-group select,
 .camera-white-balance-group select`
-- `static/style-part3.css:980` — `.time-card`
-- `static/style-part3.css:1223` — `.weather-card`
-- `static/style-part3.css:1520` — `.video-panel,
+- `static/style-part3.css:980` - `.time-card`
+- `static/style-part3.css:1223` - `.weather-card`
+- `static/style-part3.css:1520` - `.video-panel,
 .media-panel,
 .system-panel,
 .settings-header,
 .settings-card,
 .system-card`
-- `static/style-part3.css:1545` — `.system-header`
-- `static/style-part3.css:1796` — `.system-header.mc-workspace-header`
-- `static/style-part3.css:1876` — `.chat-list-container`
-- `static/style-part3.css:1904` — `@media (max-width: 768px) > .chat-list-container`
-- `static/style-part3.css:1930` — `.chat-list-container`
-- `static/style-part3.css:1958` — `@media (max-width: 768px) > .chat-list-container`
-- `static/style-part3.css:2326` — `.settings-select`
-- `static/style-part3.css:2350` — `.node-info-panel`
-- `static/style-part3.css:2442` — `.node-info-panel .battery-indicator`
-- `static/style-part3.css:2873` — `.battery-bar`
-- `static/style-part3.css:3612` — `.node-detail-action-group`
-- `static/style-part3.css:3626` — `.node-detail-action-group .node-detail-state-btn,
+- `static/style-part3.css:1545` - `.system-header`
+- `static/style-part3.css:1796` - `.system-header.mc-workspace-header`
+- `static/style-part3.css:1876` - `.chat-list-container`
+- `static/style-part3.css:1904` - `@media (max-width: 768px) > .chat-list-container`
+- `static/style-part3.css:1930` - `.chat-list-container`
+- `static/style-part3.css:1958` - `@media (max-width: 768px) > .chat-list-container`
+- `static/style-part3.css:2326` - `.settings-select`
+- `static/style-part3.css:2350` - `.node-info-panel`
+- `static/style-part3.css:2442` - `.node-info-panel .battery-indicator`
+- `static/style-part3.css:2873` - `.battery-bar`
+- `static/style-part3.css:3612` - `.node-detail-action-group`
+- `static/style-part3.css:3626` - `.node-detail-action-group .node-detail-state-btn,
 .node-detail-action-group .node-detail-actions-btn`
-- `static/style-part3.css:3707` — `.node-detail-action-group`
-- `static/style-part3.css:3810` — `.dock-notification-btn`
-- `static/style-part3.css:3839` — `.notification-popover`
-- `static/style-part3.css:3859` — `.notification-popover-header`
-- `static/style-part3.css:3919` — `.notification-item`
-- `static/style-part4.css:575` — `.map-fit-btn`
-- `static/style-part4.css:604` — `.map-toolbar`
-- `static/style-part4.css:698` — `[data-theme="light"] .map-fit-btn`
-- `static/style-part4.css:701` — `[data-theme="light"] .meshcenter-map-popup .leaflet-popup-content-wrapper`
-- `static/style-part4.css:766` — `.map-header.mc-workspace-header`
-- `static/style-part4.css:914` — `.map-layout-popover`
-- `static/style-part4.css:922` — `.map-split-position`
-- `static/style-part4.css:936` — `.chat-area.map-layout-split > .map-view`
-- `static/style-part4.css:983` — `[data-theme="light"] .map-popup-actions button`
-- `static/style-part4.css:1010` — `.weather-key-visibility`
-- `static/style-part4.css:1767` — `.node-manager-panel.mc-workspace-panel`
-- `static/style-part4.css:1779` — `.node-manager-header.mc-workspace-header`
-- `static/style-part4.css:3322` — `.notification-item-action`
-- `static/style-part4.css:3760` — `.dock-notification-inline-dismiss`
-- `static/style-part4.css:4052` — `.schedule-input,
+- `static/style-part3.css:3707` - `.node-detail-action-group`
+- `static/style-part3.css:3810` - `.dock-notification-btn`
+- `static/style-part3.css:3839` - `.notification-popover`
+- `static/style-part3.css:3859` - `.notification-popover-header`
+- `static/style-part3.css:3919` - `.notification-item`
+- `static/style-part4.css:575` - `.map-fit-btn`
+- `static/style-part4.css:604` - `.map-toolbar`
+- `static/style-part4.css:698` - `[data-theme="light"] .map-fit-btn`
+- `static/style-part4.css:701` - `[data-theme="light"] .meshcenter-map-popup .leaflet-popup-content-wrapper`
+- `static/style-part4.css:766` - `.map-header.mc-workspace-header`
+- `static/style-part4.css:914` - `.map-layout-popover`
+- `static/style-part4.css:922` - `.map-split-position`
+- `static/style-part4.css:936` - `.chat-area.map-layout-split > .map-view`
+- `static/style-part4.css:983` - `[data-theme="light"] .map-popup-actions button`
+- `static/style-part4.css:1010` - `.weather-key-visibility`
+- `static/style-part4.css:1767` - `.node-manager-panel.mc-workspace-panel`
+- `static/style-part4.css:1779` - `.node-manager-header.mc-workspace-header`
+- `static/style-part4.css:3322` - `.notification-item-action`
+- `static/style-part4.css:3760` - `.dock-notification-inline-dismiss`
+- `static/style-part4.css:4052` - `.schedule-input,
 .schedule-select`
-- `static/style-part4.css:4086` — `.timer-duration-input`
-- `static/style-part4.css:4118` — `.schedule-day-chip`
-- `static/ui-kit.css:31` — `.btn`
-- `static/ui-kit.css:108` — `.base-sidebar,
+- `static/style-part4.css:4086` - `.timer-duration-input`
+- `static/style-part4.css:4118` - `.schedule-day-chip`
+- `static/ui-kit.css:31` - `.btn`
+- `static/ui-kit.css:108` - `.base-sidebar,
 .sidebar`
-- `static/ui-kit.css:121` — `.video-panel,
+- `static/ui-kit.css:121` - `.video-panel,
 .media-panel,
 .system-panel,
 .settings-header,
@@ -275,174 +275,174 @@ Total tokens with at least one consumer: 114
 .node-details,
 .node-detail-card,
 .node-position-card`
-- `static/ui-kit.css:143` — `.video-header,
+- `static/ui-kit.css:143` - `.video-header,
 .media-header,
 .system-header,
 .settings-header`
-- `static/ui-kit.css:162` — `.main-content-tabs`
-- `static/ui-kit.css:181` — `.main-content-tab.active`
-- `static/ui-kit.css:191` — `.camera-control-tabs,
+- `static/ui-kit.css:162` - `.main-content-tabs`
+- `static/ui-kit.css:181` - `.main-content-tab.active`
+- `static/ui-kit.css:191` - `.camera-control-tabs,
 .node-detail-tabs`
-- `static/ui-kit.css:205` — `.camera-control-tab:hover,
+- `static/ui-kit.css:205` - `.camera-control-tab:hover,
 .node-detail-tab:hover`
-- `static/ui-kit.css:212` — `.camera-control-tab.active,
+- `static/ui-kit.css:212` - `.camera-control-tab.active,
 .node-detail-tab.active`
-- `static/ui-kit.css:223` — `.time-btn,
+- `static/ui-kit.css:223` - `.time-btn,
 .cpu-range-btn,
 .telemetry-time-controls .time-btn`
-- `static/ui-kit.css:255` — `.node-card`
-- `static/ui-kit.css:322` — `.media-item`
-- `static/ui-kit.css:337` — `.media-sort-label,
+- `static/ui-kit.css:255` - `.node-card`
+- `static/ui-kit.css:322` - `.media-item`
+- `static/ui-kit.css:337` - `.media-sort-label,
 .media-icon-btn`
-- `static/ui-kit.css:350` — `.system-card`
-- `static/ui-kit.css:397` — `.system-card,
+- `static/ui-kit.css:350` - `.system-card`
+- `static/ui-kit.css:397` - `.system-card,
 .settings-card`
-- `static/ui-kit.css:417` — `.settings-segmented button,
+- `static/ui-kit.css:417` - `.settings-segmented button,
 .map-provider-select,
 .reference-location-card select,
 .reference-location-card input`
-- `static/ui-kit.css:441` — `.mc-refresh-btn,
+- `static/ui-kit.css:441` - `.mc-refresh-btn,
 .media-refresh-btn,
 .system-refresh-btn,
 .media-primary-btn`
-- `static/ui-kit.css:590` — `.settings-panel`
-- `static/ui-kit.css:605` — `.settings-header.mc-workspace-header`
-- `static/ui-kit.css:669` — `.settings-panel > .settings-header`
-- `static/ui-kit.css:1094` — `.workspace-theme-family-card`
-- `static/ui-kit.css:1121` — `.workspace-theme-swatches`
-- `static/ui-kit.css:1218` — `.workspace-theme-fixed-label`
-- `static/ui-kit.css:1392` — `html[data-theme="dark"] .node-card`
-- `static/ui-kit.css:1400` — `html[data-theme="dark"] .chat-item`
-- `static/ui-kit.css:1570` — `.about-tabs`
-- `static/ui-kit.css:1577` — `.about-project-card`
-- `static/ui-kit.css:1581` — `.about-badge`
-- `static/ui-kit.css:1583` — `.about-card`
-- `static/ui-kit.css:1587` — `.about-note`
-- `static/ui-kit.css:1589` — `.about-resource-card`
-- `static/ui-kit.css:1590` — `.about-release-card`
-- `static/ui-kit.css:1591` — `.about-footer`
-- `static/ui-kit.css:1631` — `.about-shell`
-- `static/ui-kit.css:1646` — `.about-header.mc-workspace-header`
-- `static/ui-kit.css:1680` — `.about-tabs`
-- `static/ui-kit.css:1810` — `.about-tabs`
-- `static/ui-kit.css:1823` — `.about-card,
+- `static/ui-kit.css:590` - `.settings-panel`
+- `static/ui-kit.css:605` - `.settings-header.mc-workspace-header`
+- `static/ui-kit.css:669` - `.settings-panel > .settings-header`
+- `static/ui-kit.css:1094` - `.workspace-theme-family-card`
+- `static/ui-kit.css:1121` - `.workspace-theme-swatches`
+- `static/ui-kit.css:1218` - `.workspace-theme-fixed-label`
+- `static/ui-kit.css:1392` - `html[data-theme="dark"] .node-card`
+- `static/ui-kit.css:1400` - `html[data-theme="dark"] .chat-item`
+- `static/ui-kit.css:1570` - `.about-tabs`
+- `static/ui-kit.css:1577` - `.about-project-card`
+- `static/ui-kit.css:1581` - `.about-badge`
+- `static/ui-kit.css:1583` - `.about-card`
+- `static/ui-kit.css:1587` - `.about-note`
+- `static/ui-kit.css:1589` - `.about-resource-card`
+- `static/ui-kit.css:1590` - `.about-release-card`
+- `static/ui-kit.css:1591` - `.about-footer`
+- `static/ui-kit.css:1631` - `.about-shell`
+- `static/ui-kit.css:1646` - `.about-header.mc-workspace-header`
+- `static/ui-kit.css:1680` - `.about-tabs`
+- `static/ui-kit.css:1810` - `.about-tabs`
+- `static/ui-kit.css:1823` - `.about-card,
 .about-resource-card,
 .about-release-card,
 .about-note`
-- `static/ui-kit.css:1830` — `.about-project-card`
-- `static/ui-kit.css:1842` — `.about-footer`
-- `static/ui-kit.css:2013` — `html[data-theme="dark"] :is(
+- `static/ui-kit.css:1830` - `.about-project-card`
+- `static/ui-kit.css:1842` - `.about-footer`
+- `static/ui-kit.css:2013` - `html[data-theme="dark"] :is(
     .chat-item, .node-card, .system-card, .settings-card,
     .about-card, .about-resource-card, .about-release-card,
     .about-note, .about-footer,
     .system-log-card, .radio-health-card,
     .wifi-card, .auto-recovery-card
 )`
-- `static/ui-kit.css:2060` — `html[data-theme="dark"] :is(input, select, textarea, .message-input)`
-- `static/ui-kit.css:2117` — `html[data-theme="dark"] :is(.chart-container, .system-chart, .system-log-body, .log-container)`
-- `static/ui-kit.css:2812` — `.camera-loading-placeholder`
-- `static/ui-kit.css:3018` — `.devices-panel`
-- `static/ui-kit.css:3092` — `.devices-empty-tags span`
-- `static/ui-kit.css:3274` — `.devices-panel`
-- `static/ui-kit.css:3305` — `.node-manager-panel.mc-workspace-panel`
-- `static/ui-kit.css:3318` — `.devices-header.mc-workspace-header`
-- `static/ui-kit.css:3367` — `html[data-theme="dark"] .devices-panel`
-- `static/ui-kit.css:3372` — `html[data-theme="dark"] .devices-header.mc-workspace-header`
-- `static/ui-kit.css:3394` — `.mc-workspace-panel`
-- `static/ui-kit.css:3412` — `.video-panel.mc-workspace-panel,
+- `static/ui-kit.css:2060` - `html[data-theme="dark"] :is(input, select, textarea, .message-input)`
+- `static/ui-kit.css:2117` - `html[data-theme="dark"] :is(.chart-container, .system-chart, .system-log-body, .log-container)`
+- `static/ui-kit.css:2812` - `.camera-loading-placeholder`
+- `static/ui-kit.css:3018` - `.devices-panel`
+- `static/ui-kit.css:3092` - `.devices-empty-tags span`
+- `static/ui-kit.css:3274` - `.devices-panel`
+- `static/ui-kit.css:3305` - `.node-manager-panel.mc-workspace-panel`
+- `static/ui-kit.css:3318` - `.devices-header.mc-workspace-header`
+- `static/ui-kit.css:3367` - `html[data-theme="dark"] .devices-panel`
+- `static/ui-kit.css:3372` - `html[data-theme="dark"] .devices-header.mc-workspace-header`
+- `static/ui-kit.css:3394` - `.mc-workspace-panel`
+- `static/ui-kit.css:3412` - `.video-panel.mc-workspace-panel,
 .media-panel.mc-workspace-panel,
 .devices-panel.mc-workspace-panel,
 .system-panel.mc-workspace-panel,
 .settings-panel.mc-workspace-panel,
 .about-shell.mc-workspace-panel`
-- `static/ui-kit.css:3445` — `html[data-theme="light"] .mc-workspace-panel,
+- `static/ui-kit.css:3445` - `html[data-theme="light"] .mc-workspace-panel,
 body[data-theme="light"] .mc-workspace-panel`
-- `static/ui-kit.css:3613` — `:root`
-- `static/ui-kit.css:3884` — `html[data-theme="dark"]`
+- `static/ui-kit.css:3613` - `:root`
+- `static/ui-kit.css:3884` - `html[data-theme="dark"]`
 
 ## `--mc-border-active` (10 consumers)
 
-- `static/style-part4.css:3226` — `.dock-notification-status[aria-expanded="true"]`
-- `static/style-part4.css:3342` — `[data-theme="dark"] .dock-notification-status[aria-expanded="true"]`
-- `static/ui-kit.css:272` — `.node-card.selected`
-- `static/ui-kit.css:866` — `.dock-workspace-btn.active`
-- `static/ui-kit.css:1105` — `.workspace-theme-family-option input:checked + .workspace-theme-family-card`
-- `static/ui-kit.css:1462` — `html[data-theme="dark"] .dock-workspace-btn.active`
-- `static/ui-kit.css:2049` — `html[data-theme="dark"] :is(.node-card.active, .node-card.selected)`
-- `static/ui-kit.css:2054` — `html[data-theme="dark"] :is(.chat-item.active, .chat-item.selected)`
-- `static/ui-kit.css:2951` — `.workspace-nav-btn.active`
-- `static/ui-kit.css:3121` — `html[data-theme="dark"] .workspace-nav-btn.active`
+- `static/style-part4.css:3226` - `.dock-notification-status[aria-expanded="true"]`
+- `static/style-part4.css:3342` - `[data-theme="dark"] .dock-notification-status[aria-expanded="true"]`
+- `static/ui-kit.css:272` - `.node-card.selected`
+- `static/ui-kit.css:866` - `.dock-workspace-btn.active`
+- `static/ui-kit.css:1105` - `.workspace-theme-family-option input:checked + .workspace-theme-family-card`
+- `static/ui-kit.css:1462` - `html[data-theme="dark"] .dock-workspace-btn.active`
+- `static/ui-kit.css:2049` - `html[data-theme="dark"] :is(.node-card.active, .node-card.selected)`
+- `static/ui-kit.css:2054` - `html[data-theme="dark"] :is(.chat-item.active, .chat-item.selected)`
+- `static/ui-kit.css:2951` - `.workspace-nav-btn.active`
+- `static/ui-kit.css:3121` - `html[data-theme="dark"] .workspace-nav-btn.active`
 
 ## `--mc-border-focus` (11 consumers)
 
-- `static/style-part1.css:859` — `.search-input-wide:focus`
-- `static/style-part1.css:2014` — `.telemetry-config-row select:focus`
-- `static/style-part1.css:2552` — `.control-group select:focus`
-- `static/style-part3.css:2053` — `.dock-panel-btn:focus-visible`
-- `static/style-part3.css:3098` — `.base-node-avatar:focus-visible`
-- `static/ui-kit.css:505` — `button:focus-visible,
+- `static/style-part1.css:859` - `.search-input-wide:focus`
+- `static/style-part1.css:2014` - `.telemetry-config-row select:focus`
+- `static/style-part1.css:2552` - `.control-group select:focus`
+- `static/style-part3.css:2053` - `.dock-panel-btn:focus-visible`
+- `static/style-part3.css:3098` - `.base-node-avatar:focus-visible`
+- `static/ui-kit.css:505` - `button:focus-visible,
 select:focus-visible,
 input:focus-visible,
 a:focus-visible,
 [tabindex]:focus-visible`
-- `static/ui-kit.css:874` — `.dock-workspace-btn:focus-visible,
+- `static/ui-kit.css:874` - `.dock-workspace-btn:focus-visible,
 .workspace-popover button:focus-visible,
 .workspace-popover input:focus-visible + span`
-- `static/ui-kit.css:1111` — `.workspace-theme-family-option input:focus-visible + .workspace-theme-family-card`
-- `static/ui-kit.css:2355` — `html[data-theme="dark"] .input-form input[type="text"]:focus,
+- `static/ui-kit.css:1111` - `.workspace-theme-family-option input:focus-visible + .workspace-theme-family-card`
+- `static/ui-kit.css:2355` - `html[data-theme="dark"] .input-form input[type="text"]:focus,
 html[data-theme="dark"] .message-input:focus`
-- `static/ui-kit.css:2512` — `html[data-theme="dark"] .clear-search-btn:focus-visible`
-- `static/ui-kit.css:3238` — `.workspace-page-close-btn:focus-visible`
+- `static/ui-kit.css:2512` - `html[data-theme="dark"] .clear-search-btn:focus-visible`
+- `static/ui-kit.css:3238` - `.workspace-page-close-btn:focus-visible`
 
 ## `--mc-border-hover` (25 consumers)
 
-- `static/style-part1.css:2185` — `.telemetry-time-controls .time-btn:hover`
-- `static/style-part2.css:1045` — `.camera-defaults-btn:hover`
-- `static/style-part2.css:1213` — `.node-tools-btn:hover`
-- `static/style-part2.css:3785` — `.quick-action:hover`
-- `static/style-part3.css:199` — `.main-content-tab:hover,
+- `static/style-part1.css:2185` - `.telemetry-time-controls .time-btn:hover`
+- `static/style-part2.css:1045` - `.camera-defaults-btn:hover`
+- `static/style-part2.css:1213` - `.node-tools-btn:hover`
+- `static/style-part2.css:3785` - `.quick-action:hover`
+- `static/style-part3.css:199` - `.main-content-tab:hover,
 .sidebar-tab:hover`
-- `static/style-part3.css:357` — `.node-detail-tab:hover`
-- `static/style-part3.css:1364` — `.weather-state-badge:hover`
-- `static/style-part3.css:1733` — `.reference-location-card select:hover,
+- `static/style-part3.css:357` - `.node-detail-tab:hover`
+- `static/style-part3.css:1364` - `.weather-state-badge:hover`
+- `static/style-part3.css:1733` - `.reference-location-card select:hover,
 .reference-location-card input:hover`
-- `static/style-part3.css:2046` — `.dock-panel-btn:hover`
-- `static/style-part3.css:3087` — `.base-node-avatar:hover`
-- `static/style-part4.css:3221` — `.dock-notification-status:hover`
-- `static/style-part4.css:3337` — `[data-theme="dark"] .dock-notification-status:hover`
-- `static/ui-kit.css:261` — `.node-card:hover`
-- `static/ui-kit.css:328` — `.media-item:hover`
-- `static/ui-kit.css:450` — `.mc-refresh-btn:hover,
+- `static/style-part3.css:2046` - `.dock-panel-btn:hover`
+- `static/style-part3.css:3087` - `.base-node-avatar:hover`
+- `static/style-part4.css:3221` - `.dock-notification-status:hover`
+- `static/style-part4.css:3337` - `[data-theme="dark"] .dock-notification-status:hover`
+- `static/ui-kit.css:261` - `.node-card:hover`
+- `static/ui-kit.css:328` - `.media-item:hover`
+- `static/ui-kit.css:450` - `.mc-refresh-btn:hover,
 .media-refresh-btn:hover,
 .system-refresh-btn:hover,
 .media-primary-btn:hover`
-- `static/ui-kit.css:860` — `.dock-workspace-btn:hover`
-- `static/ui-kit.css:1456` — `html[data-theme="dark"] .dock-panel-btn:hover,
+- `static/ui-kit.css:860` - `.dock-workspace-btn:hover`
+- `static/ui-kit.css:1456` - `html[data-theme="dark"] .dock-panel-btn:hover,
 html[data-theme="dark"] .dock-workspace-btn:hover`
-- `static/ui-kit.css:2382` — `html[data-theme="dark"] .camera-defaults-btn:hover`
-- `static/ui-kit.css:2469` — `html[data-theme="dark"] .position-actions button:hover,
+- `static/ui-kit.css:2382` - `html[data-theme="dark"] .camera-defaults-btn:hover`
+- `static/ui-kit.css:2469` - `html[data-theme="dark"] .position-actions button:hover,
 html[data-theme="dark"] .position-no-data button:hover,
 html[data-theme="dark"] .node-position-map-btn:hover,
 html[data-theme="dark"] .node-detail-quick-actions .quick-action:hover:not(:disabled)`
-- `static/ui-kit.css:2504` — `html[data-theme="dark"] .clear-search-btn:hover`
-- `static/ui-kit.css:2620` — `html[data-theme="dark"] .weather-state-badge:hover`
-- `static/ui-kit.css:2945` — `.workspace-nav-btn:hover`
-- `static/ui-kit.css:3115` — `html[data-theme="dark"] .workspace-nav-btn:hover`
-- `static/ui-kit.css:3227` — `.workspace-page-close-btn:hover`
-- `static/ui-kit.css:3254` — `html[data-theme="dark"] .workspace-page-close-btn:hover,
+- `static/ui-kit.css:2504` - `html[data-theme="dark"] .clear-search-btn:hover`
+- `static/ui-kit.css:2620` - `html[data-theme="dark"] .weather-state-badge:hover`
+- `static/ui-kit.css:2945` - `.workspace-nav-btn:hover`
+- `static/ui-kit.css:3115` - `html[data-theme="dark"] .workspace-nav-btn:hover`
+- `static/ui-kit.css:3227` - `.workspace-page-close-btn:hover`
+- `static/ui-kit.css:3254` - `html[data-theme="dark"] .workspace-page-close-btn:hover,
 body[data-theme="dark"] .workspace-page-close-btn:hover`
 
 ## `--mc-border-soft` (22 consumers)
 
-- `static/style-part1.css:110` — `.chat-header`
-- `static/style-part1.css:428` — `.message.rx .bubble`
-- `static/style-part1.css:468` — `.input-area`
-- `static/style-part1.css:1601` — `.modal-header`
-- `static/style-part4.css:3988` — `.time-schedule-row`
-- `static/style-part4.css:4132` — `.schedule-action-params`
-- `static/style-part4.css:4160` — `.schedule-form-section`
-- `static/style-part4.css:4214` — `.schedule-modal-footer`
-- `static/ui-kit.css:135` — `.system-card,
+- `static/style-part1.css:110` - `.chat-header`
+- `static/style-part1.css:428` - `.message.rx .bubble`
+- `static/style-part1.css:468` - `.input-area`
+- `static/style-part1.css:1601` - `.modal-header`
+- `static/style-part4.css:3988` - `.time-schedule-row`
+- `static/style-part4.css:4132` - `.schedule-action-params`
+- `static/style-part4.css:4160` - `.schedule-form-section`
+- `static/style-part4.css:4214` - `.schedule-modal-footer`
+- `static/ui-kit.css:135` - `.system-card,
 .node-detail-pane .node-detail-section,
 .node-detail-overview-card,
 .node-detail-radio-card,
@@ -451,120 +451,120 @@ body[data-theme="dark"] .workspace-page-close-btn:hover`
 .node-event-history,
 .node-tool-result,
 .camera-image-controls`
-- `static/ui-kit.css:156` — `.video-controls,
+- `static/ui-kit.css:156` - `.video-controls,
 .video-info-bar,
 .camera-image-controls,
 .media-content`
-- `static/ui-kit.css:167` — `.main-content-tab`
-- `static/ui-kit.css:197` — `.camera-control-tab,
+- `static/ui-kit.css:167` - `.main-content-tab`
+- `static/ui-kit.css:197` - `.camera-control-tab,
 .node-detail-tab`
-- `static/ui-kit.css:304` — `.node-detail-empty,
+- `static/ui-kit.css:304` - `.node-detail-empty,
 .node-detail-placeholder,
 .node-detail-pane .empty-state,
 .node-event-history-empty`
-- `static/ui-kit.css:318` — `.media-toolbar`
-- `static/ui-kit.css:355` — `.system-row`
-- `static/ui-kit.css:736` — `.video-info-bar,
+- `static/ui-kit.css:318` - `.media-toolbar`
+- `static/ui-kit.css:355` - `.system-row`
+- `static/ui-kit.css:736` - `.video-info-bar,
 .video-controls,
 .media-content,
 .system-layout,
 .settings-grid`
-- `static/ui-kit.css:1586` — `.about-facts div,.about-link-list a`
-- `static/ui-kit.css:2075` — `html[data-theme="dark"] :is(
+- `static/ui-kit.css:1586` - `.about-facts div,.about-link-list a`
+- `static/ui-kit.css:2075` - `html[data-theme="dark"] :is(
     .system-info-row, .network-info-row, .radio-health-row,
     .settings-row, .about-facts div, .about-link-list a
 )`
-- `static/ui-kit.css:2122` — `html[data-theme="dark"] :is(.system-log-entry, .log-entry)`
-- `static/ui-kit.css:3341` — `.devices-empty-state`
-- `static/ui-kit.css:3381` — `html[data-theme="dark"] .devices-empty-state`
-- `static/ui-kit.css:3613` — `:root`
+- `static/ui-kit.css:2122` - `html[data-theme="dark"] :is(.system-log-entry, .log-entry)`
+- `static/ui-kit.css:3341` - `.devices-empty-state`
+- `static/ui-kit.css:3381` - `html[data-theme="dark"] .devices-empty-state`
+- `static/ui-kit.css:3613` - `:root`
 
 ## `--mc-button-secondary-bg` (4 consumers)
 
-- `static/style-part3.css:1823` — `.mc-refresh-btn,
+- `static/style-part3.css:1823` - `.mc-refresh-btn,
 .media-refresh-btn.mc-refresh-btn,
 .system-refresh-btn.mc-refresh-btn`
-- `static/ui-kit.css:2375` — `html[data-theme="dark"] .camera-defaults-btn`
-- `static/ui-kit.css:3613` — `:root`
-- `static/ui-kit.css:3884` — `html[data-theme="dark"]`
+- `static/ui-kit.css:2375` - `html[data-theme="dark"] .camera-defaults-btn`
+- `static/ui-kit.css:3613` - `:root`
+- `static/ui-kit.css:3884` - `html[data-theme="dark"]`
 
 ## `--mc-button-secondary-bg-hover` (4 consumers)
 
-- `static/style-part3.css:1840` — `.mc-refresh-btn:hover,
+- `static/style-part3.css:1840` - `.mc-refresh-btn:hover,
 .media-refresh-btn.mc-refresh-btn:hover,
 .system-refresh-btn.mc-refresh-btn:hover`
-- `static/ui-kit.css:2382` — `html[data-theme="dark"] .camera-defaults-btn:hover`
-- `static/ui-kit.css:3613` — `:root`
-- `static/ui-kit.css:3884` — `html[data-theme="dark"]`
+- `static/ui-kit.css:2382` - `html[data-theme="dark"] .camera-defaults-btn:hover`
+- `static/ui-kit.css:3613` - `:root`
+- `static/ui-kit.css:3884` - `html[data-theme="dark"]`
 
 ## `--mc-button-secondary-border` (9 consumers)
 
-- `static/style-part3.css:1823` — `.mc-refresh-btn,
+- `static/style-part3.css:1823` - `.mc-refresh-btn,
 .media-refresh-btn.mc-refresh-btn,
 .system-refresh-btn.mc-refresh-btn`
-- `static/ui-kit.css:2375` — `html[data-theme="dark"] .camera-defaults-btn`
-- `static/ui-kit.css:3613` — `:root`
-- `static/ui-kit.css:3884` — `html[data-theme="dark"]`
-- `static/ui-kit.css:4190` — `html[data-theme-family="sharp"]`
-- `static/ui-kit.css:4360` — `html[data-theme-family="gunmetal"]`
-- `static/ui-kit.css:4543` — `html[data-theme-family="alpine"]`
-- `static/ui-kit.css:4690` — `html[data-theme-family="teal"][data-theme="dark"]`
-- `static/ui-kit.css:4806` — `html[data-theme-family="teal"][data-theme="light"]`
+- `static/ui-kit.css:2375` - `html[data-theme="dark"] .camera-defaults-btn`
+- `static/ui-kit.css:3613` - `:root`
+- `static/ui-kit.css:3884` - `html[data-theme="dark"]`
+- `static/ui-kit.css:4190` - `html[data-theme-family="sharp"]`
+- `static/ui-kit.css:4360` - `html[data-theme-family="gunmetal"]`
+- `static/ui-kit.css:4543` - `html[data-theme-family="alpine"]`
+- `static/ui-kit.css:4690` - `html[data-theme-family="teal"][data-theme="dark"]`
+- `static/ui-kit.css:4806` - `html[data-theme-family="teal"][data-theme="light"]`
 
 ## `--mc-button-secondary-border-hover` (1 consumer)
 
-- `static/style-part3.css:1840` — `.mc-refresh-btn:hover,
+- `static/style-part3.css:1840` - `.mc-refresh-btn:hover,
 .media-refresh-btn.mc-refresh-btn:hover,
 .system-refresh-btn.mc-refresh-btn:hover`
 
 ## `--mc-button-secondary-text` (3 consumers)
 
-- `static/style-part3.css:1823` — `.mc-refresh-btn,
+- `static/style-part3.css:1823` - `.mc-refresh-btn,
 .media-refresh-btn.mc-refresh-btn,
 .system-refresh-btn.mc-refresh-btn`
-- `static/ui-kit.css:2375` — `html[data-theme="dark"] .camera-defaults-btn`
-- `static/ui-kit.css:3613` — `:root`
+- `static/ui-kit.css:2375` - `html[data-theme="dark"] .camera-defaults-btn`
+- `static/ui-kit.css:3613` - `:root`
 
 ## `--mc-camera-control-label-offset` (1 consumer)
 
-- `static/style-part3.css:1850` — `.camera-actions-block`
+- `static/style-part3.css:1850` - `.camera-actions-block`
 
 ## `--mc-card-bg` (4 consumers)
 
-- `static/style-part1.css:3215` — `.settings-card`
-- `static/style-part3.css:1520` — `.video-panel,
+- `static/style-part1.css:3215` - `.settings-card`
+- `static/style-part3.css:1520` - `.video-panel,
 .media-panel,
 .system-panel,
 .settings-header,
 .settings-card,
 .system-card`
-- `static/style-part4.css:1767` — `.node-manager-panel.mc-workspace-panel`
-- `static/style-part4.css:3606` — `[data-theme="dark"] .camera-off-placeholder`
+- `static/style-part4.css:1767` - `.node-manager-panel.mc-workspace-panel`
+- `static/style-part4.css:3606` - `[data-theme="dark"] .camera-off-placeholder`
 
 ## `--mc-card-pad` (2 consumers)
 
-- `static/style-part3.css:1565` — `.settings-card,
+- `static/style-part3.css:1565` - `.settings-card,
 .map-settings-card,
 .reference-location-card`
-- `static/style-part3.css:1624` — `.system-card`
+- `static/style-part3.css:1624` - `.system-card`
 
 ## `--mc-card-radius` (10 consumers)
 
-- `static/style-part3.css:1520` — `.video-panel,
+- `static/style-part3.css:1520` - `.video-panel,
 .media-panel,
 .system-panel,
 .settings-header,
 .settings-card,
 .system-card`
-- `static/style-part4.css:1767` — `.node-manager-panel.mc-workspace-panel`
-- `static/ui-kit.css:590` — `.settings-panel`
-- `static/ui-kit.css:704` — `.video-panel`
-- `static/ui-kit.css:1631` — `.about-shell`
-- `static/ui-kit.css:3274` — `.devices-panel`
-- `static/ui-kit.css:3305` — `.node-manager-panel.mc-workspace-panel`
-- `static/ui-kit.css:3341` — `.devices-empty-state`
-- `static/ui-kit.css:3394` — `.mc-workspace-panel`
-- `static/ui-kit.css:3412` — `.video-panel.mc-workspace-panel,
+- `static/style-part4.css:1767` - `.node-manager-panel.mc-workspace-panel`
+- `static/ui-kit.css:590` - `.settings-panel`
+- `static/ui-kit.css:704` - `.video-panel`
+- `static/ui-kit.css:1631` - `.about-shell`
+- `static/ui-kit.css:3274` - `.devices-panel`
+- `static/ui-kit.css:3305` - `.node-manager-panel.mc-workspace-panel`
+- `static/ui-kit.css:3341` - `.devices-empty-state`
+- `static/ui-kit.css:3394` - `.mc-workspace-panel`
+- `static/ui-kit.css:3412` - `.video-panel.mc-workspace-panel,
 .media-panel.mc-workspace-panel,
 .devices-panel.mc-workspace-panel,
 .system-panel.mc-workspace-panel,
@@ -573,95 +573,95 @@ body[data-theme="dark"] .workspace-page-close-btn:hover`
 
 ## `--mc-card-title-size` (2 consumers)
 
-- `static/style-part3.css:1110` — `.notifications-card-title`
-- `static/style-part3.css:1575` — `.settings-card-title,
+- `static/style-part3.css:1110` - `.notifications-card-title`
+- `static/style-part3.css:1575` - `.settings-card-title,
 .map-settings-title,
 .reference-location-title,
 .system-card-title`
 
 ## `--mc-chat-bg` (3 consumers)
 
-- `static/style-part4.css:2292` — `[data-theme="dark"] .chat-area`
-- `static/ui-kit.css:1344` — `html[data-theme="dark"] .chat-area,
+- `static/style-part4.css:2292` - `[data-theme="dark"] .chat-area`
+- `static/ui-kit.css:1344` - `html[data-theme="dark"] .chat-area,
 html[data-theme="dark"] .chat-header,
 html[data-theme="dark"] .chat-list-container,
 html[data-theme="dark"] .messages-view`
-- `static/ui-kit.css:2302` — `html[data-theme="dark"] .messages-view,
+- `static/ui-kit.css:2302` - `html[data-theme="dark"] .messages-view,
 html[data-theme="dark"] .messages-container`
 
 ## `--mc-chat-border` (5 consumers)
 
-- `static/style-part1.css:490` — `.input-form input[type="text"]`
-- `static/ui-kit.css:2307` — `html[data-theme="dark"] .messages-container`
-- `static/ui-kit.css:2313` — `html[data-theme="dark"] .message.rx .bubble`
-- `static/ui-kit.css:2324` — `html[data-theme="dark"] .message.system .bubble`
-- `static/ui-kit.css:2336` — `html[data-theme="dark"] .input-area`
+- `static/style-part1.css:490` - `.input-form input[type="text"]`
+- `static/ui-kit.css:2307` - `html[data-theme="dark"] .messages-container`
+- `static/ui-kit.css:2313` - `html[data-theme="dark"] .message.rx .bubble`
+- `static/ui-kit.css:2324` - `html[data-theme="dark"] .message.system .bubble`
+- `static/ui-kit.css:2336` - `html[data-theme="dark"] .input-area`
 
 ## `--mc-chat-input` (2 consumers)
 
-- `static/style-part1.css:490` — `.input-form input[type="text"]`
-- `static/ui-kit.css:2342` — `html[data-theme="dark"] .input-form input[type="text"],
+- `static/style-part1.css:490` - `.input-form input[type="text"]`
+- `static/ui-kit.css:2342` - `html[data-theme="dark"] .input-form input[type="text"],
 html[data-theme="dark"] .message-input`
 
 ## `--mc-chat-muted` (10 consumers)
 
-- `static/style-part1.css:143` — `.chat-subtitle`
-- `static/style-part1.css:287` — `.chat-last-msg`
-- `static/style-part1.css:307` — `.chat-last-text`
-- `static/style-part1.css:320` — `.chat-time`
-- `static/style-part1.css:348` — `.chat-section-title`
-- `static/ui-kit.css:1425` — `html[data-theme="dark"] .chat-subtitle,
+- `static/style-part1.css:143` - `.chat-subtitle`
+- `static/style-part1.css:287` - `.chat-last-msg`
+- `static/style-part1.css:307` - `.chat-last-text`
+- `static/style-part1.css:320` - `.chat-time`
+- `static/style-part1.css:348` - `.chat-section-title`
+- `static/ui-kit.css:1425` - `html[data-theme="dark"] .chat-subtitle,
 html[data-theme="dark"] .message-time`
-- `static/ui-kit.css:2331` — `html[data-theme="dark"] .bubble .time,
+- `static/ui-kit.css:2331` - `html[data-theme="dark"] .bubble .time,
 html[data-theme="dark"] .message-time`
-- `static/ui-kit.css:2421` — `html[data-theme="dark"] :is(
+- `static/ui-kit.css:2421` - `html[data-theme="dark"] :is(
     .media-summary,
     .media-meta,
     .camera-control-help,
     .nodes-tools-subtitle,
     .nodes-management-meta
 )`
-- `static/ui-kit.css:2894` — `html[data-theme="dark"] .chat-item .chat-last-msg,
+- `static/ui-kit.css:2894` - `html[data-theme="dark"] .chat-item .chat-last-msg,
 html[data-theme="dark"] .chat-item .chat-last-sender,
 html[data-theme="dark"] .chat-item .chat-last-text`
-- `static/ui-kit.css:2905` — `html[data-theme="dark"] .chat-item .chat-time`
+- `static/ui-kit.css:2905` - `html[data-theme="dark"] .chat-item .chat-time`
 
 ## `--mc-chat-surface` (2 consumers)
 
-- `static/style-part1.css:372` — `.messages-container`
-- `static/ui-kit.css:2336` — `html[data-theme="dark"] .input-area`
+- `static/style-part1.css:372` - `.messages-container`
+- `static/ui-kit.css:2336` - `html[data-theme="dark"] .input-area`
 
 ## `--mc-chat-surface-raised` (9 consumers)
 
-- `static/style-part1.css:101` — `.chat-area`
-- `static/style-part1.css:110` — `.chat-header`
-- `static/style-part1.css:210` — `.chat-item`
-- `static/style-part1.css:428` — `.message.rx .bubble`
-- `static/style-part1.css:468` — `.input-area`
-- `static/style-part1.css:510` — `.input-form input[type="text"]:focus`
-- `static/ui-kit.css:2045` — `html[data-theme="dark"] .chat-item:hover`
-- `static/ui-kit.css:2313` — `html[data-theme="dark"] .message.rx .bubble`
-- `static/ui-kit.css:2355` — `html[data-theme="dark"] .input-form input[type="text"]:focus,
+- `static/style-part1.css:101` - `.chat-area`
+- `static/style-part1.css:110` - `.chat-header`
+- `static/style-part1.css:210` - `.chat-item`
+- `static/style-part1.css:428` - `.message.rx .bubble`
+- `static/style-part1.css:468` - `.input-area`
+- `static/style-part1.css:510` - `.input-form input[type="text"]:focus`
+- `static/ui-kit.css:2045` - `html[data-theme="dark"] .chat-item:hover`
+- `static/ui-kit.css:2313` - `html[data-theme="dark"] .message.rx .bubble`
+- `static/ui-kit.css:2355` - `html[data-theme="dark"] .input-form input[type="text"]:focus,
 html[data-theme="dark"] .message-input:focus`
 
 ## `--mc-chat-text` (12 consumers)
 
-- `static/style-part1.css:126` — `.chat-title`
-- `static/style-part1.css:195` — `.back-btn:hover`
-- `static/style-part1.css:278` — `.chat-name`
-- `static/style-part1.css:428` — `.message.rx .bubble`
-- `static/style-part4.css:2292` — `[data-theme="dark"] .chat-area`
-- `static/ui-kit.css:1344` — `html[data-theme="dark"] .chat-area,
+- `static/style-part1.css:126` - `.chat-title`
+- `static/style-part1.css:195` - `.back-btn:hover`
+- `static/style-part1.css:278` - `.chat-name`
+- `static/style-part1.css:428` - `.message.rx .bubble`
+- `static/style-part4.css:2292` - `[data-theme="dark"] .chat-area`
+- `static/ui-kit.css:1344` - `html[data-theme="dark"] .chat-area,
 html[data-theme="dark"] .chat-header,
 html[data-theme="dark"] .chat-list-container,
 html[data-theme="dark"] .messages-view`
-- `static/ui-kit.css:1414` — `html[data-theme="dark"] .chat-title`
-- `static/ui-kit.css:2302` — `html[data-theme="dark"] .messages-view,
+- `static/ui-kit.css:1414` - `html[data-theme="dark"] .chat-title`
+- `static/ui-kit.css:2302` - `html[data-theme="dark"] .messages-view,
 html[data-theme="dark"] .messages-container`
-- `static/ui-kit.css:2313` — `html[data-theme="dark"] .message.rx .bubble`
-- `static/ui-kit.css:2342` — `html[data-theme="dark"] .input-form input[type="text"],
+- `static/ui-kit.css:2313` - `html[data-theme="dark"] .message.rx .bubble`
+- `static/ui-kit.css:2342` - `html[data-theme="dark"] .input-form input[type="text"],
 html[data-theme="dark"] .message-input`
-- `static/ui-kit.css:2411` — `html[data-theme="dark"] :is(
+- `static/ui-kit.css:2411` - `html[data-theme="dark"] :is(
     .media-title,
     .media-summary strong,
     .media-summary-count,
@@ -678,30 +678,30 @@ html[data-theme="dark"] .message-input`
     .nodes-list-title,
     .nodes-list-count
 )`
-- `static/ui-kit.css:2887` — `html[data-theme="dark"] .chat-item .chat-name`
+- `static/ui-kit.css:2887` - `html[data-theme="dark"] .chat-item .chat-name`
 
 ## `--mc-chat-unread-accent` (2 consumers)
 
-- `static/style-part1.css:238` — `.chat-item.has-unread`
-- `static/style-part1.css:322` — `.chat-unread-badge`
+- `static/style-part1.css:238` - `.chat-item.has-unread`
+- `static/style-part1.css:322` - `.chat-unread-badge`
 
 ## `--mc-chat-unread-bg` (1 consumer)
 
-- `static/style-part1.css:238` — `.chat-item.has-unread`
+- `static/style-part1.css:238` - `.chat-item.has-unread`
 
 ## `--mc-chat-unread-bg-hover` (1 consumer)
 
-- `static/style-part1.css:243` — `.chat-item.has-unread:hover`
+- `static/style-part1.css:243` - `.chat-item.has-unread:hover`
 
 ## `--mc-control-font-size` (1 consumer)
 
-- `static/style-part3.css:1823` — `.mc-refresh-btn,
+- `static/style-part3.css:1823` - `.mc-refresh-btn,
 .media-refresh-btn.mc-refresh-btn,
 .system-refresh-btn.mc-refresh-btn`
 
 ## `--mc-control-height` (5 consumers)
 
-- `static/style-part3.css:1616` — `.system-refresh-btn,
+- `static/style-part3.css:1616` - `.system-refresh-btn,
 .media-refresh-btn,
 .media-primary-btn,
 .camera-power-btn,
@@ -709,448 +709,448 @@ html[data-theme="dark"] .message-input`
 .system-action-btn,
 .reference-location-save-btn,
 .settings-segmented button`
-- `static/style-part3.css:1671` — `.map-provider-select,
+- `static/style-part3.css:1671` - `.map-provider-select,
 .reference-location-card select,
 .reference-location-card input,
 .camera-preset-group select,
 .control-group select`
-- `static/style-part3.css:1691` — `.reference-location-row,
+- `static/style-part3.css:1691` - `.reference-location-row,
 .reference-location-coordinate`
-- `static/style-part3.css:1823` — `.mc-refresh-btn,
+- `static/style-part3.css:1823` - `.mc-refresh-btn,
 .media-refresh-btn.mc-refresh-btn,
 .system-refresh-btn.mc-refresh-btn`
-- `static/style-part3.css:1855` — `.camera-actions-block .screenshot-btn`
+- `static/style-part3.css:1855` - `.camera-actions-block .screenshot-btn`
 
 ## `--mc-control-radius` (1 consumer)
 
-- `static/style-part3.css:1823` — `.mc-refresh-btn,
+- `static/style-part3.css:1823` - `.mc-refresh-btn,
 .media-refresh-btn.mc-refresh-btn,
 .system-refresh-btn.mc-refresh-btn`
 
 ## `--mc-danger` (7 consumers)
 
-- `static/style-part3.css:21` — `.node-detail-activity.activity-offline`
-- `static/style-part4.css:872` — `.meshcenter-map-selected-label.leaflet-tooltip`
-- `static/style-part4.css:887` — `.meshcenter-map-selected-label.leaflet-tooltip-bottom::before`
-- `static/style-part4.css:967` — `.node-detail-close:hover`
-- `static/style-part4.css:3105` — `.waypoint-action-toast.error`
-- `static/ui-kit.css:59` — `.btn-danger`
-- `static/ui-kit.css:489` — `.status-offline,
+- `static/style-part3.css:21` - `.node-detail-activity.activity-offline`
+- `static/style-part4.css:872` - `.meshcenter-map-selected-label.leaflet-tooltip`
+- `static/style-part4.css:887` - `.meshcenter-map-selected-label.leaflet-tooltip-bottom::before`
+- `static/style-part4.css:967` - `.node-detail-close:hover`
+- `static/style-part4.css:3105` - `.waypoint-action-toast.error`
+- `static/ui-kit.css:59` - `.btn-danger`
+- `static/ui-kit.css:489` - `.status-offline,
 .status-error,
 .text-danger`
 
 ## `--mc-danger-soft` (7 consumers)
 
-- `static/style-part3.css:3964` — `.notification-error .notification-item-icon`
-- `static/style-part4.css:872` — `.meshcenter-map-selected-label.leaflet-tooltip`
-- `static/style-part4.css:4196` — `.schedule-form-error`
-- `static/ui-kit.css:59` — `.btn-danger`
-- `static/ui-kit.css:292` — `.node-card.ignored`
-- `static/ui-kit.css:343` — `.media-delete-all-btn`
-- `static/ui-kit.css:2035` — `html[data-theme="dark"] .node-card.ignored`
+- `static/style-part3.css:3964` - `.notification-error .notification-item-icon`
+- `static/style-part4.css:872` - `.meshcenter-map-selected-label.leaflet-tooltip`
+- `static/style-part4.css:4196` - `.schedule-form-error`
+- `static/ui-kit.css:59` - `.btn-danger`
+- `static/ui-kit.css:292` - `.node-card.ignored`
+- `static/ui-kit.css:343` - `.media-delete-all-btn`
+- `static/ui-kit.css:2035` - `html[data-theme="dark"] .node-card.ignored`
 
 ## `--mc-dark-control-bg` (2 consumers)
 
-- `static/ui-kit.css:2453` — `html[data-theme="dark"] .position-actions button,
+- `static/ui-kit.css:2453` - `html[data-theme="dark"] .position-actions button,
 html[data-theme="dark"] .position-no-data button,
 html[data-theme="dark"] .node-position-map-btn,
 html[data-theme="dark"] .node-detail-quick-actions .quick-action`
-- `static/ui-kit.css:2497` — `html[data-theme="dark"] .clear-search-btn`
+- `static/ui-kit.css:2497` - `html[data-theme="dark"] .clear-search-btn`
 
 ## `--mc-dark-control-bg-hover` (2 consumers)
 
-- `static/ui-kit.css:2469` — `html[data-theme="dark"] .position-actions button:hover,
+- `static/ui-kit.css:2469` - `html[data-theme="dark"] .position-actions button:hover,
 html[data-theme="dark"] .position-no-data button:hover,
 html[data-theme="dark"] .node-position-map-btn:hover,
 html[data-theme="dark"] .node-detail-quick-actions .quick-action:hover:not(:disabled)`
-- `static/ui-kit.css:2504` — `html[data-theme="dark"] .clear-search-btn:hover`
+- `static/ui-kit.css:2504` - `html[data-theme="dark"] .clear-search-btn:hover`
 
 ## `--mc-dark-control-border` (4 consumers)
 
-- `static/ui-kit.css:2342` — `html[data-theme="dark"] .input-form input[type="text"],
+- `static/ui-kit.css:2342` - `html[data-theme="dark"] .input-form input[type="text"],
 html[data-theme="dark"] .message-input`
-- `static/ui-kit.css:2362` — `html[data-theme="dark"] .camera-white-balance-group select`
-- `static/ui-kit.css:2453` — `html[data-theme="dark"] .position-actions button,
+- `static/ui-kit.css:2362` - `html[data-theme="dark"] .camera-white-balance-group select`
+- `static/ui-kit.css:2453` - `html[data-theme="dark"] .position-actions button,
 html[data-theme="dark"] .position-no-data button,
 html[data-theme="dark"] .node-position-map-btn,
 html[data-theme="dark"] .node-detail-quick-actions .quick-action`
-- `static/ui-kit.css:2497` — `html[data-theme="dark"] .clear-search-btn`
+- `static/ui-kit.css:2497` - `html[data-theme="dark"] .clear-search-btn`
 
 ## `--mc-dark-control-text` (2 consumers)
 
-- `static/ui-kit.css:2362` — `html[data-theme="dark"] .camera-white-balance-group select`
-- `static/ui-kit.css:2453` — `html[data-theme="dark"] .position-actions button,
+- `static/ui-kit.css:2362` - `html[data-theme="dark"] .camera-white-balance-group select`
+- `static/ui-kit.css:2453` - `html[data-theme="dark"] .position-actions button,
 html[data-theme="dark"] .position-no-data button,
 html[data-theme="dark"] .node-position-map-btn,
 html[data-theme="dark"] .node-detail-quick-actions .quick-action`
 
 ## `--mc-favorite-soft` (2 consumers)
 
-- `static/ui-kit.css:284` — `.node-card.favorite`
-- `static/ui-kit.css:2033` — `html[data-theme="dark"] .node-card.favorite`
+- `static/ui-kit.css:284` - `.node-card.favorite`
+- `static/ui-kit.css:2033` - `html[data-theme="dark"] .node-card.favorite`
 
 ## `--mc-info-soft` (1 consumer)
 
-- `static/style-part3.css:3965` — `.notification-info .notification-item-icon`
+- `static/style-part3.css:3965` - `.notification-info .notification-item-icon`
 
 ## `--mc-input-bg` (1 consumer)
 
-- `static/style-part3.css:2326` — `.settings-select`
+- `static/style-part3.css:2326` - `.settings-select`
 
 ## `--mc-legacy-accent` (2 consumers)
 
-- `static/style-part4.css:2218` — `:root`
-- `static/style-part4.css:2246` — `[data-theme="dark"]`
+- `static/style-part4.css:2218` - `:root`
+- `static/style-part4.css:2246` - `[data-theme="dark"]`
 
 ## `--mc-legacy-app-bg` (2 consumers)
 
-- `static/style-part4.css:2218` — `:root`
-- `static/style-part4.css:2246` — `[data-theme="dark"]`
+- `static/style-part4.css:2218` - `:root`
+- `static/style-part4.css:2246` - `[data-theme="dark"]`
 
 ## `--mc-legacy-border` (2 consumers)
 
-- `static/style-part4.css:2218` — `:root`
-- `static/style-part4.css:2246` — `[data-theme="dark"]`
+- `static/style-part4.css:2218` - `:root`
+- `static/style-part4.css:2246` - `[data-theme="dark"]`
 
 ## `--mc-legacy-border-soft` (2 consumers)
 
-- `static/style-part4.css:2218` — `:root`
-- `static/style-part4.css:2246` — `[data-theme="dark"]`
+- `static/style-part4.css:2218` - `:root`
+- `static/style-part4.css:2246` - `[data-theme="dark"]`
 
 ## `--mc-legacy-card-bg` (2 consumers)
 
-- `static/style-part4.css:2218` — `:root`
-- `static/style-part4.css:2246` — `[data-theme="dark"]`
+- `static/style-part4.css:2218` - `:root`
+- `static/style-part4.css:2246` - `[data-theme="dark"]`
 
 ## `--mc-legacy-card-hover` (2 consumers)
 
-- `static/style-part4.css:2218` — `:root`
-- `static/style-part4.css:2246` — `[data-theme="dark"]`
+- `static/style-part4.css:2218` - `:root`
+- `static/style-part4.css:2246` - `[data-theme="dark"]`
 
 ## `--mc-legacy-elevated-bg` (2 consumers)
 
-- `static/style-part4.css:2218` — `:root`
-- `static/style-part4.css:2246` — `[data-theme="dark"]`
+- `static/style-part4.css:2218` - `:root`
+- `static/style-part4.css:2246` - `[data-theme="dark"]`
 
 ## `--mc-legacy-focus` (2 consumers)
 
-- `static/style-part4.css:2218` — `:root`
-- `static/style-part4.css:2246` — `[data-theme="dark"]`
+- `static/style-part4.css:2218` - `:root`
+- `static/style-part4.css:2246` - `[data-theme="dark"]`
 
 ## `--mc-legacy-panel-bg` (2 consumers)
 
-- `static/style-part4.css:2218` — `:root`
-- `static/style-part4.css:2246` — `[data-theme="dark"]`
+- `static/style-part4.css:2218` - `:root`
+- `static/style-part4.css:2246` - `[data-theme="dark"]`
 
 ## `--mc-legacy-shadow` (2 consumers)
 
-- `static/style-part4.css:2218` — `:root`
-- `static/style-part4.css:2246` — `[data-theme="dark"]`
+- `static/style-part4.css:2218` - `:root`
+- `static/style-part4.css:2246` - `[data-theme="dark"]`
 
 ## `--mc-legacy-text` (2 consumers)
 
-- `static/style-part4.css:2218` — `:root`
-- `static/style-part4.css:2246` — `[data-theme="dark"]`
+- `static/style-part4.css:2218` - `:root`
+- `static/style-part4.css:2246` - `[data-theme="dark"]`
 
 ## `--mc-legacy-text-muted` (2 consumers)
 
-- `static/style-part4.css:2218` — `:root`
-- `static/style-part4.css:2246` — `[data-theme="dark"]`
+- `static/style-part4.css:2218` - `:root`
+- `static/style-part4.css:2246` - `[data-theme="dark"]`
 
 ## `--mc-legacy-text-secondary` (2 consumers)
 
-- `static/style-part4.css:2218` — `:root`
-- `static/style-part4.css:2246` — `[data-theme="dark"]`
+- `static/style-part4.css:2218` - `:root`
+- `static/style-part4.css:2246` - `[data-theme="dark"]`
 
 ## `--mc-legacy-workspace-bg` (2 consumers)
 
-- `static/style-part4.css:2218` — `:root`
-- `static/style-part4.css:2246` — `[data-theme="dark"]`
+- `static/style-part4.css:2218` - `:root`
+- `static/style-part4.css:2246` - `[data-theme="dark"]`
 
 ## `--mc-muted` (12 consumers)
 
-- `static/style-part3.css:676` — `" /
+- `static/style-part3.css:676` - `" /
    ".workspace-page-subtitle, .video-subtitle, .media-subtitle, ...`
-- `static/style-part3.css:1499` — `.workspace-page-subtitle,
+- `static/style-part3.css:1499` - `.workspace-page-subtitle,
 .video-subtitle,
 .media-subtitle,
 .system-subtitle,
 .settings-subtitle`
-- `static/style-part3.css:1585` — `.settings-card-text,
+- `static/style-part3.css:1585` - `.settings-card-text,
 .map-settings-description,
 .reference-location-description`
-- `static/style-part3.css:1813` — `.video-header .workspace-page-subtitle,
+- `static/style-part3.css:1813` - `.video-header .workspace-page-subtitle,
 .media-header .workspace-page-subtitle,
 .system-header .workspace-page-subtitle`
-- `static/style-part3.css:3883` — `.notification-popover-header span`
-- `static/style-part3.css:3970` — `.notification-item-copy small`
-- `static/style-part3.css:3971` — `.notification-empty`
-- `static/style-part4.css:604` — `.map-toolbar`
-- `static/style-part4.css:962` — `.node-detail-close`
-- `static/style-part4.css:1805` — `.node-manager-header .workspace-page-subtitle`
-- `static/style-part4.css:3239` — `.dock-notification-chevron`
-- `static/style-part4.css:3760` — `.dock-notification-inline-dismiss`
+- `static/style-part3.css:3883` - `.notification-popover-header span`
+- `static/style-part3.css:3970` - `.notification-item-copy small`
+- `static/style-part3.css:3971` - `.notification-empty`
+- `static/style-part4.css:604` - `.map-toolbar`
+- `static/style-part4.css:962` - `.node-detail-close`
+- `static/style-part4.css:1805` - `.node-manager-header .workspace-page-subtitle`
+- `static/style-part4.css:3239` - `.dock-notification-chevron`
+- `static/style-part4.css:3760` - `.dock-notification-inline-dismiss`
 
 ## `--mc-page-pad` (8 consumers)
 
-- `static/style-part3.css:1511` — `.video-view,
+- `static/style-part3.css:1511` - `.video-view,
 .workspace-view,
 .media-view,
 .system-view,
 .settings-panel`
-- `static/style-part4.css:744` — `.map-view`
-- `static/style-part4.css:1758` — `.base-node-manager-entry:hover .base-node-manager-hint,
+- `static/style-part4.css:744` - `.map-view`
+- `static/style-part4.css:1758` - `.base-node-manager-entry:hover .base-node-manager-hint,
 .base-node-manager-entry:focus-visible .base-node-manager-entry:hover .base-node-manager-chevron`
-- `static/ui-kit.css:582` — `.settings-view`
-- `static/ui-kit.css:692` — `.video-view`
-- `static/ui-kit.css:1619` — `.about-view`
-- `static/ui-kit.css:3264` — `.devices-view`
-- `static/ui-kit.css:3295` — `.node-manager-view`
+- `static/ui-kit.css:582` - `.settings-view`
+- `static/ui-kit.css:692` - `.video-view`
+- `static/ui-kit.css:1619` - `.about-view`
+- `static/ui-kit.css:3264` - `.devices-view`
+- `static/ui-kit.css:3295` - `.node-manager-view`
 
 ## `--mc-page-subtitle-gap` (4 consumers)
 
-- `static/style-part3.css:1813` — `.video-header .workspace-page-subtitle,
+- `static/style-part3.css:1813` - `.video-header .workspace-page-subtitle,
 .media-header .workspace-page-subtitle,
 .system-header .workspace-page-subtitle`
-- `static/style-part4.css:1805` — `.node-manager-header .workspace-page-subtitle`
-- `static/ui-kit.css:630` — `.settings-header .workspace-page-subtitle`
-- `static/ui-kit.css:1671` — `.about-header .workspace-page-subtitle`
+- `static/style-part4.css:1805` - `.node-manager-header .workspace-page-subtitle`
+- `static/ui-kit.css:630` - `.settings-header .workspace-page-subtitle`
+- `static/ui-kit.css:1671` - `.about-header .workspace-page-subtitle`
 
 ## `--mc-page-subtitle-line-height` (4 consumers)
 
-- `static/style-part3.css:1813` — `.video-header .workspace-page-subtitle,
+- `static/style-part3.css:1813` - `.video-header .workspace-page-subtitle,
 .media-header .workspace-page-subtitle,
 .system-header .workspace-page-subtitle`
-- `static/style-part4.css:1805` — `.node-manager-header .workspace-page-subtitle`
-- `static/ui-kit.css:630` — `.settings-header .workspace-page-subtitle`
-- `static/ui-kit.css:1671` — `.about-header .workspace-page-subtitle`
+- `static/style-part4.css:1805` - `.node-manager-header .workspace-page-subtitle`
+- `static/ui-kit.css:630` - `.settings-header .workspace-page-subtitle`
+- `static/ui-kit.css:1671` - `.about-header .workspace-page-subtitle`
 
 ## `--mc-page-title-line-height` (4 consumers)
 
-- `static/style-part3.css:1803` — `.video-header .workspace-page-title,
+- `static/style-part3.css:1803` - `.video-header .workspace-page-title,
 .media-header .workspace-page-title,
 .system-header .workspace-page-title`
-- `static/style-part4.css:1797` — `.node-manager-header .workspace-page-title`
-- `static/ui-kit.css:622` — `.settings-header .workspace-page-title`
-- `static/ui-kit.css:1663` — `.about-header .workspace-page-title`
+- `static/style-part4.css:1797` - `.node-manager-header .workspace-page-title`
+- `static/ui-kit.css:622` - `.settings-header .workspace-page-title`
+- `static/ui-kit.css:1663` - `.about-header .workspace-page-title`
 
 ## `--mc-page-title-size` (5 consumers)
 
-- `static/style-part3.css:1487` — `.workspace-page-title,
+- `static/style-part3.css:1487` - `.workspace-page-title,
 .video-title,
 .media-title,
 .system-header h3,
 .settings-title`
-- `static/style-part3.css:1803` — `.video-header .workspace-page-title,
+- `static/style-part3.css:1803` - `.video-header .workspace-page-title,
 .media-header .workspace-page-title,
 .system-header .workspace-page-title`
-- `static/style-part4.css:1797` — `.node-manager-header .workspace-page-title`
-- `static/ui-kit.css:622` — `.settings-header .workspace-page-title`
-- `static/ui-kit.css:1663` — `.about-header .workspace-page-title`
+- `static/style-part4.css:1797` - `.node-manager-header .workspace-page-title`
+- `static/ui-kit.css:622` - `.settings-header .workspace-page-title`
+- `static/ui-kit.css:1663` - `.about-header .workspace-page-title`
 
 ## `--mc-page-title-weight` (4 consumers)
 
-- `static/style-part3.css:1803` — `.video-header .workspace-page-title,
+- `static/style-part3.css:1803` - `.video-header .workspace-page-title,
 .media-header .workspace-page-title,
 .system-header .workspace-page-title`
-- `static/style-part4.css:1797` — `.node-manager-header .workspace-page-title`
-- `static/ui-kit.css:622` — `.settings-header .workspace-page-title`
-- `static/ui-kit.css:1663` — `.about-header .workspace-page-title`
+- `static/style-part4.css:1797` - `.node-manager-header .workspace-page-title`
+- `static/ui-kit.css:622` - `.settings-header .workspace-page-title`
+- `static/ui-kit.css:1663` - `.about-header .workspace-page-title`
 
 ## `--mc-panel` (1 consumer)
 
-- `static/ui-kit.css:3018` — `.devices-panel`
+- `static/ui-kit.css:3018` - `.devices-panel`
 
 ## `--mc-popover-bg` (4 consumers)
 
-- `static/ui-kit.css:3488` — `.workspace-popover,
+- `static/ui-kit.css:3488` - `.workspace-popover,
 .notification-popover`
-- `static/ui-kit.css:3542` — `.workspace-popover::after`
-- `static/ui-kit.css:3564` — `html[data-theme="dark"] .workspace-popover,
+- `static/ui-kit.css:3542` - `.workspace-popover::after`
+- `static/ui-kit.css:3564` - `html[data-theme="dark"] .workspace-popover,
 html[data-theme="dark"] .notification-popover,
 body[data-theme="dark"] .workspace-popover,
 body[data-theme="dark"] .notification-popover`
-- `static/ui-kit.css:3601` — `html[data-theme="dark"] .workspace-popover::after,
+- `static/ui-kit.css:3601` - `html[data-theme="dark"] .workspace-popover::after,
 body[data-theme="dark"] .workspace-popover::after`
 
 ## `--mc-popover-border` (6 consumers)
 
-- `static/ui-kit.css:3488` — `.workspace-popover,
+- `static/ui-kit.css:3488` - `.workspace-popover,
 .notification-popover`
-- `static/ui-kit.css:3522` — `.notification-clear-btn,
+- `static/ui-kit.css:3522` - `.notification-clear-btn,
 .dock-notification-btn`
-- `static/ui-kit.css:3542` — `.workspace-popover::after`
-- `static/ui-kit.css:3564` — `html[data-theme="dark"] .workspace-popover,
+- `static/ui-kit.css:3542` - `.workspace-popover::after`
+- `static/ui-kit.css:3564` - `html[data-theme="dark"] .workspace-popover,
 html[data-theme="dark"] .notification-popover,
 body[data-theme="dark"] .workspace-popover,
 body[data-theme="dark"] .notification-popover`
-- `static/ui-kit.css:3587` — `html[data-theme="dark"] .notification-clear-btn,
+- `static/ui-kit.css:3587` - `html[data-theme="dark"] .notification-clear-btn,
 html[data-theme="dark"] .dock-notification-btn,
 body[data-theme="dark"] .notification-clear-btn,
 body[data-theme="dark"] .dock-notification-btn`
-- `static/ui-kit.css:3601` — `html[data-theme="dark"] .workspace-popover::after,
+- `static/ui-kit.css:3601` - `html[data-theme="dark"] .workspace-popover::after,
 body[data-theme="dark"] .workspace-popover::after`
 
 ## `--mc-popover-control-bg` (2 consumers)
 
-- `static/ui-kit.css:3522` — `.notification-clear-btn,
+- `static/ui-kit.css:3522` - `.notification-clear-btn,
 .dock-notification-btn`
-- `static/ui-kit.css:3587` — `html[data-theme="dark"] .notification-clear-btn,
+- `static/ui-kit.css:3587` - `html[data-theme="dark"] .notification-clear-btn,
 html[data-theme="dark"] .dock-notification-btn,
 body[data-theme="dark"] .notification-clear-btn,
 body[data-theme="dark"] .dock-notification-btn`
 
 ## `--mc-popover-control-hover` (3 consumers)
 
-- `static/ui-kit.css:3516` — `.workspace-popover-close:hover,
+- `static/ui-kit.css:3516` - `.workspace-popover-close:hover,
 .notification-clear-btn:hover`
-- `static/ui-kit.css:3528` — `.dock-notification-btn:hover`
-- `static/ui-kit.css:3596` — `html[data-theme="dark"] .notification-clear-btn:hover,
+- `static/ui-kit.css:3528` - `.dock-notification-btn:hover`
+- `static/ui-kit.css:3596` - `html[data-theme="dark"] .notification-clear-btn:hover,
 html[data-theme="dark"] .dock-notification-btn:hover,
 body[data-theme="dark"] .notification-clear-btn:hover,
 body[data-theme="dark"] .dock-notification-btn:hover`
 
 ## `--mc-popover-divider` (3 consumers)
 
-- `static/ui-kit.css:3497` — `.workspace-popover-header,
+- `static/ui-kit.css:3497` - `.workspace-popover-header,
 .notification-popover-header`
-- `static/ui-kit.css:3534` — `.workspace-menu-section,
+- `static/ui-kit.css:3534` - `.workspace-menu-section,
 .notification-item`
-- `static/ui-kit.css:3574` — `html[data-theme="dark"] .workspace-popover-header,
+- `static/ui-kit.css:3574` - `html[data-theme="dark"] .workspace-popover-header,
 html[data-theme="dark"] .notification-popover-header,
 body[data-theme="dark"] .workspace-popover-header,
 body[data-theme="dark"] .notification-popover-header`
 
 ## `--mc-popover-header-bg` (2 consumers)
 
-- `static/ui-kit.css:3497` — `.workspace-popover-header,
+- `static/ui-kit.css:3497` - `.workspace-popover-header,
 .notification-popover-header`
-- `static/ui-kit.css:3574` — `html[data-theme="dark"] .workspace-popover-header,
+- `static/ui-kit.css:3574` - `html[data-theme="dark"] .workspace-popover-header,
 html[data-theme="dark"] .notification-popover-header,
 body[data-theme="dark"] .workspace-popover-header,
 body[data-theme="dark"] .notification-popover-header`
 
 ## `--mc-popover-item-hover` (2 consumers)
 
-- `static/ui-kit.css:3538` — `.notification-item:hover`
-- `static/ui-kit.css:3580` — `html[data-theme="dark"] .notification-item:hover,
+- `static/ui-kit.css:3538` - `.notification-item:hover`
+- `static/ui-kit.css:3580` - `html[data-theme="dark"] .notification-item:hover,
 body[data-theme="dark"] .notification-item:hover`
 
 ## `--mc-popover-muted` (2 consumers)
 
-- `static/ui-kit.css:3505` — `.workspace-popover-header span,
+- `static/ui-kit.css:3505` - `.workspace-popover-header span,
 .notification-popover-header span,
 .notification-item-copy small,
 .notification-empty`
-- `static/ui-kit.css:3511` — `.workspace-popover-close,
+- `static/ui-kit.css:3511` - `.workspace-popover-close,
 .notification-clear-btn`
 
 ## `--mc-popover-shadow` (2 consumers)
 
-- `static/ui-kit.css:3488` — `.workspace-popover,
+- `static/ui-kit.css:3488` - `.workspace-popover,
 .notification-popover`
-- `static/ui-kit.css:3564` — `html[data-theme="dark"] .workspace-popover,
+- `static/ui-kit.css:3564` - `html[data-theme="dark"] .workspace-popover,
 html[data-theme="dark"] .notification-popover,
 body[data-theme="dark"] .workspace-popover,
 body[data-theme="dark"] .notification-popover`
 
 ## `--mc-popover-text` (5 consumers)
 
-- `static/ui-kit.css:3488` — `.workspace-popover,
+- `static/ui-kit.css:3488` - `.workspace-popover,
 .notification-popover`
-- `static/ui-kit.css:3516` — `.workspace-popover-close:hover,
+- `static/ui-kit.css:3516` - `.workspace-popover-close:hover,
 .notification-clear-btn:hover`
-- `static/ui-kit.css:3522` — `.notification-clear-btn,
+- `static/ui-kit.css:3522` - `.notification-clear-btn,
 .dock-notification-btn`
-- `static/ui-kit.css:3564` — `html[data-theme="dark"] .workspace-popover,
+- `static/ui-kit.css:3564` - `html[data-theme="dark"] .workspace-popover,
 html[data-theme="dark"] .notification-popover,
 body[data-theme="dark"] .workspace-popover,
 body[data-theme="dark"] .notification-popover`
-- `static/ui-kit.css:3587` — `html[data-theme="dark"] .notification-clear-btn,
+- `static/ui-kit.css:3587` - `html[data-theme="dark"] .notification-clear-btn,
 html[data-theme="dark"] .dock-notification-btn,
 body[data-theme="dark"] .notification-clear-btn,
 body[data-theme="dark"] .dock-notification-btn`
 
 ## `--mc-primary` (23 consumers)
 
-- `static/style-part1.css:422` — `.message.me .bubble`
-- `static/style-part1.css:510` — `.input-form input[type="text"]:focus`
-- `static/style-part1.css:516` — `.input-form button[type="submit"]`
-- `static/style-part1.css:2616` — `#videoQualityLabel,
+- `static/style-part1.css:422` - `.message.me .bubble`
+- `static/style-part1.css:510` - `.input-form input[type="text"]:focus`
+- `static/style-part1.css:516` - `.input-form button[type="submit"]`
+- `static/style-part1.css:2616` - `#videoQualityLabel,
 #photoQualityLabel`
-- `static/style-part2.css:1079` — `.camera-control-slider label span`
-- `static/style-part3.css:367` — `.node-detail-tab.active`
-- `static/style-part3.css:1894` — `.chat-item.selected`
-- `static/style-part3.css:1948` — `.chat-item.selected`
-- `static/style-part4.css:602` — `.map-fit-btn:hover`
-- `static/style-part4.css:603` — `[data-theme="light"] .map-fit-btn:hover`
-- `static/style-part4.css:907` — `.dock-map-btn.map-active`
-- `static/style-part4.css:4221` — `.schedule-modal-footer .schedule-save-btn`
-- `static/ui-kit.css:212` — `.camera-control-tab.active,
+- `static/style-part2.css:1079` - `.camera-control-slider label span`
+- `static/style-part3.css:367` - `.node-detail-tab.active`
+- `static/style-part3.css:1894` - `.chat-item.selected`
+- `static/style-part3.css:1948` - `.chat-item.selected`
+- `static/style-part4.css:602` - `.map-fit-btn:hover`
+- `static/style-part4.css:603` - `[data-theme="light"] .map-fit-btn:hover`
+- `static/style-part4.css:907` - `.dock-map-btn.map-active`
+- `static/style-part4.css:4221` - `.schedule-modal-footer .schedule-save-btn`
+- `static/ui-kit.css:212` - `.camera-control-tab.active,
 .node-detail-tab.active`
-- `static/ui-kit.css:235` — `.time-btn:hover,
+- `static/ui-kit.css:235` - `.time-btn:hover,
 .cpu-range-btn:hover,
 .telemetry-time-controls .time-btn:hover`
-- `static/ui-kit.css:242` — `.time-btn.active,
+- `static/ui-kit.css:242` - `.time-btn.active,
 .cpu-range-btn.active,
 .telemetry-time-controls .time-btn.active`
-- `static/ui-kit.css:431` — `.settings-segmented button.active`
-- `static/ui-kit.css:460` — `.screenshot-btn,
+- `static/ui-kit.css:431` - `.settings-segmented button.active`
+- `static/ui-kit.css:460` - `.screenshot-btn,
 .primary-btn,
 .send-btn`
-- `static/ui-kit.css:1139` — `.workspace-theme-swatch--primary`
-- `static/ui-kit.css:3884` — `html[data-theme="dark"]`
-- `static/ui-kit.css:4360` — `html[data-theme-family="gunmetal"]`
-- `static/ui-kit.css:4543` — `html[data-theme-family="alpine"]`
-- `static/ui-kit.css:4690` — `html[data-theme-family="teal"][data-theme="dark"]`
-- `static/ui-kit.css:4806` — `html[data-theme-family="teal"][data-theme="light"]`
+- `static/ui-kit.css:1139` - `.workspace-theme-swatch--primary`
+- `static/ui-kit.css:3884` - `html[data-theme="dark"]`
+- `static/ui-kit.css:4360` - `html[data-theme-family="gunmetal"]`
+- `static/ui-kit.css:4543` - `html[data-theme-family="alpine"]`
+- `static/ui-kit.css:4690` - `html[data-theme-family="teal"][data-theme="dark"]`
+- `static/ui-kit.css:4806` - `html[data-theme-family="teal"][data-theme="light"]`
 
 ## `--mc-primary-hover` (9 consumers)
 
-- `static/style-part1.css:422` — `.message.me .bubble`
-- `static/style-part1.css:516` — `.input-form button[type="submit"]`
-- `static/style-part4.css:4222` — `.schedule-modal-footer .schedule-save-btn:hover`
-- `static/ui-kit.css:450` — `.mc-refresh-btn:hover,
+- `static/style-part1.css:422` - `.message.me .bubble`
+- `static/style-part1.css:516` - `.input-form button[type="submit"]`
+- `static/style-part4.css:4222` - `.schedule-modal-footer .schedule-save-btn:hover`
+- `static/ui-kit.css:450` - `.mc-refresh-btn:hover,
 .media-refresh-btn:hover,
 .system-refresh-btn:hover,
 .media-primary-btn:hover`
-- `static/ui-kit.css:468` — `.screenshot-btn:hover,
+- `static/ui-kit.css:468` - `.screenshot-btn:hover,
 .primary-btn:hover,
 .send-btn:hover`
-- `static/ui-kit.css:2320` — `html[data-theme="dark"] .message.rx .bubble .sender`
-- `static/ui-kit.css:4360` — `html[data-theme-family="gunmetal"]`
-- `static/ui-kit.css:4543` — `html[data-theme-family="alpine"]`
-- `static/ui-kit.css:4690` — `html[data-theme-family="teal"][data-theme="dark"]`
+- `static/ui-kit.css:2320` - `html[data-theme="dark"] .message.rx .bubble .sender`
+- `static/ui-kit.css:4360` - `html[data-theme-family="gunmetal"]`
+- `static/ui-kit.css:4543` - `html[data-theme-family="alpine"]`
+- `static/ui-kit.css:4690` - `html[data-theme-family="teal"][data-theme="dark"]`
 
 ## `--mc-primary-soft` (16 consumers)
 
-- `static/style-part3.css:1894` — `.chat-item.selected`
-- `static/style-part3.css:1948` — `.chat-item.selected`
-- `static/style-part4.css:603` — `[data-theme="light"] .map-fit-btn:hover`
-- `static/style-part4.css:984` — `[data-theme="light"] .map-popup-actions button:hover`
-- `static/ui-kit.css:235` — `.time-btn:hover,
+- `static/style-part3.css:1894` - `.chat-item.selected`
+- `static/style-part3.css:1948` - `.chat-item.selected`
+- `static/style-part4.css:603` - `[data-theme="light"] .map-fit-btn:hover`
+- `static/style-part4.css:984` - `[data-theme="light"] .map-popup-actions button:hover`
+- `static/ui-kit.css:235` - `.time-btn:hover,
 .cpu-range-btn:hover,
 .telemetry-time-controls .time-btn:hover`
-- `static/ui-kit.css:272` — `.node-card.selected`
-- `static/ui-kit.css:427` — `.settings-segmented button:hover`
-- `static/ui-kit.css:450` — `.mc-refresh-btn:hover,
+- `static/ui-kit.css:272` - `.node-card.selected`
+- `static/ui-kit.css:427` - `.settings-segmented button:hover`
+- `static/ui-kit.css:450` - `.mc-refresh-btn:hover,
 .media-refresh-btn:hover,
 .system-refresh-btn:hover,
 .media-primary-btn:hover`
-- `static/ui-kit.css:1105` — `.workspace-theme-family-option input:checked + .workspace-theme-family-card`
-- `static/ui-kit.css:1830` — `.about-project-card`
-- `static/ui-kit.css:1838` — `.about-card-icon,
+- `static/ui-kit.css:1105` - `.workspace-theme-family-option input:checked + .workspace-theme-family-card`
+- `static/ui-kit.css:1830` - `.about-project-card`
+- `static/ui-kit.css:1838` - `.about-card-icon,
 .about-resource-icon,
 .about-aliases span`
-- `static/ui-kit.css:2034` — `html[data-theme="dark"] .node-card.selected`
-- `static/ui-kit.css:2049` — `html[data-theme="dark"] :is(.node-card.active, .node-card.selected)`
-- `static/ui-kit.css:2054` — `html[data-theme="dark"] :is(.chat-item.active, .chat-item.selected)`
-- `static/ui-kit.css:3613` — `:root`
-- `static/ui-kit.css:3884` — `html[data-theme="dark"]`
+- `static/ui-kit.css:2034` - `html[data-theme="dark"] .node-card.selected`
+- `static/ui-kit.css:2049` - `html[data-theme="dark"] :is(.node-card.active, .node-card.selected)`
+- `static/ui-kit.css:2054` - `html[data-theme="dark"] :is(.chat-item.active, .chat-item.selected)`
+- `static/ui-kit.css:3613` - `:root`
+- `static/ui-kit.css:3884` - `html[data-theme="dark"]`
 
 ## `--mc-scrollbar-size` (1 consumer)
 
-- `static/ui-kit.css:760` — `.media-content::-webkit-scrollbar,
+- `static/ui-kit.css:760` - `.media-content::-webkit-scrollbar,
 .system-layout::-webkit-scrollbar,
 .settings-grid::-webkit-scrollbar,
 .nodes-scroll::-webkit-scrollbar,
@@ -1161,7 +1161,7 @@ body[data-theme="dark"] .dock-notification-btn`
 
 ## `--mc-scrollbar-thumb` (2 consumers)
 
-- `static/ui-kit.css:748` — `.media-content,
+- `static/ui-kit.css:748` - `.media-content,
 .system-layout,
 .settings-grid,
 .nodes-scroll,
@@ -1169,7 +1169,7 @@ body[data-theme="dark"] .dock-notification-btn`
 .messages-panel,
 .chat-list-container,
 .messages-container`
-- `static/ui-kit.css:784` — `.media-content::-webkit-scrollbar-thumb,
+- `static/ui-kit.css:784` - `.media-content::-webkit-scrollbar-thumb,
 .system-layout::-webkit-scrollbar-thumb,
 .settings-grid::-webkit-scrollbar-thumb,
 .nodes-scroll::-webkit-scrollbar-thumb,
@@ -1180,7 +1180,7 @@ body[data-theme="dark"] .dock-notification-btn`
 
 ## `--mc-scrollbar-thumb-hover` (1 consumer)
 
-- `static/ui-kit.css:799` — `.media-content::-webkit-scrollbar-thumb:hover,
+- `static/ui-kit.css:799` - `.media-content::-webkit-scrollbar-thumb:hover,
 .system-layout::-webkit-scrollbar-thumb:hover,
 .settings-grid::-webkit-scrollbar-thumb:hover,
 .nodes-scroll::-webkit-scrollbar-thumb:hover,
@@ -1191,7 +1191,7 @@ body[data-theme="dark"] .dock-notification-btn`
 
 ## `--mc-scrollbar-track` (4 consumers)
 
-- `static/ui-kit.css:748` — `.media-content,
+- `static/ui-kit.css:748` - `.media-content,
 .system-layout,
 .settings-grid,
 .nodes-scroll,
@@ -1199,7 +1199,7 @@ body[data-theme="dark"] .dock-notification-btn`
 .messages-panel,
 .chat-list-container,
 .messages-container`
-- `static/ui-kit.css:772` — `.media-content::-webkit-scrollbar-track,
+- `static/ui-kit.css:772` - `.media-content::-webkit-scrollbar-track,
 .system-layout::-webkit-scrollbar-track,
 .settings-grid::-webkit-scrollbar-track,
 .nodes-scroll::-webkit-scrollbar-track,
@@ -1207,7 +1207,7 @@ body[data-theme="dark"] .dock-notification-btn`
 .messages-panel::-webkit-scrollbar-track,
 .chat-list-container::-webkit-scrollbar-track,
 .messages-container::-webkit-scrollbar-track`
-- `static/ui-kit.css:784` — `.media-content::-webkit-scrollbar-thumb,
+- `static/ui-kit.css:784` - `.media-content::-webkit-scrollbar-thumb,
 .system-layout::-webkit-scrollbar-thumb,
 .settings-grid::-webkit-scrollbar-thumb,
 .nodes-scroll::-webkit-scrollbar-thumb,
@@ -1215,7 +1215,7 @@ body[data-theme="dark"] .dock-notification-btn`
 .messages-panel::-webkit-scrollbar-thumb,
 .chat-list-container::-webkit-scrollbar-thumb,
 .messages-container::-webkit-scrollbar-thumb`
-- `static/ui-kit.css:799` — `.media-content::-webkit-scrollbar-thumb:hover,
+- `static/ui-kit.css:799` - `.media-content::-webkit-scrollbar-thumb:hover,
 .system-layout::-webkit-scrollbar-thumb:hover,
 .settings-grid::-webkit-scrollbar-thumb:hover,
 .nodes-scroll::-webkit-scrollbar-thumb:hover,
@@ -1226,12 +1226,12 @@ body[data-theme="dark"] .dock-notification-btn`
 
 ## `--mc-shadow-hover` (2 consumers)
 
-- `static/ui-kit.css:261` — `.node-card:hover`
-- `static/ui-kit.css:328` — `.media-item:hover`
+- `static/ui-kit.css:261` - `.node-card:hover`
+- `static/ui-kit.css:328` - `.media-item:hover`
 
 ## `--mc-shadow-panel` (12 consumers)
 
-- `static/ui-kit.css:121` — `.video-panel,
+- `static/ui-kit.css:121` - `.video-panel,
 .media-panel,
 .system-panel,
 .settings-header,
@@ -1239,30 +1239,30 @@ body[data-theme="dark"] .dock-notification-btn`
 .node-details,
 .node-detail-card,
 .node-position-card`
-- `static/ui-kit.css:322` — `.media-item`
-- `static/ui-kit.css:590` — `.settings-panel`
-- `static/ui-kit.css:704` — `.video-panel`
-- `static/ui-kit.css:1631` — `.about-shell`
-- `static/ui-kit.css:1830` — `.about-project-card`
-- `static/ui-kit.css:3274` — `.devices-panel`
-- `static/ui-kit.css:3305` — `.node-manager-panel.mc-workspace-panel`
-- `static/ui-kit.css:3341` — `.devices-empty-state`
-- `static/ui-kit.css:3394` — `.mc-workspace-panel`
-- `static/ui-kit.css:3412` — `.video-panel.mc-workspace-panel,
+- `static/ui-kit.css:322` - `.media-item`
+- `static/ui-kit.css:590` - `.settings-panel`
+- `static/ui-kit.css:704` - `.video-panel`
+- `static/ui-kit.css:1631` - `.about-shell`
+- `static/ui-kit.css:1830` - `.about-project-card`
+- `static/ui-kit.css:3274` - `.devices-panel`
+- `static/ui-kit.css:3305` - `.node-manager-panel.mc-workspace-panel`
+- `static/ui-kit.css:3341` - `.devices-empty-state`
+- `static/ui-kit.css:3394` - `.mc-workspace-panel`
+- `static/ui-kit.css:3412` - `.video-panel.mc-workspace-panel,
 .media-panel.mc-workspace-panel,
 .devices-panel.mc-workspace-panel,
 .system-panel.mc-workspace-panel,
 .settings-panel.mc-workspace-panel,
 .about-shell.mc-workspace-panel`
-- `static/ui-kit.css:3445` — `html[data-theme="light"] .mc-workspace-panel,
+- `static/ui-kit.css:3445` - `html[data-theme="light"] .mc-workspace-panel,
 body[data-theme="light"] .mc-workspace-panel`
 
 ## `--mc-success` (4 consumers)
 
-- `static/style-part3.css:19` — `.node-detail-activity.activity-online`
-- `static/style-part3.css:3996` — `[data-theme="dark"] .notification-success .notification-item-icon`
-- `static/style-part4.css:3101` — `.waypoint-action-toast.success`
-- `static/ui-kit.css:478` — `.status-online,
+- `static/style-part3.css:19` - `.node-detail-activity.activity-online`
+- `static/style-part3.css:3996` - `[data-theme="dark"] .notification-success .notification-item-icon`
+- `static/style-part4.css:3101` - `.waypoint-action-toast.success`
+- `static/ui-kit.css:478` - `.status-online,
 .status-ready,
 .status-running,
 .status-ok,
@@ -1270,126 +1270,126 @@ body[data-theme="light"] .mc-workspace-panel`
 
 ## `--mc-success-soft` (3 consumers)
 
-- `static/style-part2.css:2357` — `.base-reference-location`
-- `static/style-part2.css:2379` — `.base-reference-location:hover`
-- `static/style-part3.css:3962` — `.notification-success .notification-item-icon`
+- `static/style-part2.css:2357` - `.base-reference-location`
+- `static/style-part2.css:2379` - `.base-reference-location:hover`
+- `static/style-part3.css:3962` - `.notification-success .notification-item-icon`
 
 ## `--mc-surface` (13 consumers)
 
-- `static/style-part3.css:1565` — `.settings-card,
+- `static/style-part3.css:1565` - `.settings-card,
 .map-settings-card,
 .reference-location-card`
-- `static/style-part3.css:3839` — `.notification-popover`
-- `static/style-part4.css:604` — `.map-toolbar`
-- `static/style-part4.css:914` — `.map-layout-popover`
-- `static/ui-kit.css:1570` — `.about-tabs`
-- `static/ui-kit.css:1577` — `.about-project-card`
-- `static/ui-kit.css:1581` — `.about-badge`
-- `static/ui-kit.css:1583` — `.about-card`
-- `static/ui-kit.css:1587` — `.about-note`
-- `static/ui-kit.css:1589` — `.about-resource-card`
-- `static/ui-kit.css:1590` — `.about-release-card`
-- `static/ui-kit.css:1591` — `.about-footer`
-- `static/ui-kit.css:2812` — `.camera-loading-placeholder`
+- `static/style-part3.css:3839` - `.notification-popover`
+- `static/style-part4.css:604` - `.map-toolbar`
+- `static/style-part4.css:914` - `.map-layout-popover`
+- `static/ui-kit.css:1570` - `.about-tabs`
+- `static/ui-kit.css:1577` - `.about-project-card`
+- `static/ui-kit.css:1581` - `.about-badge`
+- `static/ui-kit.css:1583` - `.about-card`
+- `static/ui-kit.css:1587` - `.about-note`
+- `static/ui-kit.css:1589` - `.about-resource-card`
+- `static/ui-kit.css:1590` - `.about-release-card`
+- `static/ui-kit.css:1591` - `.about-footer`
+- `static/ui-kit.css:2812` - `.camera-loading-placeholder`
 
 ## `--mc-surface-2` (4 consumers)
 
-- `static/style-part4.css:575` — `.map-fit-btn`
-- `static/ui-kit.css:47` — `.btn:hover`
-- `static/ui-kit.css:2041` — `html[data-theme="dark"] .node-card:hover`
-- `static/ui-kit.css:2324` — `html[data-theme="dark"] .message.system .bubble`
+- `static/style-part4.css:575` - `.map-fit-btn`
+- `static/ui-kit.css:47` - `.btn:hover`
+- `static/ui-kit.css:2041` - `html[data-theme="dark"] .node-card:hover`
+- `static/ui-kit.css:2324` - `html[data-theme="dark"] .message.system .bubble`
 
 ## `--mc-surface-alt` (15 consumers)
 
-- `static/style-part3.css:37` — `.log-history-placeholder`
-- `static/style-part3.css:297` — `.node-detail-state-btn:hover`
-- `static/style-part3.css:346` — `.node-detail-tab`
-- `static/style-part3.css:3612` — `.node-detail-action-group`
-- `static/style-part3.css:3707` — `.node-detail-action-group`
-- `static/style-part3.css:3810` — `.dock-notification-btn`
-- `static/style-part3.css:3937` — `.notification-item:hover`
-- `static/style-part4.css:927` — `.map-layout-option:hover`
-- `static/style-part4.css:1010` — `.weather-key-visibility`
-- `static/style-part4.css:3221` — `.dock-notification-status:hover`
-- `static/style-part4.css:3226` — `.dock-notification-status[aria-expanded="true"]`
-- `static/style-part4.css:3318` — `.notification-item-main:hover`
-- `static/style-part4.css:3322` — `.notification-item-action`
-- `static/style-part4.css:3760` — `.dock-notification-inline-dismiss`
-- `static/ui-kit.css:31` — `.btn`
+- `static/style-part3.css:37` - `.log-history-placeholder`
+- `static/style-part3.css:297` - `.node-detail-state-btn:hover`
+- `static/style-part3.css:346` - `.node-detail-tab`
+- `static/style-part3.css:3612` - `.node-detail-action-group`
+- `static/style-part3.css:3707` - `.node-detail-action-group`
+- `static/style-part3.css:3810` - `.dock-notification-btn`
+- `static/style-part3.css:3937` - `.notification-item:hover`
+- `static/style-part4.css:927` - `.map-layout-option:hover`
+- `static/style-part4.css:1010` - `.weather-key-visibility`
+- `static/style-part4.css:3221` - `.dock-notification-status:hover`
+- `static/style-part4.css:3226` - `.dock-notification-status[aria-expanded="true"]`
+- `static/style-part4.css:3318` - `.notification-item-main:hover`
+- `static/style-part4.css:3322` - `.notification-item-action`
+- `static/style-part4.css:3760` - `.dock-notification-inline-dismiss`
+- `static/ui-kit.css:31` - `.btn`
 
 ## `--mc-surface-control` (3 consumers)
 
-- `static/style-part4.css:983` — `[data-theme="light"] .map-popup-actions button`
-- `static/ui-kit.css:223` — `.time-btn,
+- `static/style-part4.css:983` - `[data-theme="light"] .map-popup-actions button`
+- `static/ui-kit.css:223` - `.time-btn,
 .cpu-range-btn,
 .telemetry-time-controls .time-btn`
-- `static/ui-kit.css:417` — `.settings-segmented button,
+- `static/ui-kit.css:417` - `.settings-segmented button,
 .map-provider-select,
 .reference-location-card select,
 .reference-location-card input`
 
 ## `--mc-surface-sunken` (3 consumers)
 
-- `static/ui-kit.css:304` — `.node-detail-empty,
+- `static/ui-kit.css:304` - `.node-detail-empty,
 .node-detail-placeholder,
 .node-detail-pane .empty-state,
 .node-event-history-empty`
-- `static/ui-kit.css:3341` — `.devices-empty-state`
-- `static/ui-kit.css:3381` — `html[data-theme="dark"] .devices-empty-state`
+- `static/ui-kit.css:3341` - `.devices-empty-state`
+- `static/ui-kit.css:3381` - `html[data-theme="dark"] .devices-empty-state`
 
 ## `--mc-tab-bg` (3 consumers)
 
-- `static/ui-kit.css:167` — `.main-content-tab`
-- `static/ui-kit.css:197` — `.camera-control-tab,
+- `static/ui-kit.css:167` - `.main-content-tab`
+- `static/ui-kit.css:197` - `.camera-control-tab,
 .node-detail-tab`
-- `static/ui-kit.css:2155` — `html[data-theme="dark"] .main-content-tab,
+- `static/ui-kit.css:2155` - `html[data-theme="dark"] .main-content-tab,
 html[data-theme="dark"] .sidebar-tab`
 
 ## `--mc-tab-bg-active` (3 consumers)
 
-- `static/ui-kit.css:181` — `.main-content-tab.active`
-- `static/ui-kit.css:212` — `.camera-control-tab.active,
+- `static/ui-kit.css:181` - `.main-content-tab.active`
+- `static/ui-kit.css:212` - `.camera-control-tab.active,
 .node-detail-tab.active`
-- `static/ui-kit.css:2169` — `html[data-theme="dark"] .main-content-tab.active,
+- `static/ui-kit.css:2169` - `html[data-theme="dark"] .main-content-tab.active,
 html[data-theme="dark"] .sidebar-tab.active`
 
 ## `--mc-tab-bg-hover` (3 consumers)
 
-- `static/ui-kit.css:176` — `.main-content-tab:hover`
-- `static/ui-kit.css:205` — `.camera-control-tab:hover,
+- `static/ui-kit.css:176` - `.main-content-tab:hover`
+- `static/ui-kit.css:205` - `.camera-control-tab:hover,
 .node-detail-tab:hover`
-- `static/ui-kit.css:2163` — `html[data-theme="dark"] .main-content-tab:hover,
+- `static/ui-kit.css:2163` - `html[data-theme="dark"] .main-content-tab:hover,
 html[data-theme="dark"] .sidebar-tab:hover`
 
 ## `--mc-tab-line-active` (2 consumers)
 
-- `static/ui-kit.css:181` — `.main-content-tab.active`
-- `static/ui-kit.css:2169` — `html[data-theme="dark"] .main-content-tab.active,
+- `static/ui-kit.css:181` - `.main-content-tab.active`
+- `static/ui-kit.css:2169` - `html[data-theme="dark"] .main-content-tab.active,
 html[data-theme="dark"] .sidebar-tab.active`
 
 ## `--mc-tab-text` (3 consumers)
 
-- `static/ui-kit.css:167` — `.main-content-tab`
-- `static/ui-kit.css:197` — `.camera-control-tab,
+- `static/ui-kit.css:167` - `.main-content-tab`
+- `static/ui-kit.css:197` - `.camera-control-tab,
 .node-detail-tab`
-- `static/ui-kit.css:2155` — `html[data-theme="dark"] .main-content-tab,
+- `static/ui-kit.css:2155` - `html[data-theme="dark"] .main-content-tab,
 html[data-theme="dark"] .sidebar-tab`
 
 ## `--mc-tab-text-active` (6 consumers)
 
-- `static/style-part4.css:3416` — `[data-theme="dark"] .modal-header span`
-- `static/ui-kit.css:176` — `.main-content-tab:hover`
-- `static/ui-kit.css:181` — `.main-content-tab.active`
-- `static/ui-kit.css:205` — `.camera-control-tab:hover,
+- `static/style-part4.css:3416` - `[data-theme="dark"] .modal-header span`
+- `static/ui-kit.css:176` - `.main-content-tab:hover`
+- `static/ui-kit.css:181` - `.main-content-tab.active`
+- `static/ui-kit.css:205` - `.camera-control-tab:hover,
 .node-detail-tab:hover`
-- `static/ui-kit.css:2163` — `html[data-theme="dark"] .main-content-tab:hover,
+- `static/ui-kit.css:2163` - `html[data-theme="dark"] .main-content-tab:hover,
 html[data-theme="dark"] .sidebar-tab:hover`
-- `static/ui-kit.css:2169` — `html[data-theme="dark"] .main-content-tab.active,
+- `static/ui-kit.css:2169` - `html[data-theme="dark"] .main-content-tab.active,
 html[data-theme="dark"] .sidebar-tab.active`
 
 ## `--mc-text` (11 consumers)
 
-- `static/style-part3.css:675` — `--mc-legacy-*
+- `static/style-part3.css:675` - `--mc-legacy-*
    chain waypoint-tools uses (that one is real and out of scope; this one
    was always broken). It's moot either way here: all four rules are
    additionally shadowed by real, working --mc-* rules -
@@ -1399,116 +1399,116 @@ html[data-theme="dark"] .sidebar-tab.active`
    carry .mc-workspace-panel/.mc-workspace-header), .media-title/
    .media-subtitle by this same file's own later ".workspace-page-title,
    .video-title, .media-title, ...`
-- `static/style-part3.css:1487` — `.workspace-page-title,
+- `static/style-part3.css:1487` - `.workspace-page-title,
 .video-title,
 .media-title,
 .system-header h3,
 .settings-title`
-- `static/style-part3.css:1803` — `.video-header .workspace-page-title,
+- `static/style-part3.css:1803` - `.video-header .workspace-page-title,
 .media-header .workspace-page-title,
 .system-header .workspace-page-title`
-- `static/style-part3.css:2326` — `.settings-select`
-- `static/style-part3.css:3839` — `.notification-popover`
-- `static/style-part4.css:575` — `.map-fit-btn`
-- `static/style-part4.css:914` — `.map-layout-popover`
-- `static/style-part4.css:1010` — `.weather-key-visibility`
-- `static/style-part4.css:1177` — `.map-popup-close-btn`
-- `static/style-part4.css:1797` — `.node-manager-header .workspace-page-title`
-- `static/style-part4.css:3609` — `[data-theme="dark"] .camera-off-title`
+- `static/style-part3.css:2326` - `.settings-select`
+- `static/style-part3.css:3839` - `.notification-popover`
+- `static/style-part4.css:575` - `.map-fit-btn`
+- `static/style-part4.css:914` - `.map-layout-popover`
+- `static/style-part4.css:1010` - `.weather-key-visibility`
+- `static/style-part4.css:1177` - `.map-popup-close-btn`
+- `static/style-part4.css:1797` - `.node-manager-header .workspace-page-title`
+- `static/style-part4.css:3609` - `[data-theme="dark"] .camera-off-title`
 
 ## `--mc-text-inverse` (6 consumers)
 
-- `static/style-part1.css:322` — `.chat-unread-badge`
-- `static/style-part1.css:422` — `.message.me .bubble`
-- `static/style-part1.css:516` — `.input-form button[type="submit"]`
-- `static/ui-kit.css:242` — `.time-btn.active,
+- `static/style-part1.css:322` - `.chat-unread-badge`
+- `static/style-part1.css:422` - `.message.me .bubble`
+- `static/style-part1.css:516` - `.input-form button[type="submit"]`
+- `static/ui-kit.css:242` - `.time-btn.active,
 .cpu-range-btn.active,
 .telemetry-time-controls .time-btn.active`
-- `static/ui-kit.css:431` — `.settings-segmented button.active`
-- `static/ui-kit.css:460` — `.screenshot-btn,
+- `static/ui-kit.css:431` - `.settings-segmented button.active`
+- `static/ui-kit.css:460` - `.screenshot-btn,
 .primary-btn,
 .send-btn`
 
 ## `--mc-text-muted` (16 consumers)
 
-- `static/style-part2.css:3376` — `.node-card-identity-row .node-short-name`
-- `static/style-part2.css:3390` — `.node-card-identity-row .node-inline-id`
-- `static/style-part2.css:3397` — `.node-card-identity-row .node-identity-separator`
-- `static/style-part3.css:11` — `.node-detail-activity`
-- `static/style-part3.css:22` — `.node-detail-activity.activity-unknown`
-- `static/style-part3.css:460` — `.camera-status-divider`
-- `static/ui-kit.css:304` — `.node-detail-empty,
+- `static/style-part2.css:3376` - `.node-card-identity-row .node-short-name`
+- `static/style-part2.css:3390` - `.node-card-identity-row .node-inline-id`
+- `static/style-part2.css:3397` - `.node-card-identity-row .node-identity-separator`
+- `static/style-part3.css:11` - `.node-detail-activity`
+- `static/style-part3.css:22` - `.node-detail-activity.activity-unknown`
+- `static/style-part3.css:460` - `.camera-status-divider`
+- `static/ui-kit.css:304` - `.node-detail-empty,
 .node-detail-placeholder,
 .node-detail-pane .empty-state,
 .node-event-history-empty`
-- `static/ui-kit.css:1571` — `.about-tab`
-- `static/ui-kit.css:1585` — `.about-card-kicker`
-- `static/ui-kit.css:1586` — `.about-facts span,.about-link-list span`
-- `static/ui-kit.css:1587` — `.about-section-heading p`
-- `static/ui-kit.css:1587` — `.about-note`
-- `static/ui-kit.css:1589` — `.about-resource-card small`
-- `static/ui-kit.css:1591` — `.about-footer`
-- `static/ui-kit.css:2002` — `html[data-theme="dark"] :is(
+- `static/ui-kit.css:1571` - `.about-tab`
+- `static/ui-kit.css:1585` - `.about-card-kicker`
+- `static/ui-kit.css:1586` - `.about-facts span,.about-link-list span`
+- `static/ui-kit.css:1587` - `.about-section-heading p`
+- `static/ui-kit.css:1587` - `.about-note`
+- `static/ui-kit.css:1589` - `.about-resource-card small`
+- `static/ui-kit.css:1591` - `.about-footer`
+- `static/ui-kit.css:2002` - `html[data-theme="dark"] :is(
     small, .muted, .hint, .helper-text,
     .message-time, .sensor-label,
     .about-card-kicker, .about-resource-card small,
     .about-facts span, .about-link-list span,
     .about-section-heading p
 )`
-- `static/ui-kit.css:2350` — `html[data-theme="dark"] .input-form input[type="text"]::placeholder,
+- `static/ui-kit.css:2350` - `html[data-theme="dark"] .input-form input[type="text"]::placeholder,
 html[data-theme="dark"] .message-input::placeholder`
 
 ## `--mc-text-primary` (54 consumers)
 
-- `static/style-part1.css:1616` — `.modal-header span`
-- `static/style-part1.css:1639` — `.confirm-text`
-- `static/style-part1.css:2799` — `.video-info-bar`
-- `static/style-part2.css:2357` — `.base-reference-location`
-- `static/style-part2.css:2885` — `.updates-version-row strong`
-- `static/style-part2.css:2892` — `.updates-status-text`
-- `static/style-part2.css:3061` — `.node-card-topline .node-card-title`
-- `static/style-part3.css:357` — `.node-detail-tab:hover`
-- `static/style-part3.css:546` — `.camera-preset-group select,
+- `static/style-part1.css:1616` - `.modal-header span`
+- `static/style-part1.css:1639` - `.confirm-text`
+- `static/style-part1.css:2799` - `.video-info-bar`
+- `static/style-part2.css:2357` - `.base-reference-location`
+- `static/style-part2.css:2885` - `.updates-version-row strong`
+- `static/style-part2.css:2892` - `.updates-status-text`
+- `static/style-part2.css:3061` - `.node-card-topline .node-card-title`
+- `static/style-part3.css:357` - `.node-detail-tab:hover`
+- `static/style-part3.css:546` - `.camera-preset-group select,
 .camera-white-balance-group select`
-- `static/style-part3.css:3248` — `.node-info-panel .node-metrics-grid .sensor-value,
+- `static/style-part3.css:3248` - `.node-info-panel .node-metrics-grid .sensor-value,
 .node-info-panel .node-metrics-grid .sensor-unit`
-- `static/style-part4.css:698` — `[data-theme="light"] .map-fit-btn`
-- `static/style-part4.css:700` — `[data-theme="light"] .meshcenter-map-popup .leaflet-popup-content-wrapper,
+- `static/style-part4.css:698` - `[data-theme="light"] .map-fit-btn`
+- `static/style-part4.css:700` - `[data-theme="light"] .meshcenter-map-popup .leaflet-popup-content-wrapper,
 [data-theme="light"] .meshcenter-map-popup .leaflet-popup-tip`
-- `static/style-part4.css:702` — `[data-theme="light"] .map-popup-name`
-- `static/style-part4.css:983` — `[data-theme="light"] .map-popup-actions button`
-- `static/style-part4.css:1181` — `[data-theme="light"] .map-popup-close-btn`
-- `static/style-part4.css:1342` — `.identity-not-checked`
-- `static/style-part4.css:4008` — `.time-schedule-label`
-- `static/style-part4.css:4052` — `.schedule-input,
+- `static/style-part4.css:702` - `[data-theme="light"] .map-popup-name`
+- `static/style-part4.css:983` - `[data-theme="light"] .map-popup-actions button`
+- `static/style-part4.css:1181` - `[data-theme="light"] .map-popup-close-btn`
+- `static/style-part4.css:1342` - `.identity-not-checked`
+- `static/style-part4.css:4008` - `.time-schedule-label`
+- `static/style-part4.css:4052` - `.schedule-input,
 .schedule-select`
-- `static/style-part4.css:4086` — `.timer-duration-input`
-- `static/style-part4.css:4174` — `.schedule-checkbox-row`
-- `static/ui-kit.css:88` — `body`
-- `static/ui-kit.css:366` — `.system-row strong,
+- `static/style-part4.css:4086` - `.timer-duration-input`
+- `static/style-part4.css:4174` - `.schedule-checkbox-row`
+- `static/ui-kit.css:88` - `body`
+- `static/ui-kit.css:366` - `.system-row strong,
 .system-card-title,
 .system-header h3`
-- `static/ui-kit.css:405` — `.settings-title,
+- `static/ui-kit.css:405` - `.settings-title,
 .settings-card-title,
 .settings-option-label`
-- `static/ui-kit.css:417` — `.settings-segmented button,
+- `static/ui-kit.css:417` - `.settings-segmented button,
 .map-provider-select,
 .reference-location-card select,
 .reference-location-card input`
-- `static/ui-kit.css:622` — `.settings-header .workspace-page-title`
-- `static/ui-kit.css:1208` — `.workspace-theme-family-label`
-- `static/ui-kit.css:1392` — `html[data-theme="dark"] .node-card`
-- `static/ui-kit.css:1400` — `html[data-theme="dark"] .chat-item`
-- `static/ui-kit.css:1579` — `.about-project-copy h1`
-- `static/ui-kit.css:1583` — `.about-card`
-- `static/ui-kit.css:1585` — `.about-card h2`
-- `static/ui-kit.css:1586` — `.about-facts strong,.about-link-list strong`
-- `static/ui-kit.css:1587` — `.about-section-heading h2`
-- `static/ui-kit.css:1589` — `.about-resource-card`
-- `static/ui-kit.css:1590` — `.about-release-card`
-- `static/ui-kit.css:1591` — `.about-footer strong`
-- `static/ui-kit.css:1663` — `.about-header .workspace-page-title`
-- `static/ui-kit.css:1958` — `html[data-theme="dark"] body,
+- `static/ui-kit.css:622` - `.settings-header .workspace-page-title`
+- `static/ui-kit.css:1208` - `.workspace-theme-family-label`
+- `static/ui-kit.css:1392` - `html[data-theme="dark"] .node-card`
+- `static/ui-kit.css:1400` - `html[data-theme="dark"] .chat-item`
+- `static/ui-kit.css:1579` - `.about-project-copy h1`
+- `static/ui-kit.css:1583` - `.about-card`
+- `static/ui-kit.css:1585` - `.about-card h2`
+- `static/ui-kit.css:1586` - `.about-facts strong,.about-link-list strong`
+- `static/ui-kit.css:1587` - `.about-section-heading h2`
+- `static/ui-kit.css:1589` - `.about-resource-card`
+- `static/ui-kit.css:1590` - `.about-release-card`
+- `static/ui-kit.css:1591` - `.about-footer strong`
+- `static/ui-kit.css:1663` - `.about-header .workspace-page-title`
+- `static/ui-kit.css:1958` - `html[data-theme="dark"] body,
 html[data-theme="dark"] .app-container,
 html[data-theme="dark"] .main-layout,
 html[data-theme="dark"] .chat-area,
@@ -1519,7 +1519,7 @@ html[data-theme="dark"] .media-view,
 html[data-theme="dark"] .system-view,
 html[data-theme="dark"] .settings-view,
 html[data-theme="dark"] .about-view`
-- `static/ui-kit.css:1977` — `html[data-theme="dark"] :is(
+- `static/ui-kit.css:1977` - `html[data-theme="dark"] :is(
     h1, h2, h3, h4, h5, h6,
     .chat-title, .chat-name, .chat-header-title,
     .node-name, .node-title, .node-detail-title,
@@ -1534,99 +1534,99 @@ html[data-theme="dark"] .about-view`
     .about-resource-card strong, .about-facts strong,
     .about-link-list strong, .about-footer strong
 )`
-- `static/ui-kit.css:2013` — `html[data-theme="dark"] :is(
+- `static/ui-kit.css:2013` - `html[data-theme="dark"] :is(
     .chat-item, .node-card, .system-card, .settings-card,
     .about-card, .about-resource-card, .about-release-card,
     .about-note, .about-footer,
     .system-log-card, .radio-health-card,
     .wifi-card, .auto-recovery-card
 )`
-- `static/ui-kit.css:2060` — `html[data-theme="dark"] :is(input, select, textarea, .message-input)`
-- `static/ui-kit.css:2068` — `html[data-theme="dark"] :is(option)`
-- `static/ui-kit.css:2082` — `html[data-theme="dark"] :is(
+- `static/ui-kit.css:2060` - `html[data-theme="dark"] :is(input, select, textarea, .message-input)`
+- `static/ui-kit.css:2068` - `html[data-theme="dark"] :is(option)`
+- `static/ui-kit.css:2082` - `html[data-theme="dark"] :is(
     .system-info-row strong, .network-info-row strong,
     .radio-health-row strong, .settings-row strong
 )`
-- `static/ui-kit.css:2665` — `html[data-theme="dark"] .node-card-topline .node-card-title,
+- `static/ui-kit.css:2665` - `html[data-theme="dark"] .node-card-topline .node-card-title,
 html[data-theme="dark"] .node-card .node-card-title`
-- `static/ui-kit.css:2846` — `.camera-loading-title`
-- `static/ui-kit.css:2921` — `.workspace-nav-btn`
-- `static/ui-kit.css:2945` — `.workspace-nav-btn:hover`
-- `static/ui-kit.css:2951` — `.workspace-nav-btn.active`
-- `static/ui-kit.css:3065` — `.devices-empty-state h3`
-- `static/ui-kit.css:3190` — `.workspace-page-close-btn`
-- `static/ui-kit.css:3613` — `:root`
-- `static/ui-kit.css:3884` — `html[data-theme="dark"]`
-- `static/ui-kit.css:4190` — `html[data-theme-family="sharp"]`
-- `static/ui-kit.css:4806` — `html[data-theme-family="teal"][data-theme="light"]`
+- `static/ui-kit.css:2846` - `.camera-loading-title`
+- `static/ui-kit.css:2921` - `.workspace-nav-btn`
+- `static/ui-kit.css:2945` - `.workspace-nav-btn:hover`
+- `static/ui-kit.css:2951` - `.workspace-nav-btn.active`
+- `static/ui-kit.css:3065` - `.devices-empty-state h3`
+- `static/ui-kit.css:3190` - `.workspace-page-close-btn`
+- `static/ui-kit.css:3613` - `:root`
+- `static/ui-kit.css:3884` - `html[data-theme="dark"]`
+- `static/ui-kit.css:4190` - `html[data-theme-family="sharp"]`
+- `static/ui-kit.css:4806` - `html[data-theme-family="teal"][data-theme="light"]`
 
 ## `--mc-text-secondary` (75 consumers)
 
-- `static/style-part1.css:1625` — `.modal-close`
-- `static/style-part1.css:2523` — `.control-group label`
-- `static/style-part1.css:2821` — `#videoLiveInfo`
-- `static/style-part1.css:3581` — `.export-time-sep`
-- `static/style-part2.css:1034` — `.camera-defaults-btn`
-- `static/style-part2.css:1065` — `.camera-control-slider label`
-- `static/style-part2.css:2391` — `.base-reference-location.reference-is-disabled`
-- `static/style-part2.css:2412` — `.reference-card-title`
-- `static/style-part2.css:2438` — `.reference-is-disabled .reference-card-name`
-- `static/style-part2.css:2444` — `.reference-card-coordinates`
-- `static/style-part2.css:2874` — `.updates-version-row`
-- `static/style-part2.css:3201` — `.node-last-seen`
-- `static/style-part2.css:3224` — `.node-card .node-last-text`
-- `static/style-part2.css:3382` — `.node-card-identity-row .node-hardware-name`
-- `static/style-part3.css:37` — `.log-history-placeholder`
-- `static/style-part3.css:276` — `.node-detail-state-btn`
-- `static/style-part3.css:346` — `.node-detail-tab`
-- `static/style-part3.css:525` — `.camera-preset-group label,
+- `static/style-part1.css:1625` - `.modal-close`
+- `static/style-part1.css:2523` - `.control-group label`
+- `static/style-part1.css:2821` - `#videoLiveInfo`
+- `static/style-part1.css:3581` - `.export-time-sep`
+- `static/style-part2.css:1034` - `.camera-defaults-btn`
+- `static/style-part2.css:1065` - `.camera-control-slider label`
+- `static/style-part2.css:2391` - `.base-reference-location.reference-is-disabled`
+- `static/style-part2.css:2412` - `.reference-card-title`
+- `static/style-part2.css:2438` - `.reference-is-disabled .reference-card-name`
+- `static/style-part2.css:2444` - `.reference-card-coordinates`
+- `static/style-part2.css:2874` - `.updates-version-row`
+- `static/style-part2.css:3201` - `.node-last-seen`
+- `static/style-part2.css:3224` - `.node-card .node-last-text`
+- `static/style-part2.css:3382` - `.node-card-identity-row .node-hardware-name`
+- `static/style-part3.css:37` - `.log-history-placeholder`
+- `static/style-part3.css:276` - `.node-detail-state-btn`
+- `static/style-part3.css:346` - `.node-detail-tab`
+- `static/style-part3.css:525` - `.camera-preset-group label,
 .camera-white-balance-group label`
-- `static/style-part3.css:2522` — `.node-uptime-badge`
-- `static/style-part3.css:2535` — `.node-info-panel .sensors-title`
-- `static/style-part3.css:2553` — `.node-info-panel .sensors-title .sensor-update`
-- `static/style-part3.css:2634` — `.node-info-panel .telemetry-title`
-- `static/style-part3.css:2643` — `.node-info-panel .telemetry-status`
-- `static/style-part3.css:3226` — `.node-info-panel .node-metrics-grid .sensor-label`
-- `static/style-part3.css:3378` — `.dock-brand-name`
-- `static/style-part3.css:3565` — `.node-detail-identity-line .node-detail-short-id`
-- `static/style-part3.css:3718` — `.node-detail-action-group .node-detail-state-btn,
+- `static/style-part3.css:2522` - `.node-uptime-badge`
+- `static/style-part3.css:2535` - `.node-info-panel .sensors-title`
+- `static/style-part3.css:2553` - `.node-info-panel .sensors-title .sensor-update`
+- `static/style-part3.css:2634` - `.node-info-panel .telemetry-title`
+- `static/style-part3.css:2643` - `.node-info-panel .telemetry-status`
+- `static/style-part3.css:3226` - `.node-info-panel .node-metrics-grid .sensor-label`
+- `static/style-part3.css:3378` - `.dock-brand-name`
+- `static/style-part3.css:3565` - `.node-detail-identity-line .node-detail-short-id`
+- `static/style-part3.css:3718` - `.node-detail-action-group .node-detail-state-btn,
 .node-detail-action-group .node-detail-actions-btn`
-- `static/style-part3.css:3810` — `.dock-notification-btn`
-- `static/style-part4.css:697` — `[data-theme="light"] .map-toolbar`
-- `static/style-part4.css:703` — `[data-theme="light"] .map-popup-grid span:nth-child(odd)`
-- `static/style-part4.css:1080` — `[data-theme="light"] .map-popup-subtitle`
-- `static/style-part4.css:3612` — `[data-theme="dark"] .camera-off-text`
-- `static/style-part4.css:3982` — `.time-schedules-empty`
-- `static/style-part4.css:4015` — `.time-schedule-summary`
-- `static/style-part4.css:4041` — `.schedule-form-row > label`
-- `static/style-part4.css:4068` — `.schedule-inline`
-- `static/style-part4.css:4069` — `.schedule-inline-label`
-- `static/style-part4.css:4082` — `.timer-duration-field label`
-- `static/style-part4.css:4098` — `.timer-duration-sep`
-- `static/style-part4.css:4105` — `.schedule-days-label`
-- `static/style-part4.css:4118` — `.schedule-day-chip`
-- `static/style-part4.css:4146` — `.schedule-radio`
-- `static/style-part4.css:4165` — `.schedule-section-heading`
-- `static/style-part4.css:4184` — `.schedule-placeholder-note`
-- `static/ui-kit.css:31` — `.btn`
-- `static/ui-kit.css:223` — `.time-btn,
+- `static/style-part3.css:3810` - `.dock-notification-btn`
+- `static/style-part4.css:697` - `[data-theme="light"] .map-toolbar`
+- `static/style-part4.css:703` - `[data-theme="light"] .map-popup-grid span:nth-child(odd)`
+- `static/style-part4.css:1080` - `[data-theme="light"] .map-popup-subtitle`
+- `static/style-part4.css:3612` - `[data-theme="dark"] .camera-off-text`
+- `static/style-part4.css:3982` - `.time-schedules-empty`
+- `static/style-part4.css:4015` - `.time-schedule-summary`
+- `static/style-part4.css:4041` - `.schedule-form-row > label`
+- `static/style-part4.css:4068` - `.schedule-inline`
+- `static/style-part4.css:4069` - `.schedule-inline-label`
+- `static/style-part4.css:4082` - `.timer-duration-field label`
+- `static/style-part4.css:4098` - `.timer-duration-sep`
+- `static/style-part4.css:4105` - `.schedule-days-label`
+- `static/style-part4.css:4118` - `.schedule-day-chip`
+- `static/style-part4.css:4146` - `.schedule-radio`
+- `static/style-part4.css:4165` - `.schedule-section-heading`
+- `static/style-part4.css:4184` - `.schedule-placeholder-note`
+- `static/ui-kit.css:31` - `.btn`
+- `static/ui-kit.css:223` - `.time-btn,
 .cpu-range-btn,
 .telemetry-time-controls .time-btn`
-- `static/ui-kit.css:337` — `.media-sort-label,
+- `static/ui-kit.css:337` - `.media-sort-label,
 .media-icon-btn`
-- `static/ui-kit.css:360` — `.system-row span,
+- `static/ui-kit.css:360` - `.system-row span,
 .system-subtitle`
-- `static/ui-kit.css:410` — `.settings-subtitle,
+- `static/ui-kit.css:410` - `.settings-subtitle,
 .settings-card-text`
-- `static/ui-kit.css:630` — `.settings-header .workspace-page-subtitle`
-- `static/ui-kit.css:1218` — `.workspace-theme-fixed-label`
-- `static/ui-kit.css:1580` — `.about-motto`
-- `static/ui-kit.css:1581` — `.about-badge`
-- `static/ui-kit.css:1585` — `.about-card p`
-- `static/ui-kit.css:1589` — `.about-resource-card em`
-- `static/ui-kit.css:1590` — `.about-release-card ul`
-- `static/ui-kit.css:1671` — `.about-header .workspace-page-subtitle`
-- `static/ui-kit.css:1992` — `html[data-theme="dark"] :is(
+- `static/ui-kit.css:630` - `.settings-header .workspace-page-subtitle`
+- `static/ui-kit.css:1218` - `.workspace-theme-fixed-label`
+- `static/ui-kit.css:1580` - `.about-motto`
+- `static/ui-kit.css:1581` - `.about-badge`
+- `static/ui-kit.css:1585` - `.about-card p`
+- `static/ui-kit.css:1589` - `.about-resource-card em`
+- `static/ui-kit.css:1590` - `.about-release-card ul`
+- `static/ui-kit.css:1671` - `.about-header .workspace-page-subtitle`
+- `static/ui-kit.css:1992` - `html[data-theme="dark"] :is(
     p, label, dt, dd, li,
     .chat-preview, .chat-last-message, .chat-subtitle,
     .node-meta, .node-subtitle, .node-detail-value,
@@ -1638,134 +1638,134 @@ html[data-theme="dark"] .node-card .node-card-title`
     .about-resource-card em, .about-release-card ul,
     .about-footer, .about-note
 )`
-- `static/ui-kit.css:2075` — `html[data-theme="dark"] :is(
+- `static/ui-kit.css:2075` - `html[data-theme="dark"] :is(
     .system-info-row, .network-info-row, .radio-health-row,
     .settings-row, .about-facts div, .about-link-list a
 )`
-- `static/ui-kit.css:2103` — `html[data-theme="dark"] .about-tab`
-- `static/ui-kit.css:2117` — `html[data-theme="dark"] :is(.chart-container, .system-chart, .system-log-body, .log-container)`
-- `static/ui-kit.css:2122` — `html[data-theme="dark"] :is(.system-log-entry, .log-entry)`
-- `static/ui-kit.css:2324` — `html[data-theme="dark"] .message.system .bubble`
-- `static/ui-kit.css:2812` — `.camera-loading-placeholder`
-- `static/ui-kit.css:2901` — `html[data-theme="dark"] .chat-item.selected .chat-last-sender,
+- `static/ui-kit.css:2103` - `html[data-theme="dark"] .about-tab`
+- `static/ui-kit.css:2117` - `html[data-theme="dark"] :is(.chart-container, .system-chart, .system-log-body, .log-container)`
+- `static/ui-kit.css:2122` - `html[data-theme="dark"] :is(.system-log-entry, .log-entry)`
+- `static/ui-kit.css:2324` - `html[data-theme="dark"] .message.system .bubble`
+- `static/ui-kit.css:2812` - `.camera-loading-placeholder`
+- `static/ui-kit.css:2901` - `html[data-theme="dark"] .chat-item.selected .chat-last-sender,
 html[data-theme="dark"] .chat-item.selected .chat-last-text,
 html[data-theme="dark"] .chat-item.active .chat-last-sender,
 html[data-theme="dark"] .chat-item.active .chat-last-text`
-- `static/ui-kit.css:2987` — `.workspace-nav-btn small`
-- `static/ui-kit.css:3073` — `.devices-empty-state p`
-- `static/ui-kit.css:3092` — `.devices-empty-tags span`
-- `static/ui-kit.css:3613` — `:root`
-- `static/ui-kit.css:3884` — `html[data-theme="dark"]`
-- `static/ui-kit.css:4190` — `html[data-theme-family="sharp"]`
-- `static/ui-kit.css:4360` — `html[data-theme-family="gunmetal"]`
-- `static/ui-kit.css:4543` — `html[data-theme-family="alpine"]`
-- `static/ui-kit.css:4690` — `html[data-theme-family="teal"][data-theme="dark"]`
-- `static/ui-kit.css:4806` — `html[data-theme-family="teal"][data-theme="light"]`
+- `static/ui-kit.css:2987` - `.workspace-nav-btn small`
+- `static/ui-kit.css:3073` - `.devices-empty-state p`
+- `static/ui-kit.css:3092` - `.devices-empty-tags span`
+- `static/ui-kit.css:3613` - `:root`
+- `static/ui-kit.css:3884` - `html[data-theme="dark"]`
+- `static/ui-kit.css:4190` - `html[data-theme-family="sharp"]`
+- `static/ui-kit.css:4360` - `html[data-theme-family="gunmetal"]`
+- `static/ui-kit.css:4543` - `html[data-theme-family="alpine"]`
+- `static/ui-kit.css:4690` - `html[data-theme-family="teal"][data-theme="dark"]`
+- `static/ui-kit.css:4806` - `html[data-theme-family="teal"][data-theme="light"]`
 
 ## `--mc-warning` (5 consumers)
 
-- `static/style-part1.css:3371` — `html[data-theme="dark"] .settings-card-note--warning`
-- `static/style-part3.css:20` — `.node-detail-activity.activity-away`
-- `static/style-part3.css:3997` — `[data-theme="dark"] .notification-warning .notification-item-icon`
-- `static/ui-kit.css:483` — `.status-warning,
+- `static/style-part1.css:3371` - `html[data-theme="dark"] .settings-card-note--warning`
+- `static/style-part3.css:20` - `.node-detail-activity.activity-away`
+- `static/style-part3.css:3997` - `[data-theme="dark"] .notification-warning .notification-item-icon`
+- `static/ui-kit.css:483` - `.status-warning,
 .text-warning`
-- `static/ui-kit.css:1140` — `.workspace-theme-swatch--warning`
+- `static/ui-kit.css:1140` - `.workspace-theme-swatch--warning`
 
 ## `--mc-warning-soft` (1 consumer)
 
-- `static/style-part3.css:3963` — `.notification-warning .notification-item-icon`
+- `static/style-part3.css:3963` - `.notification-warning .notification-item-icon`
 
 ## `--mc-workspace-border` (5 consumers)
 
-- `static/ui-kit.css:704` — `.video-panel`
-- `static/ui-kit.css:723` — `.video-header,
+- `static/ui-kit.css:704` - `.video-panel`
+- `static/ui-kit.css:723` - `.video-header,
 .media-header,
 .system-header,
 .settings-header`
-- `static/ui-kit.css:3394` — `.mc-workspace-panel`
-- `static/ui-kit.css:3412` — `.video-panel.mc-workspace-panel,
+- `static/ui-kit.css:3394` - `.mc-workspace-panel`
+- `static/ui-kit.css:3412` - `.video-panel.mc-workspace-panel,
 .media-panel.mc-workspace-panel,
 .devices-panel.mc-workspace-panel,
 .system-panel.mc-workspace-panel,
 .settings-panel.mc-workspace-panel,
 .about-shell.mc-workspace-panel`
-- `static/ui-kit.css:3445` — `html[data-theme="light"] .mc-workspace-panel,
+- `static/ui-kit.css:3445` - `html[data-theme="light"] .mc-workspace-panel,
 body[data-theme="light"] .mc-workspace-panel`
 
 ## `--mc-workspace-header-bg` (5 consumers)
 
-- `static/style-part3.css:1792` — `.video-header.mc-workspace-header,
+- `static/style-part3.css:1792` - `.video-header.mc-workspace-header,
 .media-header.mc-workspace-header`
-- `static/style-part4.css:766` — `.map-header.mc-workspace-header`
-- `static/style-part4.css:1779` — `.node-manager-header.mc-workspace-header`
-- `static/ui-kit.css:820` — `.video-header.mc-workspace-header,
+- `static/style-part4.css:766` - `.map-header.mc-workspace-header`
+- `static/style-part4.css:1779` - `.node-manager-header.mc-workspace-header`
+- `static/ui-kit.css:820` - `.video-header.mc-workspace-header,
 .media-header.mc-workspace-header,
 .system-header.mc-workspace-header,
 .settings-header.mc-workspace-header`
-- `static/ui-kit.css:1805` — `.about-header.mc-workspace-header`
+- `static/ui-kit.css:1805` - `.about-header.mc-workspace-header`
 
 ## `--mc-workspace-header-border` (7 consumers)
 
-- `static/style-part4.css:766` — `.map-header.mc-workspace-header`
-- `static/style-part4.css:1779` — `.node-manager-header.mc-workspace-header`
-- `static/ui-kit.css:820` — `.video-header.mc-workspace-header,
+- `static/style-part4.css:766` - `.map-header.mc-workspace-header`
+- `static/style-part4.css:1779` - `.node-manager-header.mc-workspace-header`
+- `static/ui-kit.css:820` - `.video-header.mc-workspace-header,
 .media-header.mc-workspace-header,
 .system-header.mc-workspace-header,
 .settings-header.mc-workspace-header`
-- `static/ui-kit.css:1384` — `html[data-theme="dark"] .sensors-card,
+- `static/ui-kit.css:1384` - `html[data-theme="dark"] .sensors-card,
 html[data-theme="dark"] .telemetry-section`
-- `static/ui-kit.css:1523` — `html[data-theme="dark"] .workspace-menu-section`
-- `static/ui-kit.css:1805` — `.about-header.mc-workspace-header`
-- `static/ui-kit.css:3190` — `.workspace-page-close-btn`
+- `static/ui-kit.css:1523` - `html[data-theme="dark"] .workspace-menu-section`
+- `static/ui-kit.css:1805` - `.about-header.mc-workspace-header`
+- `static/ui-kit.css:3190` - `.workspace-page-close-btn`
 
 ## `--mc-workspace-header-height` (8 consumers)
 
-- `static/style-part3.css:1783` — `.video-header.mc-workspace-header,
+- `static/style-part3.css:1783` - `.video-header.mc-workspace-header,
 .media-header.mc-workspace-header,
 .system-header.mc-workspace-header`
-- `static/style-part4.css:766` — `.map-header.mc-workspace-header`
-- `static/style-part4.css:1779` — `.node-manager-header.mc-workspace-header`
-- `static/ui-kit.css:552` — `.system-header.mc-workspace-header`
-- `static/ui-kit.css:605` — `.settings-header.mc-workspace-header`
-- `static/ui-kit.css:669` — `.settings-panel > .settings-header`
-- `static/ui-kit.css:1646` — `.about-header.mc-workspace-header`
-- `static/ui-kit.css:3318` — `.devices-header.mc-workspace-header`
+- `static/style-part4.css:766` - `.map-header.mc-workspace-header`
+- `static/style-part4.css:1779` - `.node-manager-header.mc-workspace-header`
+- `static/ui-kit.css:552` - `.system-header.mc-workspace-header`
+- `static/ui-kit.css:605` - `.settings-header.mc-workspace-header`
+- `static/ui-kit.css:669` - `.settings-panel > .settings-header`
+- `static/ui-kit.css:1646` - `.about-header.mc-workspace-header`
+- `static/ui-kit.css:3318` - `.devices-header.mc-workspace-header`
 
 ## `--mc-workspace-header-padding-x` (6 consumers)
 
-- `static/style-part3.css:1783` — `.video-header.mc-workspace-header,
+- `static/style-part3.css:1783` - `.video-header.mc-workspace-header,
 .media-header.mc-workspace-header,
 .system-header.mc-workspace-header`
-- `static/style-part4.css:766` — `.map-header.mc-workspace-header`
-- `static/style-part4.css:1779` — `.node-manager-header.mc-workspace-header`
-- `static/ui-kit.css:605` — `.settings-header.mc-workspace-header`
-- `static/ui-kit.css:669` — `.settings-panel > .settings-header`
-- `static/ui-kit.css:1646` — `.about-header.mc-workspace-header`
+- `static/style-part4.css:766` - `.map-header.mc-workspace-header`
+- `static/style-part4.css:1779` - `.node-manager-header.mc-workspace-header`
+- `static/ui-kit.css:605` - `.settings-header.mc-workspace-header`
+- `static/ui-kit.css:669` - `.settings-panel > .settings-header`
+- `static/ui-kit.css:1646` - `.about-header.mc-workspace-header`
 
 ## `--mc-workspace-header-padding-y` (6 consumers)
 
-- `static/style-part3.css:1783` — `.video-header.mc-workspace-header,
+- `static/style-part3.css:1783` - `.video-header.mc-workspace-header,
 .media-header.mc-workspace-header,
 .system-header.mc-workspace-header`
-- `static/style-part4.css:766` — `.map-header.mc-workspace-header`
-- `static/style-part4.css:1779` — `.node-manager-header.mc-workspace-header`
-- `static/ui-kit.css:605` — `.settings-header.mc-workspace-header`
-- `static/ui-kit.css:669` — `.settings-panel > .settings-header`
-- `static/ui-kit.css:1646` — `.about-header.mc-workspace-header`
+- `static/style-part4.css:766` - `.map-header.mc-workspace-header`
+- `static/style-part4.css:1779` - `.node-manager-header.mc-workspace-header`
+- `static/ui-kit.css:605` - `.settings-header.mc-workspace-header`
+- `static/ui-kit.css:669` - `.settings-panel > .settings-header`
+- `static/ui-kit.css:1646` - `.about-header.mc-workspace-header`
 
 ## `--mc-workspace-panel-bg` (5 consumers)
 
-- `static/ui-kit.css:704` — `.video-panel`
-- `static/ui-kit.css:723` — `.video-header,
+- `static/ui-kit.css:704` - `.video-panel`
+- `static/ui-kit.css:723` - `.video-header,
 .media-header,
 .system-header,
 .settings-header`
-- `static/ui-kit.css:3394` — `.mc-workspace-panel`
-- `static/ui-kit.css:3412` — `.video-panel.mc-workspace-panel,
+- `static/ui-kit.css:3394` - `.mc-workspace-panel`
+- `static/ui-kit.css:3412` - `.video-panel.mc-workspace-panel,
 .media-panel.mc-workspace-panel,
 .devices-panel.mc-workspace-panel,
 .system-panel.mc-workspace-panel,
 .settings-panel.mc-workspace-panel,
 .about-shell.mc-workspace-panel`
-- `static/ui-kit.css:3421` — `html[data-theme="dark"] .mc-workspace-panel,
+- `static/ui-kit.css:3421` - `html[data-theme="dark"] .mc-workspace-panel,
 body[data-theme="dark"] .mc-workspace-panel`

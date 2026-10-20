@@ -1,4 +1,4 @@
-"""CSI camera driver — thin CameraDriver wrapper around camera/camera.py's
+"""CSI camera driver - thin CameraDriver wrapper around camera/camera.py's
 existing, already-working Picamera2 logic.
 
 Doesn't reimplement the actual capture: camera.py's init_camera() /

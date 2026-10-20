@@ -1,6 +1,6 @@
 /* static/files.js
  *
- * The Files workspace — MeshCenter's end-to-end encrypted file-transfer UI
+ * The Files workspace - MeshCenter's end-to-end encrypted file-transfer UI
  * (MCAttach). Loaded before chat.js so chat.js's `switchMainTab('files')`
  * can call `MeshCenterFiles.activate()` with a `typeof` guard (the same
  * pattern as media.js / chat-camera.js). No build step: a plain script that
@@ -27,7 +27,7 @@
  *   - PATCH/DELETE /api/mca/providers/{id}, POST /api/mca/providers/{id}/default
  *   - PUT/DELETE /api/mca/providers/{id}/upload-token, POST /api/mca/providers/{id}/check
  *
- * Every mutating request is a plain `fetch` — static/csrf.js monkey-patches
+ * Every mutating request is a plain `fetch` - static/csrf.js monkey-patches
  * window.fetch to add the CSRF header to same-origin mutating /api/ requests.
  * Dynamic identifiers are never embedded in inline event handlers: markup
  * carries `data-files-*` attributes and one delegated document-level listener
@@ -63,7 +63,7 @@
         FAILED_VALIDATION: 1, FAILED_UPLOAD: 1, FAILED_RADIO: 1 };
     var RECEIVER_TERMINAL = { AVAILABLE: 1, EXPIRED: 1, REJECTED: 1, FAILED: 1 };
 
-    // Attention states for the archive summary (C5 §10.3) — a transfer the
+    // Attention states for the archive summary (C5 §10.3) - a transfer the
     // user is expected to act on. WAITING_NETWORK and success states are
     // deliberately excluded.
     var ATTENTION_STATES = { WAITING_CONSENT: 1, WAITING_KEY: 1, WAITING_PROVIDER: 1,
@@ -196,7 +196,7 @@
         ttl_above_maximum: 'Expiry is above the provider maximum',
     };
 
-    // UploadReadiness (config-only 3-value enum) — distinct from the richer
+    // UploadReadiness (config-only 3-value enum) - distinct from the richer
     // UploadRejectionReason map above, which shares `upload_token_missing`.
     var FILES_UPLOAD_READINESS_LABELS = {
         ready: 'Ready',
@@ -227,7 +227,7 @@
     var state = {
         active: false,
         visible: true,
-        epoch: 0,                 // bumped on activate()/deactivate() — stale reads are dropped
+        epoch: 0,                 // bumped on activate()/deactivate() - stale reads are dropped
         refreshTimer: null,
         loading: {},              // per-resource in-flight guard (key -> Promise; joinable, G1)
         followUp: {},             // per-resource coalesced post-command authoritative read (G1)
@@ -250,15 +250,15 @@
         truncated: false,
         filter: 'all',
         counterparty: '',         // active counterparty filter (canonical !hex contact id); '' = none (P3)
-        lastTransfersQueryKey: '', // last query applied by loadTransfers — a change invalidates detail (P3)
+        lastTransfersQueryKey: '', // last query applied by loadTransfers - a change invalidates detail (P3)
         search: '',
         selectedId: null,
 
         sendSignature: null,      // semantic send-form signature (C7 idempotency)
         sendClientRequestId: null,
         sendInFlight: false,
-        sendGeneration: 0,        // bumped per send-dialog open/close — isolates generations (G2)
-        sendReadinessToken: 0,    // monotonic token — stale readiness responses dropped (F2)
+        sendGeneration: 0,        // bumped per send-dialog open/close - isolates generations (G2)
+        sendReadinessToken: 0,    // monotonic token - stale readiness responses dropped (F2)
         sendReadiness: null,      // authoritative readiness result for the open send dialog
         sendTtlDebounce: null,    // debounce timer for rapid Custom-TTL typing (F2)
 
@@ -352,20 +352,20 @@
     }
 
     function fmtBytes(n) {
-        if (n === null || n === undefined) return '—';
+        if (n === null || n === undefined) return '-';
         if (n < 1024) return n + ' B';
         if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
         return (n / (1024 * 1024)).toFixed(1) + ' MB';
     }
 
     function fmtDate(epochSeconds) {
-        if (!epochSeconds) return '—';
+        if (!epochSeconds) return '-';
         var d = new Date(epochSeconds * 1000);
         return d.toLocaleString ? d.toLocaleString() : String(d);
     }
 
     function fmtRel(epochSeconds) {
-        if (!epochSeconds) return '—';
+        if (!epochSeconds) return '-';
         var now = Math.floor(Date.now() / 1000);
         var s = epochSeconds - now;
         if (s < 0) return t('files.expired', 'Expired');
@@ -375,7 +375,7 @@
     }
 
     function fmtGrace(seconds) {
-        if (!seconds) return '—';
+        if (!seconds) return '-';
         if (seconds < 3600) return Math.round(seconds / 60) + 'm';
         if (seconds < 86400) return Math.round(seconds / 3600) + 'h';
         return Math.round(seconds / 86400) + 'd';
@@ -437,7 +437,7 @@
         }
     }
 
-    // ---- command tracker (C2) — one generic path for every 202 {command_id} ----
+    // ---- command tracker (C2) - one generic path for every 202 {command_id} ----
 
     function setBusy(resourceKey, commandId) {
         state.busy[resourceKey] = commandId;
@@ -500,7 +500,7 @@
                             if (opts.onFailed) opts.onFailed(cmd);
                             return;
                         }
-                        // still pending — keep polling, no notification churn
+                        // still pending - keep polling, no notification churn
                     }
                     step();
                 }).catch(function () {
@@ -514,7 +514,7 @@
     // ---- resource loaders (C1 §6.3 concurrency: guarded, no overlap) -------
 
     function guardedLoad(key, fetcher, onDone) {
-        // G1: the guard is a JOINABLE promise, not a boolean — a caller that
+        // G1: the guard is a JOINABLE promise, not a boolean - a caller that
         // fires while the same resource is already loading gets the in-flight
         // promise back (and waits on it) instead of an instantly-resolved one,
         // so a terminal callback can never announce completion ahead of the
@@ -586,7 +586,7 @@
     }
 
     // Map the shared store's node targets onto the internal `state.contacts`
-    // projection (PR 5: no longer rendered as a list — it backs the Send-dialog
+    // projection (PR 5: no longer rendered as a list - it backs the Send-dialog
     // recipients and contactForAttachment() lookups only). The local node is
     // excluded and the centralized capability fields (can_send_file /
     // can_request_key / key_request_state / file_unavailable_reason) are carried
@@ -644,7 +644,7 @@
                 };
             }
             // G2: workspace-level loads must never drive a Send dialog's status
-            // or readiness — only the send dialog's own generation-scoped loads
+            // or readiness - only the send dialog's own generation-scoped loads
             // (loadConnectivityForSend) update an open Send dialog.
         });
     }
@@ -656,7 +656,7 @@
             if (r.status === 200 && r.data && r.data.ok && r.data.settings) {
                 state.settings = r.data.settings;
             }
-            // G2: see loadConnectivity — no Send-dialog side effects here.
+            // G2: see loadConnectivity - no Send-dialog side effects here.
         });
     }
 
@@ -699,7 +699,7 @@
         return guardedLoad(key, function () {
             return api(url);
         }, function (r) {
-            if (transfersQueryKey() !== queryKey) return; // superseded — drop, incl. errors
+            if (transfersQueryKey() !== queryKey) return; // superseded - drop, incl. errors
             if (r.status !== 200 || !r.data || r.data.ok !== true) {
                 if (r.status === 503) renderTransfersError(t('files.not_ready', 'MCAttach service is not ready'));
                 else renderTransfersError(filesErrorCode(r.data));
@@ -710,7 +710,7 @@
             state.truncated = state.total > LIST_LIMIT;
 
             // Compute the new selection BEFORE mutating detail/selection state.
-            // A selection that changed — or became null — under the SAME query
+            // A selection that changed - or became null - under the SAME query
             // (the selected transfer left the pending filter, was deleted, or
             // the server returned an empty list) must invalidate the detail
             // too, not just a query-key change: a late response for the old
@@ -738,7 +738,7 @@
                     renderDetail(state.selectedId, true);
                 }
             } else {
-                // No selection — ensure the panel and fingerprint are clear.
+                // No selection - ensure the panel and fingerprint are clear.
                 state.detailFingerprint = null;
                 clearDetailPanel();
             }
@@ -747,7 +747,7 @@
 
     // P3: the post-command authoritative refresh for the transfer list keys off
     // the current epoch + query (direction|filter|counterparty), so a command
-    // settling after a filter/counterparty switch — or after a reactivation —
+    // settling after a filter/counterparty switch - or after a reactivation -
     // refreshes the query the user is actually looking at, never a stale bucket.
     function refreshTransfers() {
         return refreshAfterCommand('transfers:' + state.epoch + ':' + transfersQueryKey(), loadTransfers);
@@ -946,8 +946,8 @@
 
     // P3: invalidate any in-flight or already-rendered detail (and the
     // coalesced pending refetch + fingerprint), without an explicit selection
-    // change. Used both on query change and when the selection changes — or
-    // becomes null — under the same query key (selected transfer left the
+    // change. Used both on query change and when the selection changes - or
+    // becomes null - under the same query key (selected transfer left the
     // filter, was deleted, or the server returned an empty list), so a late
     // old-detail response can never repaint a transfer that is no longer shown.
     function invalidateDetail() {
@@ -1104,16 +1104,16 @@
     // error surface in this module (toasts, the archive "errors" filter).
     function detailMarkup(a, timeline) {
         var contact = contactForAttachment(a);
-        var recipientLabel = contact ? (contact.name || contact.contact_id) : (a.counterparty_contact_id || '—');
+        var recipientLabel = contact ? (contact.name || contact.contact_id) : (a.counterparty_contact_id || '-');
         var provider = providerById(a.provider_id);
-        var providerLabel = provider ? (provider.display_name || provider.origin || a.provider_id) : (a.provider_id || '—');
+        var providerLabel = provider ? (provider.display_name || provider.origin || a.provider_id) : (a.provider_id || '-');
         var route = t('files.detail_direct', 'Direct');
         var deliveries = (Array.isArray(a.deliveries) && a.deliveries.length) ? a.deliveries : [];
         var actions = detailActions(a);
 
         var basicRows = [
             ['files.detail_direction', 'Direction', a.direction === 'sent' ? t('files.sent', 'Sent') : t('files.received', 'Received')],
-            ['files.detail_file', 'File', a.file_name || '—'],
+            ['files.detail_file', 'File', a.file_name || '-'],
             ['files.detail_recipient', 'Contact', recipientLabel],
             ['files.detail_size', 'Size', fmtBytes(a.plain_size)],
         ];
@@ -1142,13 +1142,13 @@
 
         var techRows = [
             ['files.tech_id', 'ID', a.id],
-            ['files.detail_type', 'Type', a.mime_type || '—'],
+            ['files.detail_type', 'Type', a.mime_type || '-'],
             ['files.detail_route', 'Route', route],
             ['files.detail_grace', 'Download grace', fmtGrace(a.download_grace_seconds)],
             ['files.detail_content', 'Content available', a.content_available ? t('files.yes', 'Yes') : t('files.no', 'No')],
             ['files.tech_cipher_size', 'Ciphertext size', fmtBytes(a.cipher_size)],
-            ['files.tech_provider_id', 'Provider ID', a.provider_id || '—'],
-            ['files.tech_delivery_id', 'Primary delivery', a.primary_delivery_id || '—'],
+            ['files.tech_provider_id', 'Provider ID', a.provider_id || '-'],
+            ['files.tech_delivery_id', 'Primary delivery', a.primary_delivery_id || '-'],
         ];
         if (a.error_code) {
             // The technical tier additionally carries the raw code for
@@ -1213,7 +1213,7 @@
                     onUnknown: function () { return refreshTransfers(); },
                 });
             } else if (r.status === 409) {
-                toast(t('files.state_changed', 'This transfer changed — refreshing'), 'info');
+                toast(t('files.state_changed', 'This transfer changed - refreshing'), 'info');
                 loadTransfers();
             } else {
                 toast(filesErrorCode(r.data), 'error');
@@ -1299,7 +1299,7 @@
         });
     }
 
-    // "Download to device" — a same-origin link to /content with a download
+    // "Download to device" - a same-origin link to /content with a download
     // attribute; must never call /save (C6). Keeps backend security headers.
     function attachmentDownloadToDevice(id) {
         if (typeof document === 'undefined') return;
@@ -1313,7 +1313,7 @@
         if (a.parentNode) a.parentNode.removeChild(a);
     }
 
-    // "Open preview" — inline image preview in a new tab.
+    // "Open preview" - inline image preview in a new tab.
     function attachmentOpen(id) {
         if (typeof window !== 'undefined' && typeof window.open === 'function') {
             window.open('/api/attachments/' + encodeURIComponent(id) + '/content', '_blank', 'noopener');
@@ -1336,9 +1336,9 @@
                 });
             } else if (r.status === 429) {
                 var retry = (r.data && r.data.retry_after_seconds) || 600;
-                toast(tparams('files.rate_limited', { seconds: retry }, 'Rate-limited — try again in ' + retry + 's'), 'error');
+                toast(tparams('files.rate_limited', { seconds: retry }, 'Rate-limited - try again in ' + retry + 's'), 'error');
             } else if (r.status === 409) {
-                toast(t('files.state_changed', 'This contact changed — refreshing'), 'info');
+                toast(t('files.state_changed', 'This contact changed - refreshing'), 'info');
                 refreshContacts();
             } else {
                 toast(filesErrorCode(r.data), 'error');
@@ -1355,14 +1355,14 @@
     // wire protocol. Deliberately still an explicit confirm (a real network
     // action), not a silent auto-fire; what changed for Step 4 is that the
     // USER no longer has to go find and trigger this separately before
-    // sending — the Send dialog surfaces it automatically for the selected
+    // sending - the Send dialog surfaces it automatically for the selected
     // recipient. The reply-trust screen (contactConfirm) and the key-change
     // screens below stay untouched and manual, as required.
     function contactRequestKey(contactId) {
         var c = findContact(contactId);
         var name = c && c.name ? c.name : contactId;
         // confirmDialog() replaces whatever modal is currently open with its
-        // own — if this was triggered from the Send dialog's banner, that
+        // own - if this was triggered from the Send dialog's banner, that
         // dialog is gone the instant the confirm prompt appears. Remember to
         // restore it once the user has answered, whichever way, so "Cancel"
         // and "Continue" both land the user back where they were rather than
@@ -1371,7 +1371,7 @@
         confirmDialog({
             title: t('files.request_key_title', 'Set up a secure connection'),
             bodyText: tparams('files.request_key_body', { name: name },
-                'A secure, encrypted connection is being set up with ' + name + ' — this happens automatically and only once. Once it is done, you can send files to them normally.'),
+                'A secure, encrypted connection is being set up with ' + name + ' - this happens automatically and only once. Once it is done, you can send files to them normally.'),
             confirmLabel: t('files.request_key_confirm', 'Continue'),
             danger: false,
         }).then(function (yes) {
@@ -1417,7 +1417,7 @@
             if (!yes) return;
             contactCommand(contactId, 'key-change/accept', {
                 queued: t('files.accepting_key_change', 'Accepting key change…'),
-                success: t('files.key_change_accepted', 'Key change accepted — confirm the new key next'),
+                success: t('files.key_change_accepted', 'Key change accepted - confirm the new key next'),
             });
         });
     }
@@ -1469,7 +1469,7 @@
         }
     }
 
-    // ---- confirmations (C9) — one reusable accessible component -------------
+    // ---- confirmations (C9) - one reusable accessible component -------------
 
     function confirmSpec(titleKey, bodyKey, confirmKey, titleFallback, bodyFallback) {
         return {
@@ -1489,7 +1489,7 @@
         var hasText = spec.bodyText !== undefined && spec.bodyText !== null;
         var hasHtml = spec.bodyHtml !== undefined && spec.bodyHtml !== null;
         if (hasText && hasHtml) {
-            return ''; // ambiguous body source — fail closed
+            return ''; // ambiguous body source - fail closed
         }
         if (hasHtml) return spec.bodyHtml;
         if (hasText) return esc(spec.bodyText);
@@ -1639,7 +1639,7 @@
     function onDocumentKeydown(e) {
         // The Send dialog's controls are native <button>/<select> elements, so
         // Enter/Space reach them natively as a click. No custom key handling
-        // here — only the modal-level Escape dismiss is intercepted.
+        // here - only the modal-level Escape dismiss is intercepted.
         if (!state.dialog) return;
         if (e.key === 'Escape') {
             // "Only when safe" (R6): never dismiss while a send request is in
@@ -1665,7 +1665,7 @@
         }
     }
 
-    // ---- event delegation (C10) — one document-level click listener --------
+    // ---- event delegation (C10) - one document-level click listener --------
 
     function closestAttr(el, attr) {
         var node = el;
@@ -1724,14 +1724,14 @@
         // `data-files-action` + `data-contact`; the guard is presence of a
         // canonical `data-contact` only (the action itself resolves the target
         // via findContact, which falls back to the shared store). The former
-        // `contact-filter` action is gone — selection is now exclusively the
+        // `contact-filter` action is gone - selection is now exclusively the
         // store's toggleSelect, driven by the node-card select button.
         if (contactId) {
             if (action === 'contact-request-key') { contactRequestKey(contactId); return; }
             if (action === 'contact-confirm') { contactConfirm(contactId); return; }
             if (action === 'contact-accept') { contactAcceptKeyChange(contactId); return; }
             if (action === 'contact-reject') { contactRejectKeyChange(contactId); return; }
-            // Step 4: the Send dialog's own "Connect securely" banner button —
+            // Step 4: the Send dialog's own "Connect securely" banner button -
             // same single confirmation screen as the sidebar node card's
             // "Request key" action (contactRequestKey is the one implementation
             // both entry points share).
@@ -1820,7 +1820,7 @@
 
     // PR 4 Finding 1: the shared store's selection is the single source of
     // truth for the Files counterparty filter. A node selection becomes the
-    // counterparty; a channel selection (or no selection) clears it — a channel
+    // counterparty; a channel selection (or no selection) clears it - a channel
     // stays selected in the store but is never a file counterparty.
     function onStoreSelection(evt) {
         var sel = evt && evt.selection;
@@ -1966,7 +1966,7 @@
         el.className = 'files-dialog-root is-send';
         // G2.1/G2.3: never render the cached provider list as actionable, and
         // never check readiness against it, before the fresh provider projection
-        // for THIS dialog arrives — that fresh load owns the select and readiness.
+        // for THIS dialog arrives - that fresh load owns the select and readiness.
         // Render recipients/status/ttl first, then start the generation-scoped
         // loads; each settles and updates the open dialog independently.
         renderSendRecipients();
@@ -1994,7 +1994,7 @@
     }
 
     function loadProvidersForSend(gen) {
-        // R7: always fetch a FRESH provider projection on open — never trust the
+        // R7: always fetch a FRESH provider projection on open - never trust the
         // cached list. G2.3: scoped to a unique per-generation key so it can
         // never be suppressed by a concurrently in-flight workspace provider load.
         return guardedLoad('providers-send-' + gen, function () { return api('/api/mca/providers'); }, function (r) {
@@ -2011,7 +2011,7 @@
 
     function loadConnectivityForSend(gen) {
         // G2.2: a connectivity response started for an older Send dialog must
-        // never update this (newer) one — scoped key + generation gate.
+        // never update this (newer) one - scoped key + generation gate.
         return guardedLoad('connectivity-send-' + gen, function () {
             return api('/api/mca/connectivity');
         }, function (r) {
@@ -2040,7 +2040,7 @@
     }
 
     function sendTrustedContacts() {
-        // PR 4: sendability is the centralized capability matrix's verdict —
+        // PR 4: sendability is the centralized capability matrix's verdict -
         // a node is a valid recipient only when `can_send_file` is true (a
         // trusted worker-published binding), never merely because it exists in
         // the node list.
@@ -2056,7 +2056,7 @@
         }
         var trusted = state.contacts.filter(function (c) { return c.can_send_file === true; });
         // PR 4 Finding 1: pre-select a recipient from the shared store's
-        // selection — but only a valid, still-sendable node. A channel
+        // selection - but only a valid, still-sendable node. A channel
         // selection, or a selected node that is no longer a trusted contact
         // (invalid/disappeared), yields `null`: the select shows an explicit
         // empty placeholder rather than silently falling back to the first
@@ -2069,7 +2069,7 @@
                 return '<option value="' + esc(c.contact_id) + '">' + esc(label) + '</option>';
             }
             var reason = fileUnavailableReasonLabel(c.file_unavailable_reason);
-            return '<option value="' + esc(c.contact_id) + '" disabled>' + esc(label + ' — ' + reason) + '</option>';
+            return '<option value="' + esc(c.contact_id) + '" disabled>' + esc(label + ' - ' + reason) + '</option>';
         }).join('');
         if (!trusted.length || preselect === null) {
             var placeholder = trusted.length
@@ -2088,7 +2088,7 @@
 
     // PR 4 Finding 1: resolve the shared store's selection to a pre-selected
     // recipient id, or `null` when a target is selected but is not a valid
-    // recipient (a channel, or an invalid/disappeared/non-sendable node) — the
+    // recipient (a channel, or an invalid/disappeared/non-sendable node) - the
     // latter must never silently fall back to a different recipient.
     function sendRecipientPreselection() {
         var store = (typeof window !== 'undefined') ? window.MeshCenterTargets : null;
@@ -2102,7 +2102,7 @@
     }
 
     // Step 4: the currently store-selected node, when it is the reason the
-    // recipient list can't be used yet (key_unknown) — the single, automatic
+    // recipient list can't be used yet (key_unknown) - the single, automatic
     // entry point that replaces "go find the sidebar node card and click
     // Request key". Only `key_unknown` is handled here; `confirmation_required`
     // and `key_changed` stay exclusively on the sidebar node card's explicit,
@@ -2137,7 +2137,7 @@
 
     // Step 4: re-render the open Send dialog's recipient list + key-status
     // banner whenever the contact projection changes underneath it (a normal
-    // poll tick, or a just-completed contact command) — without this, a
+    // poll tick, or a just-completed contact command) - without this, a
     // request that gets answered while the dialog is still open would never
     // surface as "now sendable" until the user closed and reopened it.
     function refreshSendRecipientsIfOpen() {
@@ -2175,7 +2175,7 @@
             return;
         }
 
-        // R7: list ALL providers, not just the ready ones — a non-ready
+        // R7: list ALL providers, not just the ready ones - a non-ready
         // provider is shown (disabled) with the reason, so it never silently
         // disappears and the user can see *why* it is not selectable.
         sel.innerHTML = state.providers.map(function (p) {
@@ -2184,7 +2184,7 @@
                 return '<option value="' + esc(p.provider_id) + '">' + esc(label) + '</option>';
             }
             return '<option value="' + esc(p.provider_id) + '" disabled>' +
-                esc(label + ' — ' + providerNotReadyLabel(p)) + '</option>';
+                esc(label + ' - ' + providerNotReadyLabel(p)) + '</option>';
         }).join('');
 
         // R7: no auto-switch. Preserve an existing selection when it is still a
@@ -2246,14 +2246,14 @@
         var id = sel ? sel.value : '';
         var p = id ? providerById(id) : null;
         if (!p) { el.innerHTML = ''; return; }
-        // R7: Relay state and upload readiness are rendered as SEPARATE facts —
+        // R7: Relay state and upload readiness are rendered as SEPARATE facts -
         // the relay's reachability/identity is independent of whether uploads
         // are configured/allowed for this profile.
         var relay = filesRelayStateLabel(p.state);
         var ready = uploadReadyProvider(p);
         var readiness = ready
             ? t('files.upload_ready', 'Upload: ready')
-            : t('files.upload_not_ready', 'Upload: not ready') + ' — ' + providerNotReadyLabel(p);
+            : t('files.upload_not_ready', 'Upload: not ready') + ' - ' + providerNotReadyLabel(p);
         el.innerHTML =
             '<span>' + esc(t('files.relay_state_label', 'Relay state') + ': ' + relay) + '</span>' +
             ' · <span>' + esc(readiness) + '</span>';
@@ -2267,7 +2267,7 @@
         if (!f) { el.innerHTML = ''; renderSendSubmit(); return; }
         // F1: an allowlisted extension or MIME is allowed; anything else is
         // rejected locally (immediate, localized feedback). A stale rejection
-        // clears the moment an allowed file is selected — the server's magic-byte
+        // clears the moment an allowed file is selected - the server's magic-byte
         // sniffing stays the real authority.
         if (!fileTypeAllowed(f)) {
             el.innerHTML = '<span class="files-status-error">' +
@@ -2338,7 +2338,7 @@
             var raw = input ? String(input.value || '').trim() : '';
             var n = parseInt(raw, 10);
             if (raw !== '' && Number.isFinite(n) && String(n) === raw && n > 0) return n;
-            return null; // blank/zero/non-integer/negative — no fictitious TTL
+            return null; // blank/zero/non-integer/negative - no fictitious TTL
         }
         return 259200; // default 3 days
     }
@@ -2405,7 +2405,7 @@
         return gen === state.sendGeneration && isSendDialogOpen();
     }
 
-    // G2: end the current Send-dialog generation — bump the generation token,
+    // G2: end the current Send-dialog generation - bump the generation token,
     // drop the authoritative readiness result, and cancel any pending debounce
     // so a stale readiness check cannot fire for a closed/replaced dialog.
     function invalidateSendGeneration() {
@@ -2440,12 +2440,12 @@
         }
         var label = s.ready
             ? t('files.upload_ready', 'Upload: ready')
-            : t('files.upload_not_ready', 'Upload: not ready') + ' — ' + filesReadinessLabel(s.reason);
+            : t('files.upload_not_ready', 'Upload: not ready') + ' - ' + filesReadinessLabel(s.reason);
         el.innerHTML = '<span class="' + (s.ready ? 'files-status-ok' : 'files-status-warn') + '">' + esc(label) + '</span>';
     }
 
     // F2: gate the Send button on every prerequisite the server will re-check at
-    // submit. This is proactive feedback only — never authoritative — and is
+    // submit. This is proactive feedback only - never authoritative - and is
     // intentionally kept out of unlockSend(), which the tests rely on to set
     // disabled=false directly after a terminal command.
     function renderSendSubmit() {
@@ -2492,8 +2492,8 @@
 
         api('/api/mca/providers/' + encodeURIComponent(providerId) +
             '/upload-readiness?requested_ttl_seconds=' + ttl).then(function (r) {
-            if (token !== state.sendReadinessToken) return; // stale response — drop
-            if (!sendGenerationCurrent(gen)) return;          // dialog closed/advanced — drop
+            if (token !== state.sendReadinessToken) return; // stale response - drop
+            if (!sendGenerationCurrent(gen)) return;          // dialog closed/advanced - drop
             var ready = Boolean(r.status === 200 && r.data && r.data.ok === true && r.data.ready);
             var reason = ready ? null : (r.data && r.data.reason ? r.data.reason : 'relay_unreachable');
             state.sendReadiness = { providerId: providerId, ttl: ttl, ready: ready, reason: reason, pending: false };
@@ -2507,7 +2507,7 @@
         var gen = state.sendGeneration; // G2: the debounce is scoped to this dialog
         state.sendTtlDebounce = setTimeout(function () {
             state.sendTtlDebounce = null;
-            if (!sendGenerationCurrent(gen)) return; // dialog closed/replaced — drop
+            if (!sendGenerationCurrent(gen)) return; // dialog closed/replaced - drop
             refreshSendReadiness();
         }, 300);
     }
@@ -2641,7 +2641,7 @@
         var ext = name.indexOf('.') !== -1 ? name.split('.').pop() : '';
         // F1: a recognized allowlisted extension OR a browser-supplied allowlisted
         // MIME (even extensionless) is allowed. When both are absent/unrecognized
-        // the file is rejected locally — the server's magic-byte sniffing remains
+        // the file is rejected locally - the server's magic-byte sniffing remains
         // authoritative, so this is a client-side gate, never a guarantee.
         return Boolean(EXTENSION_MIME[ext] || ALLOWED_MIME[file.type]);
     }
@@ -2904,7 +2904,7 @@
         }
 
         if (Object.keys(body).length === 0) {
-            // Nothing changed — no pointless PATCH; just dismiss.
+            // Nothing changed - no pointless PATCH; just dismiss.
             err('');
             closeModal(false);
             return;
@@ -2944,14 +2944,14 @@
                     '<div class="files-provider-meta">' + esc(p.origin || '') + ' · ' + esc(kind) + '</div>' +
                     '<div class="files-provider-fp"><code>' + esc(groupFp(p.service_key_fingerprint)) + '</code></div>' +
                     '<div class="files-provider-fields">' +
-                        providerField('files.provider_tls', 'TLS required', p.tls_required ? '✓' : '—') +
-                        providerField('files.provider_upload_allowed', 'Upload allowed', p.upload_allowed ? '✓' : '—') +
-                        providerField('files.provider_download_allowed', 'Download allowed', p.download_allowed ? '✓' : '—') +
-                        providerField('files.provider_ttl_min', 'Min TTL', p.min_ttl_seconds ? fmtGrace(p.min_ttl_seconds) : '—') +
-                        providerField('files.provider_ttl_max', 'Max TTL', p.max_ttl_seconds ? fmtGrace(p.max_ttl_seconds) : '—') +
+                        providerField('files.provider_tls', 'TLS required', p.tls_required ? '✓' : '-') +
+                        providerField('files.provider_upload_allowed', 'Upload allowed', p.upload_allowed ? '✓' : '-') +
+                        providerField('files.provider_download_allowed', 'Download allowed', p.download_allowed ? '✓' : '-') +
+                        providerField('files.provider_ttl_min', 'Min TTL', p.min_ttl_seconds ? fmtGrace(p.min_ttl_seconds) : '-') +
+                        providerField('files.provider_ttl_max', 'Max TTL', p.max_ttl_seconds ? fmtGrace(p.max_ttl_seconds) : '-') +
                         providerField('files.provider_max_bytes', 'Max ciphertext bytes', fmtBytes(p.max_ciphertext_bytes)) +
-                        providerField('files.provider_protocol', 'Protocol version', p.protocol_version || '—') +
-                        providerField('files.provider_token', 'Token', p.upload_token_configured ? '✓' : '—') +
+                        providerField('files.provider_protocol', 'Protocol version', p.protocol_version || '-') +
+                        providerField('files.provider_token', 'Token', p.upload_token_configured ? '✓' : '-') +
                     '</div>' +
                     '<div class="files-provider-fields files-provider-status">' +
                         providerField('files.provider_upload_readiness', 'Upload readiness', providerUploadReadiness(p)) +
@@ -2999,15 +2999,15 @@
         return p.last_checked_at ? fmtDate(p.last_checked_at) : t('files.provider_never_checked', 'Never checked');
     }
     function providerLastCheckResult(p) {
-        return p.last_check_result ? filesRelayStateLabel(p.last_check_result) : '—';
+        return p.last_check_result ? filesRelayStateLabel(p.last_check_result) : '-';
     }
     function providerLastLatency(p) {
         return (typeof p.last_latency_ms === 'number' && Number.isFinite(p.last_latency_ms))
-            ? p.last_latency_ms + ' ms' : '—';
+            ? p.last_latency_ms + ' ms' : '-';
     }
     function providerLastError(p) {
         var code = p && p.last_error_code ? String(p.last_error_code) : '';
-        if (!code) return '—';
+        if (!code) return '-';
         // http_<3 digits> -> localized template carrying only the numeric status
         // (never the raw code string), so a provider returning 503 reads "HTTP 503".
         var http = /^http_(\d{3})$/.exec(code);
@@ -3016,7 +3016,7 @@
         }
         // unsupported_protocol_version:<value> -> localized; the value is a
         // protocol version, not user/secret text, but it is still not echoed
-        // verbatim — the label carries the meaning without the raw suffix.
+        // verbatim - the label carries the meaning without the raw suffix.
         if (code.indexOf('unsupported_protocol_version:') === 0) {
             return t('files.provider_error.unsupported_protocol_version', 'Unsupported protocol version');
         }
@@ -3185,7 +3185,7 @@
                     '<label for="filesWizardUrl">' + esc(t('files.wizard_url_label', 'Relay URL')) + '</label>' +
                     '<input type="url" id="filesWizardUrl" value="' + esc(w.origin || DEFAULT_RELAY_URL) + '" autocomplete="off" />' +
                 '</div>' +
-                '<p class="files-wizard-hint">' + esc(t('files.wizard_url_hint', "Most people can leave this as-is — it's already set to the project's default Relay.")) + '</p>' +
+                '<p class="files-wizard-hint">' + esc(t('files.wizard_url_hint', "Most people can leave this as-is - it's already set to the project's default Relay.")) + '</p>' +
                 '<div id="filesWizardError" class="files-provider-edit-error" role="alert"></div>';
             footer.innerHTML =
                 '<button type="button" class="files-modal-cancel" data-files-action="modal-cancel">' + esc(t('common.cancel', 'Cancel')) + '</button>' +
@@ -3445,7 +3445,7 @@
     };
     // Entry point used by the Settings workspace "Relay providers" control: it
     // navigates to the Files workspace (which activates the module) and reuses
-    // the SAME provider component — no second implementation or cache.
+    // the SAME provider component - no second implementation or cache.
     window.openFilesRelayProviders = function () {
         if (typeof window.switchMainTab === 'function') window.switchMainTab('files');
         openProviderSettings();

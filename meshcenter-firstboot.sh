@@ -116,8 +116,8 @@ STEPS = [
 
 STEP_HINTS = {
     2: "~2 min on Pi 4B / ~5 min on Pi Zero 2W",
-    4: "longest step — up to 5 min on Pi 4B, up to 15 min on Pi Zero 2W",
-    5: "up to 3 min — plug in your Meshtastic device now if not connected",
+    4: "longest step - up to 5 min on Pi 4B, up to 15 min on Pi Zero 2W",
+    5: "up to 3 min - plug in your Meshtastic device now if not connected",
 }
 
 CAMERA_HINT = {
@@ -129,7 +129,7 @@ HTML_PAGE = """<!DOCTYPE html>
 <head>
     <meta charset="utf-8">
     {refresh_tag}
-    <title>MeshCenter — Installing</title>
+    <title>MeshCenter - Installing</title>
     <style>
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
         body {{
@@ -252,7 +252,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             footer = "Starting..."
             refresh_tag = '<meta http-equiv="refresh" content="3">'
         elif current_step >= 7:
-            footer = "Finishing up — the Pi will reboot shortly. Reopen this page after ~30s."
+            footer = "Finishing up - the Pi will reboot shortly. Reopen this page after ~30s."
             refresh_tag = '<meta http-equiv="refresh" content="2">'
         else:
             footer = "Page refreshes every 3 seconds."
@@ -271,14 +271,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def log_message(self, *args):
-        pass  # quiet — don't clutter the install log
+        pass  # quiet - don't clutter the install log
 
 try:
     socketserver.TCPServer.allow_reuse_address = True
     with socketserver.TCPServer(("", PORT), Handler) as httpd:
         httpd.serve_forever()
 except Exception:
-    pass  # port busy — not critical
+    pass  # port busy - not critical
 PYEOF
 
     PROGRESS_PID=$!
@@ -288,7 +288,7 @@ PYEOF
         log "Watch installation at: http://$(hostname).local or http://$(hostname -I | awk '{print $1}')"
     else
         PROGRESS_PID=""
-        log "Progress server could not start on port $PROGRESS_PORT (port busy — OK)"
+        log "Progress server could not start on port $PROGRESS_PORT (port busy - OK)"
     fi
 }
 
@@ -334,7 +334,7 @@ done
 # Auto-detect camera if not explicitly set
 if [[ "$INSTALL_CAMERA" == "no" ]]; then
     if vcgencmd get_camera 2>/dev/null | grep -q "detected=1"; then
-        log "Camera detected via vcgencmd — enabling camera support"
+        log "Camera detected via vcgencmd - enabling camera support"
         INSTALL_CAMERA=yes
     fi
 fi
@@ -877,7 +877,7 @@ log "============================================================"
 update_progress 7 "Installation complete"
 
 # Group membership changes (dialout, gpio, i2c, ...) applied earlier via
-# usermod only take effect for new sessions — meshcenter.service was started
+# usermod only take effect for new sessions - meshcenter.service was started
 # in this same first-boot session, so the radio device may not be usable
 # until the user's group list is re-resolved. Reboot to guarantee the
 # service comes back up with correct permissions instead of leaving the

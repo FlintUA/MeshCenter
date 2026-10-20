@@ -177,7 +177,7 @@ def render_markdown(inventory: dict) -> str:
         lines.append(f"## `{token}` ({len(sites)} consumer{'s' if len(sites) != 1 else ''})")
         lines.append("")
         for fname, lineno, selector in sites:
-            lines.append(f"- `{fname}:{lineno}` — `{selector}`")
+            lines.append(f"- `{fname}:{lineno}` - `{selector}`")
         lines.append("")
     return "\n".join(lines)
 

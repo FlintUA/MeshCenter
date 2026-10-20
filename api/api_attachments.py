@@ -20,11 +20,11 @@ capability projection `GET /api/mca/key-requests`):
     GET /api/mca/key-requests
 
 plus the mutation endpoints implemented so far: the three Step 1.6A.3A
-lifecycle actions — `POST /api/attachments/{id}/retry`, `/download`,
-`/reject` (§7.3) — the Step 1.6A.3B idempotent multipart create
-`POST /api/attachments` (§7.2), and the two Step 1.6A.3C mutations —
+lifecycle actions - `POST /api/attachments/{id}/retry`, `/download`,
+`/reject` (§7.3) - the Step 1.6A.3B idempotent multipart create
+`POST /api/attachments` (§7.2), and the two Step 1.6A.3C mutations -
 `POST /api/attachments/{id}/cancel` (§7.4) and
-`POST /api/mca/contacts/{contact_id}/request-key` (§7.10) — and the three
+`POST /api/mca/contacts/{contact_id}/request-key` (§7.10) - and the three
 Step 1.7 Files-workspace trust mutations
 `POST /api/mca/contacts/{contact_id}/confirm`,
 `POST /api/mca/contacts/{contact_id}/key-change/accept`, and
@@ -1248,7 +1248,7 @@ def register_attachments_routes(app, handle_errors):
     @handle_errors
     @_mca_error_boundary
     def confirm_contact_key(contact_id):
-        """Step 1.7: "trust this MCA key" — the explicit `confirm_tofu()`.
+        """Step 1.7: "trust this MCA key" - the explicit `confirm_tofu()`.
         Valid only while the binding is `KEY_UNVERIFIED` (announced, never
         confirmed). The worker re-reads the live binding and applies the
         transition via `contacts.confirm_binding()`."""
@@ -1262,7 +1262,7 @@ def register_attachments_routes(app, handle_errors):
     @_mca_error_boundary
     def accept_contact_key_change(contact_id):
         """Step 1.7: promote a parked key change into the trusted binding (the
-        new key still needs its own, separate confirm afterwards — accepting
+        new key still needs its own, separate confirm afterwards - accepting
         resets `tofu_confirmed_at`). Valid only while `KEY_CHANGED`."""
         return _submit_contact_trust_command(
             contact_id, "contact_accept_key_change",

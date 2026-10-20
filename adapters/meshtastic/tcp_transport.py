@@ -1,4 +1,4 @@
-"""TCPTransport — the RadioTransport implementation over
+"""TCPTransport - the RadioTransport implementation over
 `meshtastic.tcp_interface.TCPInterface` (the radio's native TCP API,
 default port 4403).
 

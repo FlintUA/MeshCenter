@@ -1,7 +1,7 @@
 // tests/frontend/test_csrf.mjs
 //
 // Step 1.6A.0: a minimal, dependency-free behavior test for static/csrf.js
-// — the project-wide X-CSRF-Token fetch wrapper. Like the sibling
+// - the project-wide X-CSRF-Token fetch wrapper. Like the sibling
 // test_updates_blocked_ui.mjs, this project has no build step / package.json
 // / JS test framework (CI's JS coverage is `node --check`, syntax only), so
 // rather than introduce jest or a browser runner, this uses Node's built-in
@@ -95,7 +95,7 @@ async function test_needsToken_classification() {
     const n = window.MeshCenterCSRF.needsToken;
 
     // Any method other than GET/HEAD on same-origin /api/ paths needs the
-    // token — the same rule as the backend, so it can't drift.
+    // token - the same rule as the backend, so it can't drift.
     assert.equal(n('/api/x', { method: 'POST' }), true);
     assert.equal(n('/api/x', { method: 'PUT' }), true);
     assert.equal(n('/api/x', { method: 'PATCH' }), true);
@@ -196,7 +196,7 @@ async function test_addTokenHeader_init_headers_override_request() {
     const add = window.MeshCenterCSRF.addTokenHeader;
 
     // Per fetch semantics, an explicit init.headers REPLACES a Request's own
-    // headers entirely — but still gains the CSRF header.
+    // headers entirely - but still gains the CSRF header.
     const request = new Request('http://localhost:5000/api/thing', {
         method: 'POST',
         headers: { Accept: 'application/json' },
@@ -303,7 +303,7 @@ async function test_no_token_in_meta_means_no_header_added() {
     assert.equal(fetchLog.length, 1);
     // With no token, addTokenHeader is never called, so the caller's own
     // headers object passes through untouched (a plain object, not a Headers
-    // instance) — still the caller's object, still no CSRF header added.
+    // instance) - still the caller's object, still no CSRF header added.
     assert.equal(fetchLog[0].options.headers['X-Custom'], 'y', 'caller header preserved');
     assert.equal(fetchLog[0].options.headers['X-CSRF-Token'], undefined);
     console.log('PASS: test_no_token_in_meta_means_no_header_added');
@@ -333,7 +333,7 @@ async function test_csrf_invalid_403_shows_prompt_without_retry() {
 
 async function test_missing_token_403_still_shows_prompt() {
     // A missing/stale page token is exactly when the reload instruction is
-    // needed — the 403 inspection must fire even though no header was added.
+    // needed - the 403 inspection must fire even though no header was added.
     const { window, fetchLog } = loadCSRF({
         token: '',
         fetchImpl: async () => fakeResponse(403, { ok: false, error_code: 'csrf_invalid' }),

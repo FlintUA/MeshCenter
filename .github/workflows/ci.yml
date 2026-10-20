@@ -124,6 +124,9 @@ jobs:
       - name: Documentation relative-link check (H2-A4)
         run: python scripts/check_doc_links.py
 
+      - name: No em/en dashes in the project's own texts (DASH1)
+        run: python scripts/check_no_long_dashes.py
+
       - name: Run pytest
         run: python -m pytest
 

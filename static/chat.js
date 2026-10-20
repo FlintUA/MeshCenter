@@ -135,7 +135,7 @@ function ensureStoreSelectionSubscription() {
         // renderSidebarNodeCards() runs on EVERY notification, selection changes
         // included: a node's own compact-card template branches on isSelected
         // (role span, interactive ID button, file-summary row), so that content
-        // must appear the instant a card is selected — not wait for the next
+        // must appear the instant a card is selected - not wait for the next
         // store data refresh or the 10s loadMessages() poll tick. The per-node
         // signature diff inside renderSidebarNodeCards() keeps this cheap: only
         // the previously-selected and the newly-selected card actually differ,
@@ -156,7 +156,7 @@ function ensureStoreSelectionSubscription() {
 // PR 5 final correction (section 3): the sidebar node/channel cards are the
 // single selection surface for the shared store. Selection is routed through ONE
 // guarded delegated listener installed on the sidebar (installSidebarTargetDelegation),
-// reading the target identity from the card's own dataset — there is no inline
+// reading the target identity from the card's own dataset - there is no inline
 // onclick, so no JS-interpolated id can ever execute. Map/unignore/key actions
 // live on SIBLING elements outside the selection button and are excluded here,
 // so they never toggle selection. One activation = exactly one store transition
@@ -246,7 +246,7 @@ const NODE_DETAIL_TABS = [
 // error_code field, see requestError.code = data.error_code assignments
 // below) via the errors.* catalog namespace, interpolating .params if the
 // backend sent any. Falls back to the raw English error.message when the
-// code isn't in the catalog yet — most endpoints don't set error_code at
+// code isn't in the catalog yet - most endpoints don't set error_code at
 // all, so this must degrade gracefully rather than show a broken marker.
 function translateRequestError(error) {
     if (error && error.code) {
@@ -362,7 +362,7 @@ const TimeFormatter = {
   }
 };
 
-// ─── Time Card — Server Sync ──────────────────────────────────────
+// ─── Time Card - Server Sync ──────────────────────────────────────
 const TIME_RESYNC_INTERVAL_MS = 5 * 60 * 1000;
 let _timeResyncTimer = null;
 
@@ -2758,7 +2758,7 @@ function _meshtasticRenderConnectionStatus(connection) {
 
     const parts = [`${typeLabel} · ${window.I18N.t(stateKey)}`];
     if (connection.node_id) parts.push(connection.node_id);
-    statusEl.textContent = parts.join(' — ');
+    statusEl.textContent = parts.join(' - ');
     statusEl.className = connection.state === 'connected'
         ? 'reference-location-status reference-location-status-ok'
         : (connection.state === 'error'
@@ -4456,7 +4456,7 @@ function getChatNodeShortName(chat) {
 // chat channel list and the Waypoint composer's channel picker, whose
 // `name` values come from different backend sources (server.py's stored
 // chats vs. api/api_chat.py's live discovery) that aren't guaranteed to
-// agree on whether the index is already embedded — so this needs to be
+// agree on whether the index is already embedded - so this needs to be
 // idempotent either way.
 function formatChannelIndexLabel(name, index) {
     let trimmedName = String(name || '').trim();
@@ -4474,7 +4474,7 @@ function renderChatItem(chat) {
     const isDemo = Boolean(chat.is_demo);
     // PR 4 Finding 1 + final correction (Finding 1): the card's selected state
     // reads the shared store's selection (kind + id) via effectiveSelectedTarget
-    // — falling back to the local open-chat id ONLY when the store is absent.
+    // - falling back to the local open-chat id ONLY when the store is absent.
     const targetKind = chat.is_channel ? 'channel' : 'node';
     const eff = effectiveSelectedTarget();
     const isSelected = Boolean(eff && eff.kind === targetKind && eff.id === chat.id);
@@ -4719,7 +4719,7 @@ async function loadMessages() {
         notifyFailedOutgoingMessages(data.messages);
 
         // PR 5 final correction (section 5): the sidebar target refresh is NOT
-        // part of the message path — /api/messages must render immediately and
+        // part of the message path - /api/messages must render immediately and
         // must never await the store's own five-endpoint refresh. The sidebar
         // targets refresh on their own 60s cadence (piggybacked here, non-
         // blocking) via refreshSidebarTargets(); its age limit + in-flight join
@@ -4780,7 +4780,7 @@ async function loadMessages() {
         flushPendingSynchronizedScroll();
 
         // PR 5 final correction (section 4): the #nodeDetails panel follows the
-        // shared store's selection (not currentChatId) — a node selection opens
+        // shared store's selection (not currentChatId) - a node selection opens
         // it, a channel/cleared selection closes it. Sync once after the list
         // re-render so the panel matches the current selection.
         syncNodeDetailsFromSelection();
@@ -5189,7 +5189,7 @@ function syncSelectedNodeCard() {
             selectedNodeId !== null && card.dataset.nodeId === selectedNodeId;
 
         // PR 5 final correction (section 1): the outer .node-card is a plain
-        // visual container — it carries the `selected` class for highlight but
+        // visual container - it carries the `selected` class for highlight but
         // NO aria-pressed/role/tabindex (it is not the control). aria-pressed
         // lives ONLY on the inner .node-card-select <button>.
         card.classList.toggle('selected', isSelected);
@@ -5206,7 +5206,7 @@ function syncSelectedNodeCard() {
 }
 
 // PR 5: the sidebar Channels section (#channelsList) mirrors the shared
-// selection exactly like the Nodes cards and the central chat items — a channel
+// selection exactly like the Nodes cards and the central chat items - a channel
 // selected in Files or the central list highlights its sidebar card here.
 function syncSelectedChannelCards() {
     const eff = effectiveSelectedTarget();
@@ -5250,7 +5250,7 @@ function renderChannelTargets() {
     container.innerHTML = targets.map(c => {
         const isSelected = Boolean(eff && eff.kind === 'channel' && eff.id === c.id);
         const indexLabel = typeof c.index === 'number' ? `#${c.index}` : '';
-        // PR 5 final correction (section 3): no inline onclick — the delegated
+        // PR 5 final correction (section 3): no inline onclick - the delegated
         // sidebar handler reads data-target-id and routes through the store.
         return (
             `<button type="button" class="channel-card${isSelected ? ' selected' : ''}"` +
@@ -5281,7 +5281,7 @@ function renderNodeCardKeyActions(nodeId, isSelected) {
     const disabled = busy ? ' disabled' : '';
 
     // PR 5 final correction (section 2): the ready (trusted/sendable) state is a
-    // real row — it shows "Files available" so the operator can see at a glance
+    // real row - it shows "Files available" so the operator can see at a glance
     // which contacts accept files, rather than collapsing to nothing.
     //
     // Node card follow-up: for the SELECTED node, "Files available" becomes two
@@ -5407,7 +5407,7 @@ function isContactCommandBusy(nodeId) {
 // of that button, the non-interactive status row (hops/signal/seen + map badge),
 // the last-message line, the unignore action, and the MCA key row. No nested
 // interactive markup. Selection is routed by the delegated sidebar handler
-// (installSidebarTargetDelegation) reading data-target-id — there is no inline
+// (installSidebarTargetDelegation) reading data-target-id - there is no inline
 // onclick.
 function renderNodeCard(node) {
     const { activityClass, displayName } = getNodeActivityPresentation(node);
@@ -6506,13 +6506,13 @@ function showMessageInfo() {
 
     const fields = [
         [window.I18N.t('waypoints.sender'), message.sender || window.I18N.t('nodes.unknown_node')],
-        [window.I18N.t('chat.node_id_label'), message.node_id || '—'],
-        [window.I18N.t('chat.chat_label'), message.chat_name || currentChatName || message.chat_id || '—'],
-        [window.I18N.t('chat.chat_type_label'), message.chat_type || currentChatType || '—'],
+        [window.I18N.t('chat.node_id_label'), message.node_id || '-'],
+        [window.I18N.t('chat.chat_label'), message.chat_name || currentChatName || message.chat_id || '-'],
+        [window.I18N.t('chat.chat_type_label'), message.chat_type || currentChatType || '-'],
         [window.I18N.t('chat.direction_label'), messageDirectionLabel(message)],
-        [window.I18N.t('chat.time_label'), formatChatTimestamp(message.ts, message.time) || '—'],
-        [window.I18N.t('chat.message_id_label'), message.id || '—'],
-        [window.I18N.t('chat.packet_id_label'), message.packet_id ?? '—']
+        [window.I18N.t('chat.time_label'), formatChatTimestamp(message.ts, message.time) || '-'],
+        [window.I18N.t('chat.message_id_label'), message.id || '-'],
+        [window.I18N.t('chat.packet_id_label'), message.packet_id ?? '-']
     ];
 
     const content = document.getElementById('messageInfoContent');
@@ -7923,7 +7923,7 @@ let closedNodeDetailId = null;
 let nodeVisualSelectionCleared = false;
 
 // PR 6 correction: the node-details panel expands INLINE inside the selected
-// .node-card (same-card expansion) — the compact card is the header and the
+// .node-card (same-card expansion) - the compact card is the header and the
 // detail card is the body, sharing one outer border.
 //
 // `nodeDetailSlot` is an explicit module-level reference to the single stable
@@ -7950,8 +7950,8 @@ function getNodeDetailSlot() {
 
 // Positions the stable detail slot. When a node is selected AND its detail card
 // is rendered, the slot is appended INSIDE that node's compact .node-card (so the
-// detail card is a descendant of the card, not a sibling — one outer boundary);
-// otherwise the slot is removed from the list. Idempotent — called from
+// detail card is a descendant of the card, not a sibling - one outer boundary);
+// otherwise the slot is removed from the list. Idempotent - called from
 // renderNodeDetails, clearNodeDetailsPanel, and the shared list rebuild.
 function positionNodeDetailSlot() {
     const nodesList = document.getElementById('nodesList');
@@ -7988,7 +7988,7 @@ function positionNodeDetailSlot() {
 
 // PR 5 final correction (section 4): VISUAL clearing of the node-details panel
 // only. This empties #nodeDetails, removes the node-actions menu, drops the
-// .selected highlight from the sidebar cards, and clears the map selection — but
+// .selected highlight from the sidebar cards, and clears the map selection - but
 // it does NOT touch the shared store selection. The store stays the single source
 // of truth; callers that also want the selection cleared (the close button) do
 // so explicitly via storeSyncSelection(null, null).
@@ -8000,7 +8000,7 @@ function clearNodeDetailsPanel() {
     const details = getNodeDetailSlot();
     details.className = 'node-details-placeholder';
     // Clearing the slot's innerHTML also drops its detail card and any
-    // #nodeActionsMenu owned inside it — no separate menu removal needed.
+    // #nodeActionsMenu owned inside it - no separate menu removal needed.
     details.innerHTML = '';
 
     // Remove the visual focus from the compact card immediately and prevent
@@ -9503,7 +9503,7 @@ installCompactNodeCardStyles();
 
 // Keyboard activation for the role="button" channel/DM target elements in the
 // central chat list. Those are <div role="button" tabindex="0"> (not native
-// <button>), so the browser does NOT synthesize a click from Enter/Space — we
+// <button>), so the browser does NOT synthesize a click from Enter/Space - we
 // synthesize exactly one activation here. `preventDefault` stops Space from
 // scrolling the page and Enter from any other default; guarding `event.repeat`
 // prevents auto-repeat double-fire, and `element.click()` routes through the
@@ -9512,7 +9512,7 @@ installCompactNodeCardStyles();
 //
 // PR 5 note: the sidebar node-card selection is now a REAL <button>
 // (.node-card-select), which the browser keyboard-activates natively, so it no
-// longer needs handleNodeCardKeydown() — only the central chat items do.
+// longer needs handleNodeCardKeydown() - only the central chat items do.
 function isTargetActivationKey(event) {
     return (event.key === 'Enter' || event.key === ' ' || event.key === 'Spacebar') && !event.repeat;
 }
@@ -10960,13 +10960,13 @@ document.addEventListener('click', function(e) {
 // SWITCH MAIN TAB (MODIFIED)
 // ============================================================
 
-function deviceDashboardValue(value, fallback = '—') {
+function deviceDashboardValue(value, fallback = '-') {
     if (value === null || value === undefined || value === '') return fallback;
     return escapeHtml(String(value));
 }
 
 function formatDeviceDashboardDate(value) {
-    if (!value) return '—';
+    if (!value) return '-';
     const parsed = new Date(value);
     if (Number.isNaN(parsed.getTime())) return escapeHtml(String(value));
     return TimeFormatter.formatDateTime(parsed);
@@ -12043,7 +12043,7 @@ function peripheralStatusClass(device) {
 }
 
 function formatPeripheralMetric(value, unit = '') {
-    if (value === null || value === undefined || value === '') return '—';
+    if (value === null || value === undefined || value === '') return '-';
     const number = Number(value);
     const text = Number.isFinite(number) ? (Math.round(number * 100) / 100).toString() : String(value);
     return `${escapeHtml(text)}${unit}`;
@@ -12065,10 +12065,10 @@ function renderDisplayCard(hardwareDisplayData, profileId) {
         : window.I18N.t('devices.display_offline');
     const lastRefresh = hardwareDisplayData.last_successful_refresh
         ? TimeFormatter.formatTime(hardwareDisplayData.last_successful_refresh)
-        : '—';
+        : '-';
     const avgDuration = typeof hardwareDisplayData.average_duration === 'number'
         ? `${hardwareDisplayData.average_duration.toFixed(1)}s`
-        : '—';
+        : '-';
 
     return `
         <section class="peripheral-card">
@@ -12475,9 +12475,9 @@ async function loadPeripheralDevices(showFeedback = false) {
             if (device.id === 'environment') {
                 details = `
                     <div><dt>${escapeHtml(window.I18N.t('devices.driver'))}</dt><dd>${deviceDashboardValue(device.driver)}</dd></div>
-                    <div><dt>${escapeHtml(window.I18N.t('node_panel.temperature'))}</dt><dd>${values.temperature === null || values.temperature === undefined || values.temperature === '' ? '—' : formatTemperature(values.temperature)}</dd></div>
+                    <div><dt>${escapeHtml(window.I18N.t('node_panel.temperature'))}</dt><dd>${values.temperature === null || values.temperature === undefined || values.temperature === '' ? '-' : formatTemperature(values.temperature)}</dd></div>
                     <div><dt>${escapeHtml(window.I18N.t('node_panel.humidity'))}</dt><dd>${formatPeripheralMetric(values.humidity, '%')}</dd></div>
-                    <div><dt>${escapeHtml(window.I18N.t('node_panel.pressure'))}</dt><dd>${values.pressure === null || values.pressure === undefined || values.pressure === '' ? '—' : formatPressure(values.pressure)}</dd></div>`;
+                    <div><dt>${escapeHtml(window.I18N.t('node_panel.pressure'))}</dt><dd>${values.pressure === null || values.pressure === undefined || values.pressure === '' ? '-' : formatPressure(values.pressure)}</dd></div>`;
             } else if (device.id === 'power') {
                 details = `
                     <div><dt>${escapeHtml(window.I18N.t('devices.driver'))}</dt><dd>${deviceDashboardValue(device.driver)}</dd></div>
@@ -14320,7 +14320,7 @@ function formatSystemLogAsText(events) {
         const dt = e.date && e.time ? `${e.date} ${e.time}` : (e.datetime || '--');
         const level = String(e.level || 'INFO').toUpperCase();
         const source = e.source || 'system';
-        const details = e.details ? ` — ${e.details}` : '';
+        const details = e.details ? ` - ${e.details}` : '';
         return `[${dt}] ${level} (${source}): ${e.event}${details}`;
     }).join('\n');
 }
@@ -14330,7 +14330,7 @@ function formatActivityAsText(items) {
         const dt = new Date(n.timestamp * 1000);
         const level = String(n.level || 'info').toUpperCase();
         const source = n.source || 'system';
-        const body = n.body ? ` — ${n.body}` : '';
+        const body = n.body ? ` - ${n.body}` : '';
         return `[${TimeFormatter.formatDateTime(dt)}] ${level} (${source}): ${n.title}${body}`;
     }).join('\n');
 }
@@ -14548,7 +14548,7 @@ document.addEventListener('change', event => {
 });
 // PR 5 final correction (section 3): the sidebar node/channel selection is a
 // native <button class="node-card-select"> / <button class="channel-card"> with
-// NO inline onclick — selection is routed through the single delegated handler
+// NO inline onclick - selection is routed through the single delegated handler
 // installed by installSidebarTargetDelegation() on #sidebar, so there is no
 // delegated #nodesList / #channelsList click handler to install here.
 

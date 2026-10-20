@@ -1,4 +1,4 @@
-"""fake_radio_server — a minimal, in-process fake Meshtastic TCP radio
+"""fake_radio_server - a minimal, in-process fake Meshtastic TCP radio
 peer, for integration-testing adapters/meshtastic/tcp_transport.py
 against the REAL meshtastic.tcp_interface.TCPInterface end to end (a real
 socket, the real wire framing, real protobuf messages) without any

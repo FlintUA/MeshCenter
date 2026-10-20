@@ -8,10 +8,10 @@
     <meta name="runtime-capabilities" content="{{ runtime_capabilities }}">
     <title>MeshCenter</title>
     <!-- MeshCenter build: stage2c7-4-unified-popovers-20260725 -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part1.css') }}?v=20261020-upd1">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part1.css') }}?v=20261021-dash1">
     <link rel="stylesheet" href="{{ url_for('static', filename='style-part2.css') }}?v=20260917-nodecard-optionc-followup">
     <link rel="stylesheet" href="{{ url_for('static', filename='style-part3.css') }}?v=20260917-nodecard-optionc-followup">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part4.css') }}?v=20261020-upd1">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part4.css') }}?v=20261021-dash1">
     <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=20260917-nodecard-optionc-followup">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -117,7 +117,7 @@
                             <span class="telemetry-label" data-i18n="node_panel.environment">Environment</span>
                             <span class="telemetry-update" id="telemetryEnvUpdate"></span>
                         </div>
-                        <span class="telemetry-value" id="telemetryEnvValue">—</span>
+                        <span class="telemetry-value" id="telemetryEnvValue">-</span>
                     </button>
                     <button class="telemetry-btn power" onclick="openTelemetryModal('power')">
                         <div class="telemetry-top">
@@ -125,7 +125,7 @@
                             <span class="telemetry-label" data-i18n="node_panel.power_card_title">Power Supply</span>
                             <span class="telemetry-update" id="telemetryPowerUpdate"></span>
                         </div>
-                        <span class="telemetry-value" id="telemetryPowerValue">—</span>
+                        <span class="telemetry-value" id="telemetryPowerValue">-</span>
                     </button>
                 </div>
 
@@ -1726,7 +1726,7 @@
                                 <div class="about-badges">
                                     <span class="about-badge">Version {{ app_version }}</span>
                                     <span class="about-badge about-badge-status"><i></i> Active Development</span>
-                                    <span class="about-badge">© 2026–Present</span>
+                                    <span class="about-badge">© 2026-Present</span>
                                 </div>
                             </div>
                         </div>
@@ -1862,7 +1862,7 @@
                             <fieldset class="node-filters-group">
                                 <legend data-i18n="nodes.sort_heading">Sort</legend>
                                 <label><input type="radio" name="nodeSort" value="last_heard"> <span data-i18n="nodes.sort_last_heard">Last heard</span></label>
-                                <label><input type="radio" name="nodeSort" value="name"> <span data-i18n="nodes.sort_name">Name A–Z</span></label>
+                                <label><input type="radio" name="nodeSort" value="name"> <span data-i18n="nodes.sort_name">Name A-Z</span></label>
                                 <label><input type="radio" name="nodeSort" value="distance"> <span data-i18n="nodes.sort_distance">Distance</span></label>
                                 <label><input type="radio" name="nodeSort" value="hops"> <span data-i18n="nodes.sort_hops">Hops</span></label>
                                 <label><input type="radio" name="nodeSort" value="favorites_first"> <span data-i18n="nodes.sort_favorites_first">Favorites first</span></label>
@@ -2412,30 +2412,30 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="/static/chart.umd.min.js"></script>
-<script src="/static/i18n.js?v=20261020-upd1"></script>
-<script src="/static/runtime-caps.js?v=20261020-upd1"></script>
+<script src="/static/i18n.js?v=20261021-dash1"></script>
+<script src="/static/runtime-caps.js?v=20261021-dash1"></script>
 <script>
     // Server already resolved "auto" (stored ui.language, or an
-    // Accept-Language guess) to a concrete locale for <html lang> above —
+    // Accept-Language guess) to a concrete locale for <html lang> above -
     // reuse that instead of letting the client re-guess independently.
     // applyStaticDom() only covers markup already in the DOM at this point
     // (the static shell) - content rendered later by chat.js/media.js/
     // weather.js is untouched until those call I18N.t()/plural() directly.
     window.I18N.init("{{ ui_language }}").then(() => window.I18N.applyStaticDom());
 </script>
-<script src="{{ url_for('static', filename='csrf.js') }}?v=20261020-upd1"></script>
-<script src="{{ url_for('static', filename='app-dialog.js') }}?v=20261020-upd1"></script>
+<script src="{{ url_for('static', filename='csrf.js') }}?v=20261021-dash1"></script>
+<script src="{{ url_for('static', filename='app-dialog.js') }}?v=20261021-dash1"></script>
 <script src="{{ url_for('static', filename='chat-emoji.js') }}?v=20260821-domain-split"></script>
 <script src="{{ url_for('static', filename='chat-photo.js') }}?v=20260821-domain-split"></script>
-<script src="{{ url_for('static', filename='chat-telemetry.js') }}?v=20261020-upd1"></script>
-<script src="{{ url_for('static', filename='chat-camera.js') }}?v=20261020-upd1"></script>
-<script src="{{ url_for('static', filename='chat-map.js') }}?v=20261020-upd1"></script>
-<script src="{{ url_for('static', filename='chat-updates-security.js') }}?v=20261020-upd1"></script>
+<script src="{{ url_for('static', filename='chat-telemetry.js') }}?v=20261021-dash1"></script>
+<script src="{{ url_for('static', filename='chat-camera.js') }}?v=20261021-dash1"></script>
+<script src="{{ url_for('static', filename='chat-map.js') }}?v=20261021-dash1"></script>
+<script src="{{ url_for('static', filename='chat-updates-security.js') }}?v=20261021-dash1"></script>
 <script src="{{ url_for('static', filename='targets.js') }}?v=20260911-pr4-shared-target-model"></script>
-<script src="/static/files.js?v=20261020-upd1"></script>
-<script src="{{ url_for('static', filename='chat-views.js') }}?v=20261020-upd1"></script>
-<script src="/static/chat.js?v=20261020-upd1"></script>
-<script src="/static/media.js?v=20261020-upd1"></script>
+<script src="/static/files.js?v=20261021-dash1"></script>
+<script src="{{ url_for('static', filename='chat-views.js') }}?v=20261021-dash1"></script>
+<script src="/static/chat.js?v=20261021-dash1"></script>
+<script src="/static/media.js?v=20261021-dash1"></script>
 <script src="/static/weather.js?v=20260815-weather-provider"></script>
 
 <div class="modal-overlay" id="wifiConnectModal" style="display:none;" onclick="closeWifiConnectModal()">

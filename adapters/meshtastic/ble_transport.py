@@ -1,4 +1,4 @@
-"""BLETransport — the RadioTransport implementation over
+"""BLETransport - the RadioTransport implementation over
 `meshtastic.ble_interface.BLEInterface`.
 
 Task 45: happy-path only, per section 5 of the license/BLE plan. Wraps

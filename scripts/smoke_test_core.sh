@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# smoke_test_core.sh — extract -> clean venv -> install -> import ->
+# smoke_test_core.sh - extract -> clean venv -> install -> import ->
 # health-check for a built meshcenter-core-<version>.tar.gz archive.
 # Called by build-release.sh right after building the Core archive;
 # also runnable standalone against any already-built archive.

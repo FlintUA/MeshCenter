@@ -1,12 +1,12 @@
-/* style-part3.css — часть 3 из 4 механического сплита style.css
+/* style-part3.css - часть 3 из 4 механического сплита style.css
    (2026-08-21). Порядок частей в <link> ЗНАЧИМ: в файле есть 213
-   селекторов, повторяющихся в разных частях — при равной
+   селекторов, повторяющихся в разных частях - при равной
    специфичности побеждает то, что идёт позже. НЕ переставлять
    <link>-теги местами, НЕ переносить правила между частями без
    проверки на дублирующиеся селекторы по всему набору файлов. */
 
 /* ============================================================
-   TABBED SELECTED NODE CARD — MeshCenter Sprint 2.3 adjustments
+   TABBED SELECTED NODE CARD - MeshCenter Sprint 2.3 adjustments
    ============================================================ */
 .radio-history-range { opacity: .55; cursor: help; }
 .log-history-placeholder {
@@ -2124,7 +2124,7 @@ html[data-theme="dark"] .system-log-panel {
 
 
 /* ============================================================
-   STAGE 2A — LOCAL NODE DASHBOARD / WEATHER LOCATION
+   STAGE 2A - LOCAL NODE DASHBOARD / WEATHER LOCATION
    ============================================================ */
 .base-sidebar {
     --sidebar-font-secondary: 10px;
@@ -2315,7 +2315,7 @@ html[data-theme="dark"] .system-log-panel {
 }
 
 /* ============================================================
-   STAGE 2A — UNIFIED LOCAL NODE INFORMATION PANEL
+   STAGE 2A - UNIFIED LOCAL NODE INFORMATION PANEL
    Base status, live sensors, battery and telemetry history share
    one visual container while preserving their existing IDs/API.
    ============================================================ */
@@ -2486,7 +2486,7 @@ html[data-theme="dark"] .node-info-panel .battery-indicator {
 }
 
 /* ============================================================
-   STAGE 2B PREVIEW — LOCAL NODE DASHBOARD
+   STAGE 2B PREVIEW - LOCAL NODE DASHBOARD
    ============================================================ */
 .node-dashboard-heading {
     display: flex;
@@ -2698,7 +2698,7 @@ html[data-theme="dark"] .settings-number-input {
 }
 
 /* ============================================================
-   STAGE 2C — LEFT DASHBOARD VISUAL POLISH
+   STAGE 2C - LEFT DASHBOARD VISUAL POLISH
    ============================================================ */
 .base-brand-strip {
     min-height: 46px;
@@ -2949,7 +2949,7 @@ html[data-theme="dark"] .battery-scale {
 
 
 /* ============================================================
-   STAGE 2C.1 — BRAND HEIGHT + BATTERY RUNTIME FIX POLISH
+   STAGE 2C.1 - BRAND HEIGHT + BATTERY RUNTIME FIX POLISH
    Keep the left brand strip aligned with the 42px workspace nav.
    ============================================================ */
 .base-brand-strip {
@@ -2990,7 +2990,7 @@ html[data-theme="dark"] .battery-scale {
 }
 
 /* ============================================================
-   STAGE 2C.2 — SOFT BRAND RELOAD + LOCAL NODE IDENTITY
+   STAGE 2C.2 - SOFT BRAND RELOAD + LOCAL NODE IDENTITY
    ============================================================ */
 .base-brand-strip .app-name {
     transition: opacity .15s ease, transform .15s ease;
@@ -3102,7 +3102,7 @@ html[data-theme="dark"] .base-node-avatar {
 }
 
 /* ============================================================
-   STAGE 2C.3 — NODE IDENTITY / TELEMETRY VISUAL POLISH
+   STAGE 2C.3 - NODE IDENTITY / TELEMETRY VISUAL POLISH
    ============================================================ */
 /* Reload changes only the text; typography and layout stay fixed. */
 .base-brand-strip .app-name,
@@ -3308,7 +3308,7 @@ html[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-unit {
 }
 
 /* ============================================================
-   STAGE 2C.4 — NODE-FIRST HEADER + STATUS-DOCK BRAND
+   STAGE 2C.4 - NODE-FIRST HEADER + STATUS-DOCK BRAND
    ============================================================ */
 /* The local node is the primary object: it starts at the top edge. */
 .base-brand-strip {
@@ -3456,7 +3456,7 @@ html[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-unit {
 
 
 /* ============================================================
-   STAGE 2C.5 — TOP ALIGNMENT + STATUS DOCK POLISH
+   STAGE 2C.5 - TOP ALIGNMENT + STATUS DOCK POLISH
    ============================================================ */
 /* Align the Flint Base card with the top edge of the center/right tabs. */
 .base-sidebar {
@@ -3510,7 +3510,7 @@ html[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-unit {
 
 
 /* ============================================================
-   STAGE 2C.6 — NODE PROFILE ICON + SELECTED NODE ACTION POLISH
+   STAGE 2C.6 - NODE PROFILE ICON + SELECTED NODE ACTION POLISH
    ============================================================ */
 .node-detail-header {
     margin-bottom: 5px;
@@ -3648,7 +3648,7 @@ html[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-unit {
 
 
 /* ============================================================
-   STAGE 2C.6.1 — STABLE STATUS DOCK METRICS
+   STAGE 2C.6.1 - STABLE STATUS DOCK METRICS
    Keep MeshCenter / Online fixed while live values change width.
    ============================================================ */
 #dockCpuMetric,
@@ -3672,7 +3672,7 @@ html[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-unit {
 
 
 /* ============================================================
-   STAGE 2C.7 — NODE STATE CONTROL + NOTIFICATION CENTER
+   STAGE 2C.7 - NODE STATE CONTROL + NOTIFICATION CENTER
    ============================================================ */
 /* The action group is the single source of truth for favorite/ignored state. */
 .node-detail-favorite,
@@ -3981,7 +3981,7 @@ html[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-unit {
 
 
 /* ============================================================
-   WI-FI NETWORK ROW POLISH — Stage 2C.7.2
+   WI-FI NETWORK ROW POLISH - Stage 2C.7.2
    Keep network parameters compact and place Forget + Connect together.
    ============================================================ */
 .wifi-info {
@@ -4031,7 +4031,7 @@ html[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-unit {
 }
 
 /* ============================================================
-   STAGE 2C.7.3 — UNIFIED STATUS DOCK SEPARATORS
+   STAGE 2C.7.3 - UNIFIED STATUS DOCK SEPARATORS
    Use the same full bullet between every status item.
    ============================================================ */
 #dockContextText::before,

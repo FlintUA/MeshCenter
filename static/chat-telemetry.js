@@ -14,7 +14,7 @@ function renderTelemetryCardsLayout(type) {
                 <div class="card-value" id="powerVoltageValue">--</div>
                 <div class="card-range">
                     <span class="range-min" id="powerVoltageMin">--</span>
-                    <span class="range-sep">—</span>
+                    <span class="range-sep">-</span>
                     <span class="range-max" id="powerVoltageMax">--</span>
                 </div>
             </div>
@@ -23,7 +23,7 @@ function renderTelemetryCardsLayout(type) {
                 <div class="card-value" id="powerCurrentValue">--</div>
                 <div class="card-range">
                     <span class="range-min" id="powerCurrentMin">--</span>
-                    <span class="range-sep">—</span>
+                    <span class="range-sep">-</span>
                     <span class="range-max" id="powerCurrentMax">--</span>
                 </div>
             </div>
@@ -32,7 +32,7 @@ function renderTelemetryCardsLayout(type) {
                 <div class="card-value" id="powerPowerValue">--</div>
                 <div class="card-range">
                     <span class="range-min" id="powerPowerMin">--</span>
-                    <span class="range-sep">—</span>
+                    <span class="range-sep">-</span>
                     <span class="range-max" id="powerPowerMax">--</span>
                 </div>
             </div>`;
@@ -45,7 +45,7 @@ function renderTelemetryCardsLayout(type) {
             <div class="card-value" id="environmentTemperatureValue">--</div>
             <div class="card-range">
                 <span class="range-min" id="environmentTemperatureMin">--</span>
-                <span class="range-sep">—</span>
+                <span class="range-sep">-</span>
                 <span class="range-max" id="environmentTemperatureMax">--</span>
             </div>
         </div>
@@ -54,7 +54,7 @@ function renderTelemetryCardsLayout(type) {
             <div class="card-value" id="environmentHumidityValue">--</div>
             <div class="card-range">
                 <span class="range-min" id="environmentHumidityMin">--</span>
-                <span class="range-sep">—</span>
+                <span class="range-sep">-</span>
                 <span class="range-max" id="environmentHumidityMax">--</span>
             </div>
         </div>
@@ -63,7 +63,7 @@ function renderTelemetryCardsLayout(type) {
             <div class="card-value" id="environmentPressureValue">--</div>
             <div class="card-range">
                 <span class="range-min" id="environmentPressureMin">--</span>
-                <span class="range-sep">—</span>
+                <span class="range-sep">-</span>
                 <span class="range-max" id="environmentPressureMax">--</span>
             </div>
         </div>`;
@@ -184,7 +184,7 @@ function updateTelemetryUI() {
         if (data.pressure !== null && data.pressure !== undefined) {
             parts.push(formatPressure(data.pressure));
         }
-        envValue.textContent = parts.length > 0 ? parts.join('  ') : '—';
+        envValue.textContent = parts.length > 0 ? parts.join('  ') : '-';
     }
     if (envUpdate) {
         envUpdate.textContent = data.last_update ? `⏱${data.last_update}` : '';
@@ -200,7 +200,7 @@ function updateTelemetryUI() {
         if (data.current !== null && data.current !== undefined && data.current > 0) {
             parts.push(`${data.current.toFixed(1)}mA`);
         }
-        powerValue.textContent = parts.length > 0 ? parts.join('  ') : '—';
+        powerValue.textContent = parts.length > 0 ? parts.join('  ') : '-';
     }
     if (powerUpdate) {
         powerUpdate.textContent = data.last_update ? `⏱${data.last_update}` : '';
@@ -1011,7 +1011,7 @@ function renderTelemetryChart(container, records, type) {
                                 const metricType = context.dataset.metricType || '';
                                 const value = context.parsed.y;
 
-                                if (value === null || value === undefined || isNaN(value)) return label + ': —';
+                                if (value === null || value === undefined || isNaN(value)) return label + ': -';
                                 if (metricType === 'temperature') return label + ': ' + value.toFixed(1) + temperatureChartUnit();
                                 if (metricType === 'humidity') return label + ': ' + value.toFixed(1) + '%';
                                 if (metricType === 'pressure') return label + ': ' + value.toFixed(1) + ' ' + pressureChartUnit();

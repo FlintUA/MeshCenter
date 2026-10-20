@@ -1,4 +1,4 @@
-"""MCA/1 message codec — MIT Core code, no Meshtastic/MeshCore import.
+"""MCA/1 message codec - MIT Core code, no Meshtastic/MeshCore import.
 
 Implements the wire format fixed by docs/architecture/ADR-0001-mca-protocol.md:
 canonical CBOR logical messages, signed with Ed25519, carried as either
@@ -8,7 +8,7 @@ MeshCore adapter).
 
 This module only knows about the *logical* message shape and its signature.
 It does not know about transfer state, Relay descriptors, recipient
-envelopes, or key management — those are separate concerns (Attachment
+envelopes, or key management - those are separate concerns (Attachment
 Store, MCA Crypto's descriptor signing, MCAWorkspaceManager). A
 ``DeliveryAdapter`` is expected to call ``to_text()``/``from_text()`` (or
 ``to_cbor()``/``from_cbor()`` for binary transports) and enforce its own

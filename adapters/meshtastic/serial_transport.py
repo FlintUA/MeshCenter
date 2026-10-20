@@ -1,4 +1,4 @@
-"""SerialTransport — the RadioTransport implementation over short-lived
+"""SerialTransport - the RadioTransport implementation over short-lived
 `SerialInterface` calls (connect/disconnect/send_*/get_*/set_device_time).
 
 Task 44: extends (does not rewrite) meshsrv/meshtastic_transport.py per the

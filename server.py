@@ -2065,7 +2065,7 @@ def load_chats():
             }
         else:
             # Keep the persisted primary-channel name in sync with the
-            # current config.py — otherwise a stale name written by an old
+            # current config.py - otherwise a stale name written by an old
             # CHANNEL_CHAT_NAME value survives in chats.json forever, since
             # this used to be a one-time seed. Stored bare: the "[index]"
             # suffix is a display concern added by api/api_chat.py and

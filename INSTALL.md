@@ -43,8 +43,8 @@ your situation, they are not interchangeable steps of the same process:
 **Not supported:**
 - Windows / macOS, natively (for a server, see "Docker (server mode)" above; Docker Desktop on Windows/macOS was only used for development and is not a supported setup)
 - Raspberry Pi OS 32-bit (lgpio compatibility issues)
-- Debian 11 (Bullseye) or older (Python 3.9/3.10 — below the 3.11 minimum) / Ubuntu 22.04 LTS or older (same reason)
-- Alpine Linux (musl libc — pip build failures)
+- Debian 11 (Bullseye) or older (Python 3.9/3.10 - below the 3.11 minimum) / Ubuntu 22.04 LTS or older (same reason)
+- Alpine Linux (musl libc - pip build failures)
 
 ---
 
@@ -58,7 +58,7 @@ first boot, and the whole process runs unattended.
 > [Raspberry Pi Imager](https://www.raspberrypi.com/software/),
 > Meshtastic node connected via USB, internet connection.
 
-### Step 1 — Flash the SD card
+### Step 1 - Flash the SD card
 
 1. Open **Raspberry Pi Imager**
 2. Choose OS: **Raspberry Pi OS Lite (64-bit)**
@@ -69,7 +69,7 @@ first boot, and the whole process runs unattended.
    - Enable SSH *(optional, for advanced access)*
 4. Flash to SD card
 
-### Step 2 — Add MeshCenter installer
+### Step 2 - Add MeshCenter installer
 
 After flashing, the SD card appears as a drive called **bootfs**.
 
@@ -85,10 +85,10 @@ bootfs (SD card):
 └── ...
 ```
 
-- **Windows:** SD card appears as `D:\` (or similar) — copy `meshcenter-firstboot.sh` there
-- **Mac:** SD card appears as `/Volumes/bootfs/` — copy `meshcenter-firstboot.sh` there
+- **Windows:** SD card appears as `D:\` (or similar) - copy `meshcenter-firstboot.sh` there
+- **Mac:** SD card appears as `/Volumes/bootfs/` - copy `meshcenter-firstboot.sh` there
 
-### Step 3 — Add one line to user-data
+### Step 3 - Add one line to user-data
 
 Open the file `user-data` on the bootfs drive (it already exists after flashing).
 Add this at the end:
@@ -100,18 +100,18 @@ runcmd:
 
 If `runcmd:` already exists in the file, add only the `- [ bash, ... ]` line under it.
 
-### Step 4 — Connect your radio
+### Step 4 - Connect your radio
 
 Connect your Meshtastic device via USB **before** powering on the Pi.
 Use a cable that supports data transfer (not charge-only).
 Connect only one Meshtastic device during first install.
 
-### Step 5 — Boot and wait
+### Step 5 - Boot and wait
 
 1. Safely eject the SD card
 2. Insert it into your Raspberry Pi
 3. Connect power
-4. Wait 1–2 minutes, then open **http://meshcenter.local** (port 80) in your
+4. Wait 1-2 minutes, then open **http://meshcenter.local** (port 80) in your
    browser to watch the 7-step installation progress (updates every 3 seconds)
 5. When installation completes, the Pi reboots automatically to apply system
    group changes (radio/camera/GPIO permissions)
@@ -155,7 +155,7 @@ to actually turn the feature on. For the manual installer
 (`install.sh`), set the same-named environment variable instead:
 `INSTALL_EPAPER=yes curl -sSL .../install.sh | bash`.
 
-### Step 6 — Open MeshCenter
+### Step 6 - Open MeshCenter
 
 Once installation completes and the Pi has rebooted, open in your browser:
 
@@ -166,9 +166,9 @@ http://meshcenter.local:5000
 or use the IP address shown on the progress page before the reboot.
 
 > 🔐 **First visit:** when password protection is enabled (`AUTH_ENABLED = True`,
-> the default), a brand-new installation shows a **"Welcome to MeshCenter —
+> the default), a brand-new installation shows a **"Welcome to MeshCenter -
 > create a password"** screen instead of a login form. Choose a password
-> (at least 12 characters), confirm it, and you're signed in straight away —
+> (at least 12 characters), confirm it, and you're signed in straight away -
 > no password is generated for you and there is nothing to look up over SSH.
 > The installer's final log also prints this page's address
 > (`http://meshcenter.local:5000/setup`). From then on, opening MeshCenter
@@ -200,11 +200,11 @@ sudo apt-get install -y ffmpeg v4l-utils
 sudo -n /usr/bin/systemctl restart meshcenter.service
 ```
 Without this, the Devices tab shows "USB camera support requires ffmpeg and
-v4l-utils" instead of the camera — CSI cameras and nodes with no USB camera
+v4l-utils" instead of the camera - CSI cameras and nodes with no USB camera
 are unaffected either way.
 
 `pip install -r requirements.txt` (already run by every deploy) does **not**
-remove a package that's no longer listed — the now-unused `v4l2py`/`linuxpy`
+remove a package that's no longer listed - the now-unused `v4l2py`/`linuxpy`
 (GPL-3.0-or-later) stay installed in Core's venv until explicitly removed:
 ```bash
 source venv/bin/activate && pip uninstall -y v4l2py linuxpy && deactivate
@@ -237,7 +237,7 @@ of this automatically.
 ## Before you start
 
 - [ ] Meshtastic radio already configured with the official app (LoRa region,
-      channels, node long/short name) — MeshCenter reads existing radio
+      channels, node long/short name) - MeshCenter reads existing radio
       configuration, it does not create channels itself.
 - [ ] **Serial access enabled** on the radio: `Settings → Security → Serial
       enabled` in the Meshtastic app. If this is off, the Pi still sees the
@@ -255,10 +255,10 @@ of this automatically.
    # serial port is genuinely free before releasing it for an external tool
    # or the Meshtastic TCP adapter - see meshsrv/serial_port_supervisor.py.
    sudo apt install -y git python3 python3-venv python3-pip network-manager iw lsof
-   # USB camera support (ffmpeg/v4l-utils) — not gated behind the optional
+   # USB camera support (ffmpeg/v4l-utils) - not gated behind the optional
    # CSI camera install below; needed for any USB/UVC webcam:
    sudo apt install -y ffmpeg v4l-utils
-   # optional CSI camera support — install BEFORE creating the venv:
+   # optional CSI camera support - install BEFORE creating the venv:
    sudo apt install -y python3-picamera2 rpicam-apps
    sudo usermod -aG dialout "$USER"
    sudo reboot
@@ -272,7 +272,7 @@ of this automatically.
    ```
 
 3. [ ] **Python environment** (`--system-site-packages` is required so
-   Picamera2 is visible inside the venv — if you created the venv before
+   Picamera2 is visible inside the venv - if you created the venv before
    installing `python3-picamera2`, delete `venv/` and redo this step)
    ```bash
    python3 -m venv --system-site-packages venv
@@ -282,10 +282,10 @@ of this automatically.
    deactivate
    ```
    > Core's own venv above deliberately does **not** include the
-   > `meshtastic` package (GPLv3) — see CLAUDE.md. It lives in a second,
+   > `meshtastic` package (GPLv3) - see CLAUDE.md. It lives in a second,
    > separate venv, created next.
 
-3b. [ ] **Meshtastic adapter environment** (Task 48 — isolated from Core's
+3b. [ ] **Meshtastic adapter environment** (Task 48 - isolated from Core's
    venv above so GPLv3 code never gets imported into Core's own process)
    ```bash
    python3 -m venv adapters/meshtastic/venv
@@ -302,7 +302,7 @@ of this automatically.
    Do not continue until this prints node info with no permission/serial
    errors. Note the local node ID, long name and short name.
 
-5. [ ] **`config.py`** — server.py exits at import time if this is missing.
+5. [ ] **`config.py`** - server.py exits at import time if this is missing.
    ```bash
    cp config.example.py config.py
    mkdir -p data
@@ -310,11 +310,11 @@ of this automatically.
    Edit `config.py`: at minimum `MESHTASTIC_PORT`, `LOCAL_NODE_ID`,
    `LOCAL_NODE_NAME`. `KNOWN_NODES` / `KNOWN_NODE_INFO` are optional
    friendly-name maps for other nodes on your mesh.
-   > ⚠ `config.py` is gitignored on purpose — it can end up holding real
+   > ⚠ `config.py` is gitignored on purpose - it can end up holding real
    > node IDs and names. Never `git add -f` it or otherwise force it into a
    > commit.
 
-6. [ ] **`weather_secrets.py`** (optional — only if you'll use the Weather
+6. [ ] **`weather_secrets.py`** (optional - only if you'll use the Weather
    widget)
    ```bash
    cp weather_secrets.example.py weather_secrets.py
@@ -327,11 +327,11 @@ of this automatically.
    ```
    Look for `Identity: MATCH` in the startup banner, then open
    `http://<raspberry-pi-ip>:5000` from another device. `Ctrl+C` once
-   confirmed — don't leave it running outside systemd.
+   confirmed - don't leave it running outside systemd.
 
    With `AUTH_ENABLED = True` (the default in `config.example.py`), the first
    visit to a fresh install (no `data/auth.json` yet) shows a **create-your-
-   password** screen (`/setup`), not a login form — pick a password of at
+   password** screen (`/setup`), not a login form - pick a password of at
    least 12 characters and you're logged in immediately. The startup log also
    prints a `[AUTH] No password configured yet - open http://<this-device>:5000/setup`
    line. Nothing is generated or written to disk in plaintext.
@@ -350,7 +350,7 @@ of this automatically.
    sudo systemctl status meshcenter.service --no-pager -l   # expect: active (running)
    ```
 
-9. [ ] **sudoers rules — see "Easy to forget" below, do this now, not later**
+9. [ ] **sudoers rules - see "Easy to forget" below, do this now, not later**
    ```bash
    cd ~/meshcenter
    MESH_USER="$(id -un)"
@@ -367,17 +367,17 @@ of this automatically.
    sudo visudo -cf /etc/sudoers.d/meshcenter-hw      # expect: parsed OK
    ```
    `meshcenter-hw.sudoers` + the installed helper are what the Devices tab's
-   I2C/RTC hardware card (task 23+) needs — the app runs fine without them,
+   I2C/RTC hardware card (task 23+) needs - the app runs fine without them,
    that card's "Enable I2C & configure RTC" button just fails.
 
    `scripts/verify-install.sh` checks this by asking `sudo -n -l` what the
    current user can actually run passwordlessly, not by looking for these
-   exact files — a Pi where the user already has broader NOPASSWD sudo some
+   exact files - a Pi where the user already has broader NOPASSWD sudo some
    other way also passes.
 
-10. [ ] **Confirm radio identity** — open the UI and check there's no
+10. [ ] **Confirm radio identity** - open the UI and check there's no
     identity-mismatch banner, or read it straight from
-    `data/instance.json` (no login needed — this is the same file
+    `data/instance.json` (no login needed - this is the same file
     `scripts/verify-install.sh` checks, and it works whether or not
     password protection is enabled):
     ```bash
@@ -385,7 +385,7 @@ of this automatically.
     # expect: MATCH
     ```
     `/api/node-manager/dashboard` shows the same status, but it's a
-    protected endpoint — if AUTH_ENABLED is on (the default since PR #131),
+    protected endpoint - if AUTH_ENABLED is on (the default since PR #131),
     an unauthenticated `curl` against it correctly gets a 401, not the
     identity JSON.
 
@@ -399,30 +399,30 @@ of this automatically.
 
 ## Easy to forget
 
-- **Step 9 (sudoers)** — the app runs and looks fully functional without it.
+- **Step 9 (sudoers)** - the app runs and looks fully functional without it.
   It only breaks later, when someone clicks **Restart MeshCenter** or a
   Wi-Fi action in the UI and it silently fails because `sudo systemctl
   restart` has no tty to prompt for a password. This is exactly what
   happened on this project's own prod node: dev had it configured, prod
   didn't, and it only surfaced when a deploy needed a restart. Do this step
   during install, don't defer it.
-- **A `git pull` update never installs new sudoers/helper files** — updating
+- **A `git pull` update never installs new sudoers/helper files** - updating
   MeshCenter is deliberately just moving to the release tag (`git merge --ff-only` /
   `git checkout --detach`) + a service restart (see `meshsrv/update_service.py`), it never touches `/etc/sudoers.d/` or
   `/usr/local/sbin/`. A node installed before `deploy/meshcenter-hw.sudoers`
   existed (task 23) and only ever updated via `git pull` since will silently
-  be missing it — the Devices tab's I2C/RTC card just fails when clicked,
+  be missing it - the Devices tab's I2C/RTC card just fails when clicked,
   with no warning at update time. `./scripts/verify-install.sh` catches this
-  (`meshcenter-hw-config` sudoers/helper check) — re-run it after any update
+  (`meshcenter-hw-config` sudoers/helper check) - re-run it after any update
   that adds a new sudoers template, and apply step 9's commands for whatever
   it flags.
-- **`config.py` doesn't exist after `git clone`** — it's gitignored by
+- **`config.py` doesn't exist after `git clone`** - it's gitignored by
   design (step 5). If you skip `cp config.example.py config.py`, `python
   server.py` exits immediately with a missing-config error, not a vague one.
-- **Camera packages must precede the venv** — `python3-picamera2` needs to
+- **Camera packages must precede the venv** - `python3-picamera2` needs to
   already be installed system-wide before `python3 -m venv
   --system-site-packages venv` is created, or the venv won't see it. If you
   installed the camera packages after creating the venv, delete `venv/` and
   redo step 3.
-- **`weather_secrets.py` is optional** — nothing breaks if you skip it, the
+- **`weather_secrets.py` is optional** - nothing breaks if you skip it, the
   Weather widget just stays unconfigured until you add a key later.

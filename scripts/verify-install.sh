@@ -22,7 +22,7 @@ bad()  { printf '  [FAIL] %s\n' "$1"; FAIL=$((FAIL + 1)); }
 warn() { printf '  [WARN] %s\n' "$1"; WARN=$((WARN + 1)); }
 info() { printf '  [INFO] %s\n' "$1"; }
 
-echo "MeshCenter install check — $PROJECT_DIR"
+echo "MeshCenter install check - $PROJECT_DIR"
 echo
 
 # --- 1. Python virtual environment -----------------------------------------
@@ -32,7 +32,7 @@ if [ -x "venv/bin/python" ]; then
     if venv/bin/python -c "import flask" >/dev/null 2>&1; then
         ok "flask importable inside venv"
     else
-        bad "flask not importable inside venv — run: source venv/bin/activate && pip install -r requirements.txt"
+        bad "flask not importable inside venv - run: source venv/bin/activate && pip install -r requirements.txt"
     fi
     # PR #231 review, section 15: MCAttach (meshsrv/attachments/) is Core
     # code, not adapter code - cbor2/PyNaCl/requests are all Core's own
@@ -44,17 +44,17 @@ if [ -x "venv/bin/python" ]; then
     if venv/bin/python -c "import cbor2" >/dev/null 2>&1; then
         ok "cbor2 importable inside venv (MCAttach wire codec)"
     else
-        bad "cbor2 not importable inside venv — run: source venv/bin/activate && pip install -r requirements.txt"
+        bad "cbor2 not importable inside venv - run: source venv/bin/activate && pip install -r requirements.txt"
     fi
     if venv/bin/python -c "import nacl" >/dev/null 2>&1; then
         ok "PyNaCl (nacl) importable inside venv (MCAttach signing/encryption)"
     else
-        bad "PyNaCl not importable inside venv — run: source venv/bin/activate && pip install -r requirements.txt"
+        bad "PyNaCl not importable inside venv - run: source venv/bin/activate && pip install -r requirements.txt"
     fi
     if venv/bin/python -c "import requests" >/dev/null 2>&1; then
         ok "requests importable inside venv (MCAttach Relay HTTP client, ConnectivityMonitor)"
     else
-        bad "requests not importable inside venv — run: source venv/bin/activate && pip install -r requirements.txt"
+        bad "requests not importable inside venv - run: source venv/bin/activate && pip install -r requirements.txt"
     fi
     # Task 48: meshtastic (GPLv3) no longer belongs in Core's own venv -
     # Core never imports it directly. Its presence here isn't wrong (a
@@ -62,10 +62,10 @@ if [ -x "venv/bin/python" ]; then
     # harmlessly), but it's no longer required, so this is informational
     # only, never `bad`.
     if venv/bin/python -c "import meshtastic" >/dev/null 2>&1; then
-        warn "meshtastic package is importable inside Core's venv — harmless leftover from a pre-split install, no longer required here (see adapters/meshtastic/venv below)"
+        warn "meshtastic package is importable inside Core's venv - harmless leftover from a pre-split install, no longer required here (see adapters/meshtastic/venv below)"
     fi
 else
-    bad "venv/bin/python missing — venv was not created (see INSTALL.md step 3)"
+    bad "venv/bin/python missing - venv was not created (see INSTALL.md step 3)"
 fi
 echo
 
@@ -77,20 +77,20 @@ if [ -x "${ADAPTER_VENV}/bin/python" ]; then
     if "${ADAPTER_VENV}/bin/python" -c "import meshtastic" >/dev/null 2>&1; then
         ok "meshtastic package importable inside the adapter venv"
     else
-        bad "meshtastic package not importable inside ${ADAPTER_VENV} — run: ${ADAPTER_VENV}/bin/pip install -r adapters/meshtastic/requirements.txt"
+        bad "meshtastic package not importable inside ${ADAPTER_VENV} - run: ${ADAPTER_VENV}/bin/pip install -r adapters/meshtastic/requirements.txt"
     fi
     if "${ADAPTER_VENV}/bin/python" -c "from meshtastic.ble_interface import BLEInterface" >/dev/null 2>&1; then
         ok "BLE support (bleak, a base meshtastic dependency) importable inside the adapter venv"
     else
-        bad "BLE support not importable inside ${ADAPTER_VENV} — meshtastic itself may be missing/broken (bleak is a base dependency, not an extra - see adapters/meshtastic/requirements.txt); run: ${ADAPTER_VENV}/bin/pip install -r adapters/meshtastic/requirements.txt"
+        bad "BLE support not importable inside ${ADAPTER_VENV} - meshtastic itself may be missing/broken (bleak is a base dependency, not an extra - see adapters/meshtastic/requirements.txt); run: ${ADAPTER_VENV}/bin/pip install -r adapters/meshtastic/requirements.txt"
     fi
     if [ -x "${ADAPTER_VENV}/bin/meshtastic" ]; then
         ok "meshtastic CLI present at ${ADAPTER_VENV}/bin/meshtastic"
     else
-        warn "no ${ADAPTER_VENV}/bin/meshtastic — CLI may resolve from elsewhere (MESHTASTIC_CMD in config.py, see resolve_meshtastic_cli())"
+        warn "no ${ADAPTER_VENV}/bin/meshtastic - CLI may resolve from elsewhere (MESHTASTIC_CMD in config.py, see resolve_meshtastic_cli())"
     fi
 else
-    bad "${ADAPTER_VENV}/bin/python missing — the adapter venv was not created. Core will still start (transport status ADAPTER_UNAVAILABLE, by design) but the radio will not connect. Run: python3 -m venv ${ADAPTER_VENV} && ${ADAPTER_VENV}/bin/pip install -r adapters/meshtastic/requirements.txt (see install.sh's step_adapter_venv — a plain 'git pull' update never runs this step on an existing install, same class of gap as task 39's sudoers checks above)"
+    bad "${ADAPTER_VENV}/bin/python missing - the adapter venv was not created. Core will still start (transport status ADAPTER_UNAVAILABLE, by design) but the radio will not connect. Run: python3 -m venv ${ADAPTER_VENV} && ${ADAPTER_VENV}/bin/pip install -r adapters/meshtastic/requirements.txt (see install.sh's step_adapter_venv - a plain 'git pull' update never runs this step on an existing install, same class of gap as task 39's sudoers checks above)"
 fi
 echo
 
@@ -133,19 +133,19 @@ PYEOF
         fi
     fi
 else
-    bad "config.py missing — run: cp config.example.py config.py (see INSTALL.md step 5)"
+    bad "config.py missing - run: cp config.example.py config.py (see INSTALL.md step 5)"
 fi
 
 if [ -d "data" ]; then
     ok "data/ directory exists"
 else
-    warn "data/ directory missing — run: mkdir -p data"
+    warn "data/ directory missing - run: mkdir -p data"
 fi
 
 if [ -f "weather_secrets.py" ]; then
     ok "weather_secrets.py present (Weather widget configured)"
 else
-    warn "weather_secrets.py absent — optional, Weather widget stays unconfigured"
+    warn "weather_secrets.py absent - optional, Weather widget stays unconfigured"
 fi
 echo
 
@@ -154,41 +154,41 @@ echo "systemd service"
 if [ -f "/etc/systemd/system/meshcenter.service" ]; then
     ok "unit file installed at /etc/systemd/system/meshcenter.service"
 else
-    bad "unit file missing — see INSTALL.md step 8"
+    bad "unit file missing - see INSTALL.md step 8"
 fi
 
 if command -v systemctl >/dev/null 2>&1; then
     if systemctl is-enabled --quiet meshcenter.service 2>/dev/null; then
         ok "meshcenter.service is enabled (starts on boot)"
     else
-        warn "meshcenter.service is not enabled — run: sudo systemctl enable meshcenter.service"
+        warn "meshcenter.service is not enabled - run: sudo systemctl enable meshcenter.service"
     fi
     if systemctl is-active --quiet meshcenter.service 2>/dev/null; then
         ok "meshcenter.service is active"
     else
-        bad "meshcenter.service is not active — run: sudo systemctl status meshcenter.service"
+        bad "meshcenter.service is not active - run: sudo systemctl status meshcenter.service"
     fi
 else
-    warn "systemctl not available — skipping service state checks"
+    warn "systemctl not available - skipping service state checks"
 fi
 echo
 
 # --- 4. sudoers (the step that's easy to forget) ------------------------------
-echo "sudoers (system/Wi-Fi actions — commonly forgotten, see INSTALL.md 'Easy to forget')"
+echo "sudoers (system/Wi-Fi actions - commonly forgotten, see INSTALL.md 'Easy to forget')"
 # `sudo -n -l` (never prompts) is the only reliable check here: it reports
 # what this user could actually run as root, whether that comes from
 # deploy/meshcenter.sudoers or from a broader NOPASSWD rule set some other
 # way. Testing for /etc/sudoers.d/meshcenter with `[ -f ... ]` looks
-# appealing but is unreliable — that directory is typically mode 750
+# appealing but is unreliable - that directory is typically mode 750
 # root:root, so a non-root user gets "Permission denied" on stat(), which
 # `[ -f ]` can't distinguish from "file doesn't exist".
 SUDO_LIST=$(sudo -n -l 2>/dev/null)
 if [ -z "$SUDO_LIST" ]; then
-    bad "sudo -n -l returned nothing (or would require a password) — this user has no passwordless sudo at all; UI restart/reboot/Wi-Fi actions will hang waiting for a password"
+    bad "sudo -n -l returned nothing (or would require a password) - this user has no passwordless sudo at all; UI restart/reboot/Wi-Fi actions will hang waiting for a password"
 elif echo "$SUDO_LIST" | grep -qE "NOPASSWD:\s*ALL|systemctl restart meshcenter\.service"; then
     ok "NOPASSWD sudo confirmed for: systemctl restart meshcenter.service"
 else
-    bad "systemctl restart meshcenter.service not covered by passwordless sudo — UI restart action will hang waiting for a password (see deploy/meshcenter.sudoers)"
+    bad "systemctl restart meshcenter.service not covered by passwordless sudo - UI restart action will hang waiting for a password (see deploy/meshcenter.sudoers)"
 fi
 # deploy/meshcenter-wifi.sudoers now grants meshcenter-network-helper only
 # (P1 #7/#8 stabilization follow-up), not nmcli/iw directly - an install
@@ -201,14 +201,14 @@ fi
 if [ -n "$SUDO_LIST" ] && echo "$SUDO_LIST" | grep -qE "NOPASSWD:\s*ALL|meshcenter-network-helper"; then
     ok "NOPASSWD sudo confirmed for meshcenter-network-helper (Wi-Fi management)"
 elif [ -n "$SUDO_LIST" ] && echo "$SUDO_LIST" | grep -qE "nmcli|/usr/sbin/iw"; then
-    warn "sudo still grants the OLD direct nmcli/iw rule, not meshcenter-network-helper — re-run install.sh/meshcenter-firstboot.sh's relevant step (or manually install the updated deploy/meshcenter-wifi.sudoers) to pick up the narrower helper-based rule; Wi-Fi actions in the UI will fail until then, since api/api_system.py no longer calls nmcli/iw directly"
+    warn "sudo still grants the OLD direct nmcli/iw rule, not meshcenter-network-helper - re-run install.sh/meshcenter-firstboot.sh's relevant step (or manually install the updated deploy/meshcenter-wifi.sudoers) to pick up the narrower helper-based rule; Wi-Fi actions in the UI will fail until then, since api/api_system.py no longer calls nmcli/iw directly"
 else
-    warn "meshcenter-network-helper not covered by passwordless sudo — Wi-Fi actions in the UI will fail (see deploy/meshcenter-wifi.sudoers)"
+    warn "meshcenter-network-helper not covered by passwordless sudo - Wi-Fi actions in the UI will fail (see deploy/meshcenter-wifi.sudoers)"
 fi
 if [ -x "/usr/local/sbin/meshcenter-network-helper" ]; then
     ok "meshcenter-network-helper installed at /usr/local/sbin/meshcenter-network-helper"
 else
-    warn "/usr/local/sbin/meshcenter-network-helper missing or not executable — Wi-Fi actions in the UI will fail even with correct sudoers (see scripts/meshcenter-network-helper, installed by install.sh/meshcenter-firstboot.sh)"
+    warn "/usr/local/sbin/meshcenter-network-helper missing or not executable - Wi-Fi actions in the UI will fail even with correct sudoers (see scripts/meshcenter-network-helper, installed by install.sh/meshcenter-firstboot.sh)"
 fi
 # Not `bad` - this only affects the Devices tab's optional I2C/RTC card, not
 # core MeshCenter functionality. An install predating task 23 (PR #84) that
@@ -221,12 +221,12 @@ fi
 if [ -n "$SUDO_LIST" ] && echo "$SUDO_LIST" | grep -qE "NOPASSWD:\s*ALL|meshcenter-hw-config"; then
     ok "NOPASSWD sudo confirmed for meshcenter-hw-config (I2C/RTC hardware setup)"
 else
-    warn "meshcenter-hw-config not covered by passwordless sudo — the Devices tab's 'Enable I2C & configure RTC' button will fail (see deploy/meshcenter-hw.sudoers; on an install that predates this feature, updating via git pull alone will NOT add it — install the sudoers file manually or re-run install.sh/meshcenter-firstboot.sh's relevant step)"
+    warn "meshcenter-hw-config not covered by passwordless sudo - the Devices tab's 'Enable I2C & configure RTC' button will fail (see deploy/meshcenter-hw.sudoers; on an install that predates this feature, updating via git pull alone will NOT add it - install the sudoers file manually or re-run install.sh/meshcenter-firstboot.sh's relevant step)"
 fi
 if [ -x "/usr/local/sbin/meshcenter-hw-config" ]; then
     ok "meshcenter-hw-config helper installed at /usr/local/sbin/meshcenter-hw-config"
 else
-    warn "/usr/local/sbin/meshcenter-hw-config missing or not executable — the I2C/RTC hardware card will fail even with correct sudoers (see scripts/meshcenter-hw-config, installed by install.sh/meshcenter-firstboot.sh)"
+    warn "/usr/local/sbin/meshcenter-hw-config missing or not executable - the I2C/RTC hardware card will fail even with correct sudoers (see scripts/meshcenter-hw-config, installed by install.sh/meshcenter-firstboot.sh)"
 fi
 echo
 
@@ -279,10 +279,10 @@ if [ -n "$IDENTITY_STATUS" ] && [[ "$IDENTITY_STATUS" != __READ_ERROR__* ]]; the
             ok "radio identity: MATCH (${INSTANCE_FILE})"
             ;;
         NOT_CHECKED)
-            warn "radio identity: NOT_CHECKED (${INSTANCE_FILE}) — radio may still be initializing, re-run in a few seconds"
+            warn "radio identity: NOT_CHECKED (${INSTANCE_FILE}) - radio may still be initializing, re-run in a few seconds"
             ;;
         *)
-            bad "radio identity is not MATCH (${IDENTITY_STATUS}, ${INSTANCE_FILE}) — check Serial access is enabled on the radio and the correct port is in config.py"
+            bad "radio identity is not MATCH (${IDENTITY_STATUS}, ${INSTANCE_FILE}) - check Serial access is enabled on the radio and the correct port is in config.py"
             ;;
     esac
 else
@@ -299,26 +299,26 @@ else
         case "$HTTP_CODE" in
             200)
                 if echo "$DASHBOARD" | grep -q '"identity_status":"MATCH"'; then
-                    ok "radio identity: MATCH (HTTP fallback — ${INSTANCE_FILE} was unavailable)"
+                    ok "radio identity: MATCH (HTTP fallback - ${INSTANCE_FILE} was unavailable)"
                 elif echo "$DASHBOARD" | grep -q '"identity_status":"NOT_CHECKED"'; then
-                    warn "radio identity: NOT_CHECKED — radio may still be initializing, re-run in a few seconds"
+                    warn "radio identity: NOT_CHECKED - radio may still be initializing, re-run in a few seconds"
                 else
                     IDENTITY=$(echo "$DASHBOARD" | grep -o '"identity_status":"[A-Z_]*"')
-                    bad "radio identity is not MATCH ($IDENTITY) — check Serial access is enabled on the radio and the correct port is in config.py"
+                    bad "radio identity is not MATCH ($IDENTITY) - check Serial access is enabled on the radio and the correct port is in config.py"
                 fi
                 ;;
             401)
                 info "Authentication enabled - protected API check skipped (${INSTANCE_FILE} was also unavailable; log in via the UI to verify radio identity manually)"
                 ;;
             "" | 000)
-                warn "could not reach http://127.0.0.1:${APP_PORT}/api/node-manager/dashboard — is the service running?"
+                warn "could not reach http://127.0.0.1:${APP_PORT}/api/node-manager/dashboard - is the service running?"
                 ;;
             *)
-                warn "http://127.0.0.1:${APP_PORT}/api/node-manager/dashboard returned HTTP $HTTP_CODE — unexpected, skipping radio identity check"
+                warn "http://127.0.0.1:${APP_PORT}/api/node-manager/dashboard returned HTTP $HTTP_CODE - unexpected, skipping radio identity check"
                 ;;
         esac
     else
-        warn "curl not available and ${INSTANCE_FILE} unreadable — skipping radio identity check"
+        warn "curl not available and ${INSTANCE_FILE} unreadable - skipping radio identity check"
     fi
 fi
 echo

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# build-release.sh — package MeshCenter's two independent public release
+# build-release.sh - package MeshCenter's two independent public release
 # archives (P0 #2/#3 stabilization follow-up, "Model B": separate Core and
 # Adapter archives, laying groundwork for future alternative radio/protocol
 # backends beyond Meshtastic - APRS/LoRaWAN/MQTT/etc - not just this one).

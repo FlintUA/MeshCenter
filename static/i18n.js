@@ -1,13 +1,13 @@
 // ============================================================
-// I18N — minimal client-side translation runtime.
+// I18N - minimal client-side translation runtime.
 //
-// No build step, no bundler (see CLAUDE.md) — this is the whole
+// No build step, no bundler (see CLAUDE.md) - this is the whole
 // implementation, not a stripped-down build of a larger library.
 // Catalogs live at /static/i18n/<locale>.json, one flat/dotted-key
 // JSON file per locale. English is always loaded as a fallback so a
 // missing key/locale never shows up blank in the UI.
 //
-// Before translating catalog content, read static/i18n/README.md — it
+// Before translating catalog content, read static/i18n/README.md - it
 // lists terms that must stay untranslated in every locale (Meshtastic,
 // LongFast, PSK, etc.) and documents the one genuinely ambiguous case
 // ("Channel") that was already investigated against the code.
@@ -19,7 +19,7 @@
     var FALLBACK_LOCALE = 'en';
     // Bumped manually alongside catalog content changes, same convention as
     // the ?v= query strings on <script>/<link> tags in index.html.
-    var CATALOG_VERSION = '20261020-upd1';
+    var CATALOG_VERSION = '20261021-dash1';
 
     var catalogs = {};      // locale -> flattened {dottedKey: value}
     var loadPromises = {};  // locale -> in-flight/completed fetch promise
@@ -127,7 +127,7 @@
         }
 
         if (isPluralForm(value)) {
-            // A plural-shaped catalog entry used via t() (no count) — best
+            // A plural-shaped catalog entry used via t() (no count) - best
             // effort: prefer "other", the category every locale defines.
             return interpolate(value.other || value.one || '', params);
         }
@@ -137,11 +137,11 @@
 
     /**
      * Like t(), but returns `fallback` instead of a "[[key]]" marker when
-     * the key isn't in any loaded catalog — for translating server-sent
+     * the key isn't in any loaded catalog - for translating server-sent
      * error/message codes, where a missing catalog entry should silently
      * fall back to the server's own English string rather than show a
      * broken-looking marker to the user. (t() itself intentionally keeps
-     * the visible marker — that's the right behavior for static markup,
+     * the visible marker - that's the right behavior for static markup,
      * where a missing key is a bug to notice, not a runtime condition to
      * degrade gracefully from.)
      */
@@ -174,7 +174,7 @@
         }
 
         if (!isPluralForm(value)) {
-            // Not a plural-shaped entry — treat as a plain string.
+            // Not a plural-shaped entry - treat as a plain string.
             return interpolate(value, allParams);
         }
 
@@ -193,7 +193,7 @@
      * Applies translations to the static DOM shell under `root` via
      * data-i18n / data-i18n-placeholder / data-i18n-title /
      * data-i18n-aria-label attributes. Only covers markup present at call
-     * time — content rendered later by chat.js/media.js/weather.js must
+     * time - content rendered later by chat.js/media.js/weather.js must
      * call t()/plural() directly in its own template literals.
      */
     function applyStaticDom(root) {

@@ -6,12 +6,12 @@
 > actually calls, see [docs/API_ROUTES.md](API_ROUTES.md) (the complete,
 > auto-generated list) and [docs/architecture/Architecture.md](architecture/Architecture.md#rest-api).
 
-Status: **implemented and live** — `SerialTransport` (Task 44) and
+Status: **implemented and live** - `SerialTransport` (Task 44) and
 `BLETransport` (Task 45) implement this contract; the Python interface lives
 in [`meshsrv/radio_transport.py`](../meshsrv/radio_transport.py) as an
 `abc.ABC`. Task 48's process-isolation boundary has also landed: Core
 (`server.py`) constructs `AdapterIPCTransport`/`AdapterSupervisor`
-(`meshsrv/adapter_ipc_client.py`) and wires them into `TransportRouter` —
+(`meshsrv/adapter_ipc_client.py`) and wires them into `TransportRouter` -
 the concrete transports run in a separate OS process (the "adapter"
 subprocess), not in-process inside Core, and this document's "JSON wire
 shape" section below is the real, in-use serialization for that boundary
@@ -25,11 +25,11 @@ mismatch instead of failing opaquely.
 
 Five call sites in Core (`server.py`, `api/api_chat.py` ×2,
 `meshsrv/schedule_actions.py`, `storage/waypoint_sender.py`) used to import
-`meshtastic` (GPLv3) directly — a real copyleft violation, not a formality.
+`meshtastic` (GPLv3) directly - a real copyleft violation, not a formality.
 This protocol is the boundary that isolates all Meshtastic specifics
 (Serial, BLE) behind neutral models, and Task 48 landing closed that
 violation for real: `import meshtastic`/`from meshtastic ...` no longer
-appears anywhere in Core (verified by grep, not assumed — CI now enforces
+appears anywhere in Core (verified by grep, not assumed - CI now enforces
 this on every PR/push, see `.github/workflows/ci.yml`'s "GPLv3
 license-boundary check" step). The five call sites above now go through
 `TransportRouter`/`RadioTransport` instead.
@@ -45,7 +45,7 @@ license-boundary check" step). The five call sites above now go through
 IPC-only additions (`meshsrv/adapter_ipc_client.py`, not part of the `RadioTransport` ABC): `reconnect` may carry an optional `descriptor` (the endpoint to reconnect to - an adapter process forgets its last `connect()` whenever it is killed and respawned, so Core always supplies the accepted profile's address), and a `connection_info` operation returns the adapter's own in-memory view of the link (no radio I/O) so Core can refresh its cache-only `get_connection_info()` and notice a session whose reader thread has died.
 | `is_connected()` | Cheap local check | ad hoc `interface is not None` checks |
 | `send_text(message, timeout=15)` | One text message | `interface.sendText(...)` |
-| `send_packet(payload, destination_id, port_num, want_ack=False, timeout=15)` | Raw application payload | (no current equivalent — escape hatch) |
+| `send_packet(payload, destination_id, port_num, want_ack=False, timeout=15)` | Raw application payload | (no current equivalent - escape hatch) |
 | `send_messages(messages, timeout=30)` | Batch over one connection | `api/api_chat.py`'s `_process_send_batch` |
 | `send_waypoint(waypoint, timeout=15)` | Send + optional notification | `storage/waypoint_sender.py` |
 | `get_nodes(timeout=15)` | Full node list | `--info`'s "Nodes in mesh" block |
@@ -61,7 +61,7 @@ down from the plan document, even though `channel` was already listed
 among the neutral models below. `api/api_chat.py`'s
 `discover_radio_channels()` reads exactly this today. This mirrored the gap
 the plan already caught and fixed once, for `send_waypoint` and
-`set_device_time` — **resolved**: `get_channels` is implemented in both
+`set_device_time` - **resolved**: `get_channels` is implemented in both
 `SerialTransport` and `BLETransport` (`adapters/meshtastic/`), not just
 declared on the interface.
 
@@ -70,13 +70,13 @@ declared on the interface.
 Hardened by the live Task 43 BLE test on TAP2: `meshtastic`'s own
 `BLEInterface` connect (`_waitConnected(timeout=60.0)` internally) hung for
 over 90 seconds with no response and required an external `kill -9` to
-recover — the library's documented internal timeout did not fire.
+recover - the library's documented internal timeout did not fire.
 
-This is a **two-tier guarantee, and the tiers are not equivalent** — do not
+This is a **two-tier guarantee, and the tiers are not equivalent** - do not
 read "timeout" as "the operation is guaranteed to actually stop" before
 Task 48. `BLEInterface`/`BLEClient` runs its own `asyncio` event loop inside
 a daemon `Thread` (confirmed by reading `ble_interface.py` in Task 43,
-finding #4) — CPython has no API to force-terminate another thread, only
+finding #4) - CPython has no API to force-terminate another thread, only
 `Thread.join(timeout)`, which returns without the thread actually stopping.
 Only an OS process can be `SIGKILL`ed.
 
@@ -90,7 +90,7 @@ Only an OS process can be `SIGKILL`ed.
 2. **Resource release (only guaranteed from Task 48 onward)**, once the
    adapter is an isolated subprocess and a timeout can actually `SIGKILL`
    it. Before that: when tier 1 fires on a stuck call, the orphaned
-   background thread — its event loop, its live bleak/GATT session — keeps
+   background thread - its event loop, its live bleak/GATT session - keeps
    running unsupervised. It is *abandoned*, not killed. This is the same
    failure mode this whole section is named after: a leftover OS-level BLE
    session from a previous attempt blocking the next `connect()` until an
@@ -98,7 +98,7 @@ Only an OS process can be `SIGKILL`ed.
 
 **Both tiers are implemented now that Task 48 has landed.** Tier 1
 (non-blocking return) has held since Task 44/45; tier 2 (resource release)
-is real as of Task 48's process boundary — `AdapterSupervisor.call()`
+is real as of Task 48's process boundary - `AdapterSupervisor.call()`
 (`meshsrv/adapter_ipc_client.py`) waits up to the caller's declared budget
 for a response and `SIGKILL`s the adapter subprocess on expiry, so a
 wedged call's orphaned resources (event loop, live bleak/GATT session) go
@@ -107,7 +107,7 @@ Tier 2 covers a fifth case too (radio-stability review, P0-A): the
 adapter's own internal `TimeoutEnforced` watchdog
 (`adapters/meshtastic/_timeout_support.py`) can fire *first* and report
 the timeout back as a well-formed response instead of the caller-side
-reader ever timing out waiting for one — `AdapterSupervisor.call()`
+reader ever timing out waiting for one - `AdapterSupervisor.call()`
 recognizes this specific shape (`ok: false`, `error.code == "timeout"`)
 and kills the subprocess before returning, same as the no-response/dead-
 process/malformed-output cases, since the daemon thread that was running
@@ -115,7 +115,7 @@ the timed-out operation is only abandoned inside it, never stopped,
 exactly like the no-response case above. Every other `ok: false` domain
 error (`NOT_CONNECTED`, `UNSUPPORTED`, `IDENTITY_MISMATCH`, ...) means the
 adapter's own call stack already unwound cleanly and does not trigger a
-kill — only `TIMEOUT` specifically indicates an abandoned daemon thread
+kill - only `TIMEOUT` specifically indicates an abandoned daemon thread
 with unknown resource-ownership state.
 BLE cleanup on a kill is handled explicitly too: a `SIGKILL`'d adapter's
 serial file descriptors are reclaimed by the kernel automatically, but a
@@ -123,8 +123,8 @@ BLE GATT session (brokered through BlueZ over D-Bus) can outlive the
 process that opened it, so Core runs `bluetoothctl disconnect <address>`
 itself when a kill happens mid-BLE-operation (see
 `meshsrv/adapter_ipc_client.py`'s module docstring for the full detail,
-including the two independent layers — `KillMode=control-group` and
-`PR_SET_PDEATHSIG` — that separately cover Core itself dying with the
+including the two independent layers - `KillMode=control-group` and
+`PR_SET_PDEATHSIG` - that separately cover Core itself dying with the
 adapter still alive).
 
 ## Reconnect / teardown
@@ -141,60 +141,60 @@ Also from the live test:
 is in a clean state. `force=True` tells the implementation to tear down any
 lower-layer connection it knows about (OS bluez session, held serial fd,
 previous listener subprocess) before attempting a new one. `disconnect()`
-and `close()` must not return until that teardown has *actually completed* —
-not merely been requested — so a caller switching transports (e.g. Serial →
+and `close()` must not return until that teardown has *actually completed* -
+not merely been requested - so a caller switching transports (e.g. Serial →
 BLE on the same node, Task 46/47) can safely construct the next transport
 immediately after `close()` returns, with no extra out-of-band wait.
 
 **This guarantee inherits the same tier-1/tier-2 split.** It holds whenever
 `disconnect()`/`close()` completes within its own `timeout`. If
 `disconnect()`/`close()` itself times out, the caller gets
-`TransportError(TIMEOUT)` promptly (tier 1), but — before Task 48 — there is
+`TransportError(TIMEOUT)` promptly (tier 1), but - before Task 48 - there is
 no guarantee the lower-layer session was actually released. A subsequent
 `connect(force=True)` may still fail against a radio/OS stack that thinks
 it's already connected, exactly like the live Task 43 finding. There is no
-interface-level fix for this before process isolation exists — it is a
+interface-level fix for this before process isolation exists - it is a
 known, named gap carried forward to Task 44/45, not an oversight to paper
 over.
 
 ## Neutral models
 
 No `meshtastic.*` type, no protobuf object, no `SerialInterface`/
-`BLEInterface` reference appears in any signature or model below — see Task
+`BLEInterface` reference appears in any signature or model below - see Task
 43 finding #6 (nowhere in the current codebase does a protobuf/`Node`/
 `Interface` object escape the function that obtained it; every call site
 already reduces to primitives at the point of use, e.g.
 `getattr(sent_packet, "id", None)` → `int(...)`), so this boundary is not
-expected to require new reduction logic in Task 44/45 — just relocating
+expected to require new reduction logic in Task 44/45 - just relocating
 logic that already exists.
 
-- `ConnectionDescriptor` — `type` (`serial`/`bluetooth`/`tcp`), `address`,
+- `ConnectionDescriptor` - `type` (`serial`/`bluetooth`/`tcp`), `address`,
   `label`
-- `ConnectionInfo` — `state`, `descriptor`, `node_id`, `connected_since`,
+- `ConnectionInfo` - `state`, `descriptor`, `node_id`, `connected_since`,
   `last_error`
-- `ConnectionEvent` — `state`, `descriptor`, `detail`, `timestamp` (polled
-  via `get_connection_info()` in this stage — see "Events" below)
-- `NodeUser` / `NodeInfo` — id, names, hw model, telemetry sub-dicts,
+- `ConnectionEvent` - `state`, `descriptor`, `detail`, `timestamp` (polled
+  via `get_connection_info()` in this stage - see "Events" below)
+- `NodeUser` / `NodeInfo` - id, names, hw model, telemetry sub-dicts,
   position
-- `ChannelInfo` — index, name, role
+- `ChannelInfo` - index, name, role
 - `OutgoingMessage` / `SendResult`
 - `OutgoingWaypoint` / `WaypointResult`
-- `TelemetryEvent` — node_id, kind, metrics, timestamp
-- `ReceivedTextEvent` / `ReceivedWaypointEvent` / `ReceivedNodeInfoEvent` / `ReceivedPositionEvent` / `ReceivedTelemetryEvent` — one inbound packet, plain types only (see "Received events" below)
-- `TransportError` — `code` (`TransportErrorCode` enum), `message`
+- `TelemetryEvent` - node_id, kind, metrics, timestamp
+- `ReceivedTextEvent` / `ReceivedWaypointEvent` / `ReceivedNodeInfoEvent` / `ReceivedPositionEvent` / `ReceivedTelemetryEvent` - one inbound packet, plain types only (see "Received events" below)
+- `TransportError` - `code` (`TransportErrorCode` enum), `message`
 
 ## Events
 
 No push/callback mechanism in this version. Task 47.3 requires that a BLE
 disconnect not crash the rest of the app, but with `listen_meshtastic()`
 staying inside Core through Task 48 ("Stage A" per section 8.3 of the plan),
-Core observes transport state changes by polling `get_connection_info()` —
+Core observes transport state changes by polling `get_connection_info()` -
 the same pattern `is_radio_available()` / `RADIO_IDENTITY_RESULT` already
 use today. A normalized event stream (`message_received`, `node_updated`,
 `telemetry`, `connection_state`) is explicitly deferred to Stage B (Task
 49+, "Stage B listener").
 
-## Received events (inbound traffic) — models only so far
+## Received events (inbound traffic) - models only so far
 
 Field set and envelope follow the TCP-inbound plan (sections 21-27).
 
@@ -354,7 +354,7 @@ library replaces that topic name for known protocols), on **2.7.9, 2.7.10 and
 2.7.11** - every release inside the pinned `>=2.7.9,<2.8.0`. Re-run it when that
 pin moves.
 
-## JSON wire shape (Task 48's subprocess IPC boundary — implemented, in use)
+## JSON wire shape (Task 48's subprocess IPC boundary - implemented, in use)
 
 Implemented in `meshsrv/ipc_protocol.py` (Core side) and
 `adapters/meshtastic/ipc_server.py` (adapter side); this is the real,
@@ -366,7 +366,7 @@ request also carries a `transport_type` field (`"serial"` or
 `"bluetooth"`), telling the adapter subprocess which of its two live
 transport instances (`SerialTransport`/`BLETransport`) to route this call
 to. This keeps the adapter subprocess stateless about "which transport is
-active" — `TransportRouter` on Core's side already tracks that, and
+active" - `TransportRouter` on Core's side already tracks that, and
 forwarding it on every request means Core and the adapter can never
 disagree about it after a partial failure the way two independently
 tracked "active" flags could (see `adapters/meshtastic/ipc_server.py`'s
@@ -396,7 +396,7 @@ example.
 ```
 
 ```jsonc
-// Response — success
+// Response - success
 {
   "protocol_version": 1,
   "ok": true,
@@ -409,7 +409,7 @@ example.
 ```
 
 ```jsonc
-// Response — failure (structured, no traceback in the public protocol)
+// Response - failure (structured, no traceback in the public protocol)
 {
   "protocol_version": 1,
   "ok": false,
@@ -471,7 +471,7 @@ example.
 ## Batching
 
 `send_messages()` holds **one** underlying connection open for the entire
-batch — this is existing, load-bearing behavior
+batch - this is existing, load-bearing behavior
 (`api/api_chat.py`'s `_process_send_batch`, and the
 `BATCH_ACCUMULATION_WINDOW_SECONDS` draining logic in its `send_worker`)
 that must not regress when this moves behind the transport interface.

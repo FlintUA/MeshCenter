@@ -264,7 +264,7 @@ def test_empty_or_non_ascii_header_fails_closed():
 @pytest.mark.parametrize("corrupt", ["", 12345, {"bad": True}])
 def test_corrupt_session_token_fails_closed(corrupt):
     # A session token that is empty, a non-string scalar, or a nested value
-    # must fail closed with 403 — secrets.compare_digest() would raise a
+    # must fail closed with 403 - secrets.compare_digest() would raise a
     # TypeError on a non-string, and an empty value must never compare equal.
     app, _, effects = _make_app(enabled=False)
     client = app.test_client()
@@ -323,7 +323,7 @@ def test_session_cookie_secure_wiring_consumes_config(server_module):
 
     # (b) The module-level var must come from config via globals().get() with
     #     a False (HTTP) default. Importing server.py a second time is unsafe
-    #     (heavy module-level side effects — see conftest.py), so this is
+    #     (heavy module-level side effects - see conftest.py), so this is
     #     asserted structurally on the source instead of by re-import.
     source = (Path(__file__).resolve().parents[1] / "server.py").read_text(encoding="utf-8")
     tree = ast.parse(source)

@@ -2,7 +2,7 @@
 
 **Version:** 1.0  
 **Status:** Active Design Specification  
-**Project:** MeshCenter – Meshtastic Control Center
+**Project:** MeshCenter - Meshtastic Control Center
 
 ---
 

@@ -2,31 +2,31 @@
 """
 MeshCenter Node Time Sync
 One-way sync: MeshCenter -> Meshtastic node.
-Uses radio_session() — does not create an independent SerialInterface.
+Uses radio_session() - does not create an independent SerialInterface.
 
 The write path is meshtastic.node.Node.setTime(timeSec), confirmed present
 in the installed meshtastic==2.7.11 package (venv/lib/python3.13/site-packages/
 meshtastic/node.py:944). It sends an AdminMessage with `set_time_only` set
 to the given Unix timestamp via the node's own admin channel. Called on
 `interface.localNode` it is fire-and-forget for the local node (no ACK/NAK
-wait — Node._sendAdmin() only registers an onResponse callback when the
+wait - Node._sendAdmin() only registers an onResponse callback when the
 target is a remote node, see node.py:944-957), so this module treats it as
 a synchronous call: if it doesn't raise, the request was handed to the
 radio successfully.
 
 There is no library-level "read the node's current clock" call (no
 `getTime`, no CLI --get-time flag, and NodeInfo/DeviceMetadata as exposed by
-this meshtastic version carry no live clock field) — `_get_node_time()`
+this meshtastic version carry no live clock field) - `_get_node_time()`
 always returns None, and `evaluate_drift()` already treats that as
 'invalid', which forces a sync. This makes the sync effectively
 unconditional (every eligible connect, throttled by MIN_SYNC_INTERVAL_S)
 rather than drift-aware, which is the best this library version supports.
 
-KNOWN LIMITATION — meshtastic 2.7.11
+KNOWN LIMITATION - meshtastic 2.7.11
 setTime() is implemented, getTime() is not (neither in the Python API nor
 the CLI). Because of this, _get_node_time() always returns None,
 evaluate_drift() would always return 'invalid', and the drift thresholds
-(DRIFT_SMALL_S / DRIFT_MEDIUM_S / DRIFT_LARGE_S) are currently unused —
+(DRIFT_SMALL_S / DRIFT_MEDIUM_S / DRIFT_LARGE_S) are currently unused -
 try_sync() below calls _set_node_time() directly instead of routing
 through evaluate_drift(), since that routing was dead code (every path
 other than 'skip' ends up syncing anyway, and 'skip' was unreachable with
@@ -66,7 +66,7 @@ def _get_node_time(interface):
     """Read the node's current Unix timestamp. Return None if unavailable.
 
     The installed meshtastic package (2.7.11) exposes no getter for the
-    node's onboard clock — no Node.getTime()/get_time(), no admin
+    node's onboard clock - no Node.getTime()/get_time(), no admin
     get_time_request in admin_pb2.AdminMessage, and no `--get-time` CLI
     flag (only `--set-time`). NodeInfo/DeviceMetrics as parsed by this
     version also carry no live clock field. There is nothing real to read
@@ -106,7 +106,7 @@ def _set_node_time(interface, ts: int) -> bool:
 def evaluate_drift(node_time, system_time) -> str:
     """Return 'skip' | 'sync_when_free' | 'sync_now' | 'invalid'.
 
-    Currently unreachable from try_sync() — kept for when the library
+    Currently unreachable from try_sync() - kept for when the library
     gains a getTime()-equivalent (see KNOWN LIMITATION note above)."""
     if node_time is None:
         return 'invalid'
@@ -138,7 +138,7 @@ def try_sync(interface, log_fn=None) -> str:
 
     system_time = get_time_status()['utc']
 
-    # NOTE: drift evaluation disabled — getTime() unavailable in
+    # NOTE: drift evaluation disabled - getTime() unavailable in
     # meshtastic 2.7.11. Once the library supports it, uncomment:
     # node_time = _get_node_time(interface)
     # decision  = evaluate_drift(node_time, system_time)

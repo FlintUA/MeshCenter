@@ -1,4 +1,4 @@
-"""USB/UVC camera driver — CAM-1 (audit review finding F10, 2026-09-30):
+"""USB/UVC camera driver - CAM-1 (audit review finding F10, 2026-09-30):
 ffmpeg subprocess + v4l2-ctl subprocess, replacing the old linuxpy/v4l2py
 in-process driver. linuxpy/v4l2py are GPL-3.0-or-later; importing them
 directly into Core's own MIT-licensed process is exactly the pattern the

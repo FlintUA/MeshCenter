@@ -414,7 +414,7 @@ def register_chat_routes(
             # appear in the UI immediately, without waiting for a first
             # incoming message. chats/state_lock/save_chats are already
             # available as closures from register_chat_routes()'s
-            # parameters — no need to import them from server.
+            # parameters - no need to import them from server.
             try:
                 with state_lock:
                     seeded = False
@@ -423,7 +423,7 @@ def register_chat_routes(
                         if chat_id in chats:
                             continue
                         # ch["name"] is always "{base} [{index}]" (see the
-                        # f-string above) — strip that exact suffix rather
+                        # f-string above) - strip that exact suffix rather
                         # than a blind rsplit(" ["), which would mangle a
                         # channel name that itself legitimately contains " [".
                         suffix = f" [{ch['index']}]"
@@ -442,7 +442,7 @@ def register_chat_routes(
                         save_chats()
             except Exception as seed_error:
                 print(f"[CHANNELS] Auto-seed warning: {seed_error}", flush=True)
-                # Non-fatal — channel will appear after first incoming message
+                # Non-fatal - channel will appear after first incoming message
 
             return discovered
 

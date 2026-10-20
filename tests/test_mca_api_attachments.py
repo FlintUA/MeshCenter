@@ -653,7 +653,7 @@ def test_list_filter_saved(monkeypatch):
 
 
 def test_list_counterparty_filter(monkeypatch):
-    # Filters by the stable counterparty id only — never the display name, and
+    # Filters by the stable counterparty id only - never the display name, and
     # a record with no counterparty (missing/ambiguous/non-DIRECT) is excluded.
     facade = _FakeFacade(
         snapshot=_snapshot([
@@ -2651,7 +2651,7 @@ def test_create_overlong_filename_keeps_a_correct_extension(monkeypatch, tmp_pat
 
 def test_create_filename_cap_is_code_points_not_bytes(monkeypatch, tmp_path):
     # 300 code points of a 2-byte character (600 bytes) are truncated to 251
-    # *code points* (502 bytes) — pinning that the cap measures characters,
+    # *code points* (502 bytes) - pinning that the cap measures characters,
     # not UTF-8 bytes (a byte-measured cap would stop around 127 characters).
     facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
     c = _client(monkeypatch, facade)

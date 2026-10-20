@@ -1,4 +1,4 @@
-"""TransportRouter — the one stable RadioTransport every DI consumer
+"""TransportRouter - the one stable RadioTransport every DI consumer
 (api/api_chat.py, api/api_waypoints.py, meshsrv/schedule_actions.py) is
 wired to, so switching the active concrete transport (Serial <-> BLE) at
 runtime (Task 46's POST /api/meshtastic/transport) never requires

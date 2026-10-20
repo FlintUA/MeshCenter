@@ -104,8 +104,8 @@ function buildSandbox({ fetchImpl, i18nStrings }) {
 }
 
 const I18N_STRINGS = {
-    'system.updates_blocked_deps_title': 'Update blocked — dependencies changed',
-    'system.updates_blocked_deps_body': 'This update changes dependency file(s): {files}. It was NOT applied — your installation is unchanged.',
+    'system.updates_blocked_deps_title': 'Update blocked - dependencies changed',
+    'system.updates_blocked_deps_body': 'This update changes dependency file(s): {files}. It was NOT applied - your installation is unchanged.',
     'system.updates_blocked_deps_instructions': 'Apply it manually, then restart the service yourself:',
     'modals.copy': 'Copy',
     'system.updates_apply_confirm': 'Update MeshCenter from {current} to {latest}?',

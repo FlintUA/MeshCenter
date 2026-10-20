@@ -1,6 +1,6 @@
-/* style-part2.css — часть 2 из 4 механического сплита style.css
+/* style-part2.css - часть 2 из 4 механического сплита style.css
    (2026-08-21). Порядок частей в <link> ЗНАЧИМ: в файле есть 213
-   селекторов, повторяющихся в разных частях — при равной
+   селекторов, повторяющихся в разных частях - при равной
    специфичности побеждает то, что идёт позже. НЕ переставлять
    <link>-теги местами, НЕ переносить правила между частями без
    проверки на дублирующиеся селекторы по всему набору файлов. */
@@ -3763,7 +3763,7 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
 .node-detail-card {
     /* Step 3 regression fix: PR 6's own comment below already called this the
        BODY of the expanded node card, sharing one outer border with its
-       compact header above — but it kept the old standalone component's own
+       compact header above - but it kept the old standalone component's own
        background/border/radius, which visually drew a second, independent
        box nested inside .node-card instead of one shared block. The compact
        .node-card above already supplies the background/border/radius for

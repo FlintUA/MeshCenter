@@ -64,11 +64,11 @@ Configure the image as follows:
 3. Under **Storage**, select the correct microSD card.
 4. Open **OS Customisation** and configure the following items:
 
-   - **Hostname** – choose a unique network name, for example `meshcenter`.
-   - **Localisation** – select the correct time zone, country and keyboard layout.
-   - **User** – create a Linux username and a strong password. Remember these credentials because they are required for SSH and `sudo` commands.
-   - **Wi-Fi** – enter the Wi-Fi network name and password. For Raspberry Pi Zero 2 W, use a 2.4 GHz Wi-Fi network.
-   - **Remote Access** – enable **SSH** and select **Use password authentication**.
+   - **Hostname** - choose a unique network name, for example `meshcenter`.
+   - **Localisation** - select the correct time zone, country and keyboard layout.
+   - **User** - create a Linux username and a strong password. Remember these credentials because they are required for SSH and `sudo` commands.
+   - **Wi-Fi** - enter the Wi-Fi network name and password. For Raspberry Pi Zero 2 W, use a 2.4 GHz Wi-Fi network.
+   - **Remote Access** - enable **SSH** and select **Use password authentication**.
 
 The examples below assume:
 
@@ -89,7 +89,7 @@ For additional information, see the official [Raspberry Pi headless setup docume
 2. Insert the microSD card into a **fully powered-off** Raspberry Pi. Do not connect power yet.
 3. On a Raspberry Pi Zero 2 W, leave additional expansion boards or HATs (for example TAP2) disconnected until the first boot and SSH access are confirmed.
 4. Connect power through the **PWR IN** connector (or the normal power input for your Pi model).
-5. Wait **3–5 minutes**. The first boot applies the Imager settings, expands the filesystem and joins the configured network; it often takes longer than later startups.
+5. Wait **3-5 minutes**. The first boot applies the Imager settings, expands the filesystem and joins the configured network; it often takes longer than later startups.
 
 Make sure that the computer and Raspberry Pi are connected to the same local network.
 
@@ -131,7 +131,7 @@ Enter:
 yes
 ```
 
-Then enter the password created in Raspberry Pi Imager. The password is not displayed while typing — this is normal.
+Then enter the password created in Raspberry Pi Imager. The password is not displayed while typing - this is normal.
 
 A successful connection shows a prompt similar to:
 
@@ -218,7 +218,7 @@ deactivate
 ```
 
 The `meshtastic` package (GPLv3) is deliberately not part of Core's own
-venv above — it lives in a second, isolated venv:
+venv above - it lives in a second, isolated venv:
 
 ```bash
 python3 -m venv adapters/meshtastic/venv
@@ -321,7 +321,7 @@ Open the interface from another computer on the same local network:
 http://<raspberry-pi-ip>:5000
 ```
 
-> 🔐 With `AUTH_ENABLED = True` (the default), the first visit shows a create-your-password screen (`/setup`) instead of the app — choose a password of at least 12 characters and you're signed in immediately. Nothing is generated or written to disk in plaintext.
+> 🔐 With `AUTH_ENABLED = True` (the default), the first visit shows a create-your-password screen (`/setup`) instead of the app - choose a password of at least 12 characters and you're signed in immediately. Nothing is generated or written to disk in plaintext.
 
 Stop the manual server with `Ctrl+C` before installing the system service.
 
@@ -518,22 +518,22 @@ A single click on a node card only selects it (and, if the map is open, centers 
 
 The `⚙` button next to the node search opens the sort and filter menu; a badge on the button shows how many filters are active, and each active filter also appears as a chip under the search box (click a chip to remove it). Your choices are remembered in this browser.
 
-- **Sort** (one at a time): last heard (default), name A–Z, distance (nodes without a position come last), hops, favorites first.
+- **Sort** (one at a time): last heard (default), name A-Z, distance (nodes without a position come last), hops, favorites first.
 - **Filters** (all active filters must match): favorites only, ignored only, hide offline (not heard for more than 2 hours), heard directly only (0 hops), hide infrastructure (nodes with the ROUTER, ROUTER_LATE or REPEATER role), known key only (nodes whose file-transfer key is already known).
 
 Ignored nodes are hidden by default; turn on `Ignored only` to see them. Channels are never filtered, and the search box works together with the filters.
 
 ### Working with multiple radios
 
-MeshCenter keeps a separate profile (messages, nodes, telemetry, waypoints, device config, icons) for every radio it has ever seen, under `data/profiles/<node-id>/`. Profiles are never merged automatically, and switching to a different radio never overwrites or deletes another profile's data — only one radio is active at a time.
+MeshCenter keeps a separate profile (messages, nodes, telemetry, waypoints, device config, icons) for every radio it has ever seen, under `data/profiles/<node-id>/`. Profiles are never merged automatically, and switching to a different radio never overwrites or deletes another profile's data - only one radio is active at a time.
 
-**Connecting a radio for the first time**: connect it by USB (with Serial enabled in its own Meshtastic app settings), open **Node Manager**, and click **Detect radio**. A never-before-seen radio gets offered a new, clean profile; a previously-used radio gets its existing profile offered back — no existing data is overwritten either way.
+**Connecting a radio for the first time**: connect it by USB (with Serial enabled in its own Meshtastic app settings), open **Node Manager**, and click **Detect radio**. A never-before-seen radio gets offered a new, clean profile; a previously-used radio gets its existing profile offered back - no existing data is overwritten either way.
 
-**Switching to an already-known radio**: open **Node Manager**, click the saved radio you want, connect it physically, and confirm activation. MeshCenter releases the current radio, verifies the newly connected one's identity, activates its saved profile, and restarts the internal listener — normally a few seconds end to end, and MeshCenter restarts itself as part of this so every module rebinds to the new profile's files.
+**Switching to an already-known radio**: open **Node Manager**, click the saved radio you want, connect it physically, and confirm activation. MeshCenter releases the current radio, verifies the newly connected one's identity, activates its saved profile, and restarts the internal listener - normally a few seconds end to end, and MeshCenter restarts itself as part of this so every module rebinds to the new profile's files.
 
-**Temporary release, for the official Meshtastic app**: since only one application can use the USB connection at a time, configuring channels/encryption/LoRa settings with the official Meshtastic app means releasing the radio first: `Settings > Meshtastic Radio > Release Radio` (can take 1–2 minutes), make your changes in the official app over Bluetooth, disconnect from it, then **Reconnect Radio** in MeshCenter. Messaging, telemetry, node management and Node Tools are unavailable for that window, by design — the radio is genuinely disconnected from MeshCenter during it. On reconnect, MeshCenter automatically re-syncs channel changes (added, removed, renamed) with no restart needed.
+**Temporary release, for the official Meshtastic app**: since only one application can use the USB connection at a time, configuring channels/encryption/LoRa settings with the official Meshtastic app means releasing the radio first: `Settings > Meshtastic Radio > Release Radio` (can take 1-2 minutes), make your changes in the official app over Bluetooth, disconnect from it, then **Reconnect Radio** in MeshCenter. Messaging, telemetry, node management and Node Tools are unavailable for that window, by design - the radio is genuinely disconnected from MeshCenter during it. On reconnect, MeshCenter automatically re-syncs channel changes (added, removed, renamed) with no restart needed.
 
-**Handing a TCP radio to another client (phone app, a second MeshCenter)**: a Meshtastic radio serves only **one** TCP client, so while MeshCenter is connected the phone app cannot use that radio over Wi-Fi (and vice versa). Open **Node Manager**, choose a duration (15 minutes, 1 hour or *until I reconnect*) and press **Release radio**. MeshCenter closes its connection immediately and then does **not** connect again — not on its own timer and not after a restart of MeshCenter or the container — until the time has passed or you press **Reconnect**. The header shows *Radio released (until 12:30)* in a calm, neutral colour; sending and Node Tools answer "radio released" at once instead of timing out. When you are done with the phone app, close it and press **Reconnect** (or just wait for the timer): MeshCenter checks that it is the same radio and is back within about half a minute. A forgotten *until I reconnect* release stays in place until you end it, so check the header chip. The same duration choice exists for a USB radio (its release is not remembered across a restart).
+**Handing a TCP radio to another client (phone app, a second MeshCenter)**: a Meshtastic radio serves only **one** TCP client, so while MeshCenter is connected the phone app cannot use that radio over Wi-Fi (and vice versa). Open **Node Manager**, choose a duration (15 minutes, 1 hour or *until I reconnect*) and press **Release radio**. MeshCenter closes its connection immediately and then does **not** connect again - not on its own timer and not after a restart of MeshCenter or the container - until the time has passed or you press **Reconnect**. The header shows *Radio released (until 12:30)* in a calm, neutral colour; sending and Node Tools answer "radio released" at once instead of timing out. When you are done with the phone app, close it and press **Reconnect** (or just wait for the timer): MeshCenter checks that it is the same radio and is back within about half a minute. A forgotten *until I reconnect* release stays in place until you end it, so check the header chip. The same duration choice exists for a USB radio (its release is not remembered across a restart).
 
 If Node Manager says the radio *may be in use by another client*, two clients keep taking the radio from each other: press **Release radio** on the one that should let go.
 
@@ -579,35 +579,35 @@ Telemetry only appears when the connected or remote node actually transmits the 
 
 The battery-capacity value under `Workspace > Settings` is used only for an approximate runtime estimate. It is not a battery calibration value.
 
-Telemetry history is capped (10,000 records for the local radio, 1,000 per remote node, 40,000 total across the whole mesh — the oldest remote records are dropped first once the total is reached, local history is never evicted by remote traffic) and written to disk on a debounced schedule (at most once every 60 seconds while new data has arrived, flushed immediately on a normal restart) rather than on every single reading — see [Data Storage](architecture/Architecture.md#data-storage) for what that means if the Pi loses power abruptly. Turning "Record telemetry history" off in `Workspace > Settings` only stops new history from being written — the live values on the Base panel keep updating either way.
+Telemetry history is capped (10,000 records for the local radio, 1,000 per remote node, 40,000 total across the whole mesh - the oldest remote records are dropped first once the total is reached, local history is never evicted by remote traffic) and written to disk on a debounced schedule (at most once every 60 seconds while new data has arrived, flushed immediately on a normal restart) rather than on every single reading - see [Data Storage](architecture/Architecture.md#data-storage) for what that means if the Pi loses power abruptly. Turning "Record telemetry history" off in `Workspace > Settings` only stops new history from being written - the live values on the Base panel keep updating either way.
 
 Weather requires an API key for the active provider (`Workspace > Settings > Weather Provider`) and a valid reference location. Click the weather status badge to request a refresh.
 
 ## 11. Camera and Media
 
-The Camera workspace provides live view, video settings, photo settings, image controls and Screenshot capture. On Raspberry Pi Zero 2 W, begin with conservative settings such as 640 x 480 or 800 x 600 at 8 to 15 FPS — higher settings work but increase CPU, memory and heat:
+The Camera workspace provides live view, video settings, photo settings, image controls and Screenshot capture. On Raspberry Pi Zero 2 W, begin with conservative settings such as 640 x 480 or 800 x 600 at 8 to 15 FPS - higher settings work but increase CPU, memory and heat:
 
 | Setting | Recommended |
 |---|---|
 | Video resolution | 640×480 or 800×600 |
-| FPS | 8–15 |
-| JPEG quality | 70–85 |
+| FPS | 8-15 |
+| JPEG quality | 70-85 |
 | Photo preview | 640×480 |
 | Photo capture | 3280×2464 |
 
 Captured images are stored locally under `data/screenshots/` and appear in the Media gallery. They are not transmitted through Meshtastic. Media can be viewed, downloaded or deleted from the browser.
 
-MeshCenter supports both a Raspberry Pi Camera (CSI ribbon connector) and a USB/UVC webcam, through the same interface — if more than one camera is detected at once, the Camera tab's source selector lets you switch which one is active without restarting MeshCenter. A USB camera's live stream stops its underlying process automatically once nobody is watching it, and starts again on the next viewer — you don't need to turn it off by hand to free resources. MJPEG-format USB cameras are supported; a camera that only offers YUYV is also supported but has not been verified end-to-end against MJPEG passthrough on real hardware as of this writing.
+MeshCenter supports both a Raspberry Pi Camera (CSI ribbon connector) and a USB/UVC webcam, through the same interface - if more than one camera is detected at once, the Camera tab's source selector lets you switch which one is active without restarting MeshCenter. A USB camera's live stream stops its underlying process automatically once nobody is watching it, and starts again on the next viewer - you don't need to turn it off by hand to free resources. MJPEG-format USB cameras are supported; a camera that only offers YUYV is also supported but has not been verified end-to-end against MJPEG passthrough on real hardware as of this writing.
 
 ## 12. Radio connection type
 
 MeshCenter can talk to your Meshtastic node three ways, switchable under `Settings > Radio Connection > Connection type`:
 
-- **USB** (default, recommended) — a serial cable to the Raspberry Pi. Full send and receive. Unplugging and replugging the cable, or power-cycling the radio, recovers automatically; a different radio on the port is never adopted silently (see "A different radio was connected" below).
-- **TCP** — over the local network, if your radio exposes Meshtastic's own TCP API (port 4403). Full send and receive (text, waypoints, node info, position, telemetry and delivery acknowledgements), but no remote waypoint deletion over this path. A node serves one TCP client at a time; **Release radio** (Node Manager) hands it to another client. TCP is the only connection type in the Docker image — see [Docker_Installation.md](Docker_Installation.md).
-- **Bluetooth** — no cable, marked "Experimental" in the interface:
-  - **No incoming messages, telemetry, or node info at all while Bluetooth is active** — not degraded, completely absent. You can send over Bluetooth, but MeshCenter will not receive anything until you switch back to USB or TCP.
-  - **Switching connection types can take up to ~90–135 seconds in the worst case** (measured on real hardware) — it is not a quick toggle.
+- **USB** (default, recommended) - a serial cable to the Raspberry Pi. Full send and receive. Unplugging and replugging the cable, or power-cycling the radio, recovers automatically; a different radio on the port is never adopted silently (see "A different radio was connected" below).
+- **TCP** - over the local network, if your radio exposes Meshtastic's own TCP API (port 4403). Full send and receive (text, waypoints, node info, position, telemetry and delivery acknowledgements), but no remote waypoint deletion over this path. A node serves one TCP client at a time; **Release radio** (Node Manager) hands it to another client. TCP is the only connection type in the Docker image - see [Docker_Installation.md](Docker_Installation.md).
+- **Bluetooth** - no cable, marked "Experimental" in the interface:
+  - **No incoming messages, telemetry, or node info at all while Bluetooth is active** - not degraded, completely absent. You can send over Bluetooth, but MeshCenter will not receive anything until you switch back to USB or TCP.
+  - **Switching connection types can take up to ~90-135 seconds in the worst case** (measured on real hardware) - it is not a quick toggle.
 
 If you need reliable message reception, stay on USB (or TCP, with the limitations above). Bluetooth is there for cable-free sending scenarios where those limitations are acceptable.
 
@@ -621,7 +621,7 @@ Open `Workspace > System` to inspect:
 - Meshtastic listener and Radio Health state
 - Recent system events
 
-Below the CPU Usage chart, an on-demand **"Top processes"** panel shows the 5 processes currently using the most CPU, system-wide (not just MeshCenter's own process) — useful for spotting what's actually loading the Pi. It only queries on click, not continuously, so it adds no background load while collapsed.
+Below the CPU Usage chart, an on-demand **"Top processes"** panel shows the 5 processes currently using the most CPU, system-wide (not just MeshCenter's own process) - useful for spotting what's actually loading the Pi. It only queries on click, not continuously, so it adds no background load while collapsed.
 
 `Restart Listener` restarts only radio listening. `Restart MeshCenter` restarts the application service. Raspberry Pi reboot and shutdown affect the whole host and should be used only when intended.
 
@@ -631,7 +631,7 @@ The Workspace menu also controls Base and Nodes panel visibility, theme and comp
 
 ### Language
 
-`Settings > General > Language` switches between Auto, English, Deutsch, Русский and Українська. Coverage differs by area: the Files workspace (MCAttach) is fully translated in all four languages, and the page language, weather text and a first slice of error/toast messages follow your selection — but most of the chat interface (message bubbles, toasts and dialogs built dynamically in the browser) is English-only regardless of the selected language today, and the German/Russian/Ukrainian catalogs for the rest of the interface currently hold placeholder English text rather than real translations. See `static/i18n/README.md` for terms that are deliberately never translated (Meshtastic, LongFast, PSK, and similar).
+`Settings > General > Language` switches between Auto, English, Deutsch, Русский and Українська. Coverage differs by area: the Files workspace (MCAttach) is fully translated in all four languages, and the page language, weather text and a first slice of error/toast messages follow your selection - but most of the chat interface (message bubbles, toasts and dialogs built dynamically in the browser) is English-only regardless of the selected language today, and the German/Russian/Ukrainian catalogs for the rest of the interface currently hold placeholder English text rather than real translations. See `static/i18n/README.md` for terms that are deliberately never translated (Meshtastic, LongFast, PSK, and similar).
 
 ### Installation ID
 
@@ -657,7 +657,7 @@ While the service restarts, the card polls until it comes back on the expected v
 
 ### Browser notifications
 
-`Settings > Browser Notifications` can duplicate selected events (timer finished, schedule triggered, new channel message, new direct message) into a real operating-system notification popup, in addition to the in-app Notifications card — useful when the MeshCenter tab is in the background. It only fires while the tab is open (even backgrounded); it cannot deliver anything once the browser is fully closed, and it stays quiet while the tab is the one visibly in front of you (the in-app UI already covers that case).
+`Settings > Browser Notifications` can duplicate selected events (timer finished, schedule triggered, new channel message, new direct message) into a real operating-system notification popup, in addition to the in-app Notifications card - useful when the MeshCenter tab is in the background. It only fires while the tab is open (even backgrounded); it cannot deliver anything once the browser is fully closed, and it stays quiet while the tab is the one visibly in front of you (the in-app UI already covers that case).
 
 The browser's Notification API requires a secure context (HTTPS or `localhost`). Since MeshCenter is served over plain HTTP by default, most browsers block the permission prompt outright on a LAN address like `http://192.168.1.50:5000`. Until MeshCenter supports HTTPS, you can test this feature per-device with a one-time browser override:
 
@@ -666,29 +666,29 @@ The browser's Notification API requires a secure context (HTTPS or `localhost`).
 3. Set the flag to **Enabled** and relaunch the browser.
 4. Open `Settings > Browser Notifications`, enable it, and accept the permission prompt.
 
-This is a local, per-browser setting — it does not change anything on the Raspberry Pi, and needs repeating on each device/browser you want notifications on.
+This is a local, per-browser setting - it does not change anything on the Raspberry Pi, and needs repeating on each device/browser you want notifications on.
 
 ## 14. Hardware integrations, scheduling and timers
 
 ### I2C devices and real-time clock
 
-The **Devices** tab can detect and configure host-attached I2C peripherals without needing to SSH into the Raspberry Pi: a read-only bus scan reports which addresses respond, and an "Enable I2C & configure RTC" action runs a narrowly-scoped privileged helper to enable the I2C interface and the Device Tree overlay for a DS3231 real-time clock. The RTC's status is reported in three independent stages — **detected** (answers on the bus), **configured** (the kernel overlay is bound — takes effect after a reboot), **readable** (the time can actually be read off it) — so a stuck setup shows exactly where it's stuck. A BME280 environmental sensor (temperature/pressure/humidity) uses the same device-card framework. The "Time & Timers" card shows which time source is actually active (NTP, hardware RTC, or the system clock, in that order of preference).
+The **Devices** tab can detect and configure host-attached I2C peripherals without needing to SSH into the Raspberry Pi: a read-only bus scan reports which addresses respond, and an "Enable I2C & configure RTC" action runs a narrowly-scoped privileged helper to enable the I2C interface and the Device Tree overlay for a DS3231 real-time clock. The RTC's status is reported in three independent stages - **detected** (answers on the bus), **configured** (the kernel overlay is bound - takes effect after a reboot), **readable** (the time can actually be read off it) - so a stuck setup shows exactly where it's stuck. A BME280 environmental sensor (temperature/pressure/humidity) uses the same device-card framework. The "Time & Timers" card shows which time source is actually active (NTP, hardware RTC, or the system clock, in that order of preference).
 
 ### e-Paper display
 
-An optional e-Paper HAT can show live status on the hardware itself, without a browser open — useful for a headless deployment. Two panels are supported (Waveshare 2.13" 4-color, WeAct 1.54" black-and-white), selectable under `Settings > Hardware > e-Paper Display`. Five info screens (Status, Radio, Power, System, Message) rotate automatically on a configurable interval, plus a full-screen Alert view for critical conditions (radio offline, critically low power) that interrupts rotation immediately; manually requesting a screen from the UI always takes priority. A live clock overlay updates without forcing a full panel refresh on every tick.
+An optional e-Paper HAT can show live status on the hardware itself, without a browser open - useful for a headless deployment. Two panels are supported (Waveshare 2.13" 4-color, WeAct 1.54" black-and-white), selectable under `Settings > Hardware > e-Paper Display`. Five info screens (Status, Radio, Power, System, Message) rotate automatically on a configurable interval, plus a full-screen Alert view for critical conditions (radio offline, critically low power) that interrupts rotation immediately; manually requesting a screen from the UI always takes priority. A live clock overlay updates without forcing a full panel refresh on every tick.
 
 ### Time system
 
-MeshCenter maintains one authoritative time source (NTP, hardware RTC, or the system clock, in that preference order) so every connected browser sees the same device time rather than its own local clock — shown in the "Time & Timers" card along with sync status, with a 12h/24h format switch under `Settings > Units` applied globally. MeshCenter also pushes this time to the connected radio node on (re)connect.
+MeshCenter maintains one authoritative time source (NTP, hardware RTC, or the system clock, in that preference order) so every connected browser sees the same device time rather than its own local clock - shown in the "Time & Timers" card along with sync status, with a 12h/24h format switch under `Settings > Units` applied globally. MeshCenter also pushes this time to the connected radio node on (re)connect.
 
 ### Schedule Engine
 
-Scheduled actions, configured under the Schedule card: trigger either at a specific time (with day-of-week selection) or every N minutes, and either log a System Log entry, send a static text message to a node or channel, or send an automatic data report built from current telemetry (with field selection and a stale-data policy). A short signal (up to 95 characters) can also go out over Meshtastic when a schedule fires, in addition to the notification/log entry. Schedules persist across restarts, but **do not fire at all if MeshCenter doesn't have a trusted, synchronized time** — this avoids firing on a wrong clock after a cold boot before NTP has synced.
+Scheduled actions, configured under the Schedule card: trigger either at a specific time (with day-of-week selection) or every N minutes, and either log a System Log entry, send a static text message to a node or channel, or send an automatic data report built from current telemetry (with field selection and a stale-data policy). A short signal (up to 95 characters) can also go out over Meshtastic when a schedule fires, in addition to the notification/log entry. Schedules persist across restarts, but **do not fire at all if MeshCenter doesn't have a trusted, synchronized time** - this avoids firing on a wrong clock after a cold boot before NTP has synced.
 
 ### Timers
 
-Two modes under the Timer card: a stopwatch (counts up) or a countdown (fixed duration, creates a notification and optionally sends a Meshtastic signal on reaching zero). Both can be paused and resumed without losing elapsed time, across as many cycles as needed — Stop is a separate, terminal action; only Reset restarts a stopped timer from zero. Timers are in-memory and reset on a service restart (a notification records which ones were reset this way).
+Two modes under the Timer card: a stopwatch (counts up) or a countdown (fixed duration, creates a notification and optionally sends a Meshtastic signal on reaching zero). Both can be paused and resumed without losing elapsed time, across as many cycles as needed - Stop is a separate, terminal action; only Reset restarts a stopped timer from zero. Timers are in-memory and reset on a service restart (a notification records which ones were reset this way).
 
 ## 15. Back up MeshCenter
 
@@ -804,9 +804,9 @@ Confirm that the user belongs to `dialout`, the USB cable carries data and `MESH
 If the System Log (or a notification) shows **"A different radio was connected"** after a USB cable was unplugged/replugged or the radio was power-cycled, MeshCenter detected that the physical radio now answering on the serial port is not the one this installation is configured for, and deliberately left the listener halted rather than silently mixing in a different radio's data. To resolve it:
 
 - If the correct radio is actually connected now (e.g. it was briefly swapped and has been put back), click **Reconnect Radio** under `Settings > Meshtastic Radio` to force a fresh check.
-- If you intentionally connected a different radio, use **Node Manager** to switch to (or set up) that radio's own profile instead — each radio keeps its own isolated data (see [Working with multiple radios](#working-with-multiple-radios)).
+- If you intentionally connected a different radio, use **Node Manager** to switch to (or set up) that radio's own profile instead - each radio keeps its own isolated data (see [Working with multiple radios](#working-with-multiple-radios)).
 
-Automatic recovery for a known-good USB reconnect (same radio, no identity change — no manual `Restart Listener` or service restart) is in development; until that work is confirmed on real hardware, the behavior described in [Radio connection type](#12-radio-connection-type) still applies.
+Automatic recovery for a known-good USB reconnect (same radio, no identity change - no manual `Restart Listener` or service restart) is in development; until that work is confirmed on real hardware, the behavior described in [Radio connection type](#12-radio-connection-type) still applies.
 
 ### Serial port is busy
 
@@ -856,7 +856,7 @@ The default port is `5000`. If nothing is listening there, check `sudo systemctl
 
 ### Meshtastic CLI not found
 
-The `meshtastic` package lives in its own virtual environment, separate from Core's (`adapters/meshtastic/venv`, not `venv`) — check it's actually installed there:
+The `meshtastic` package lives in its own virtual environment, separate from Core's (`adapters/meshtastic/venv`, not `venv`) - check it's actually installed there:
 
 ```bash
 which adapters/meshtastic/venv/bin/meshtastic
@@ -882,22 +882,22 @@ Reload with `Ctrl+F5`, and confirm the uploaded image is a valid PNG, JPEG or We
 
 ## 18. Security notes
 
-MeshCenter is intended for a trusted local network, and uses unencrypted HTTP by default — but it does have built-in password protection, not open access.
+MeshCenter is intended for a trusted local network, and uses unencrypted HTTP by default - but it does have built-in password protection, not open access.
 
 **Password protection**: the first time you open MeshCenter (or if protection is ever re-enabled), a setup wizard requires you to create a password of at least 12 characters before anything else is usable. Once set:
-- Every page and every `/api/` request requires a logged-in session (`Settings > Security` to change the password or disable protection — disabling requires your current password).
-- Changing the password immediately invalidates every *other* open session (on any device/browser) — only the session that made the change stays logged in. This is deliberate: it's how you recover if a device with a saved session is lost or compromised.
-- Repeated failed login attempts are throttled with an increasing delay (capped at 5 minutes) — this slows down password guessing, it does not lock the account.
-- Every state-changing `/api/` request also requires a CSRF token (issued at login, rotated on each new login) in an `X-CSRF-Token` header, checked with a constant-time comparison — this stops a malicious page in another tab from silently using your logged-in session against you.
+- Every page and every `/api/` request requires a logged-in session (`Settings > Security` to change the password or disable protection - disabling requires your current password).
+- Changing the password immediately invalidates every *other* open session (on any device/browser) - only the session that made the change stays logged in. This is deliberate: it's how you recover if a device with a saved session is lost or compromised.
+- Repeated failed login attempts are throttled with an increasing delay (capped at 5 minutes) - this slows down password guessing, it does not lock the account.
+- Every state-changing `/api/` request also requires a CSRF token (issued at login, rotated on each new login) in an `X-CSRF-Token` header, checked with a constant-time comparison - this stops a malicious page in another tab from silently using your logged-in session against you.
 
-**What this does not cover**: HTTP is unencrypted by default, so your password and session cookie travel in plaintext on the local network — password protection stops a stranger from using the interface, not someone already capturing LAN traffic. It's still not meant to be exposed directly to the Internet.
+**What this does not cover**: HTTP is unencrypted by default, so your password and session cookie travel in plaintext on the local network - password protection stops a stranger from using the interface, not someone already capturing LAN traffic. It's still not meant to be exposed directly to the Internet.
 
-- Do not forward port 5000 directly to the Internet — use a VPN or authenticated/TLS-terminating reverse proxy for genuine remote access.
+- Do not forward port 5000 directly to the Internet - use a VPN or authenticated/TLS-terminating reverse proxy for genuine remote access.
 - Keep the sudoers rules limited to the supplied commands.
-- If `data/initial_password.txt` exists (written by v1.8.x first-run), it is a plaintext copy of an old generated password. MeshCenter warns about it at every start (System Log + notification); change your password in Settings → Security if you never did, then delete the file — it is never removed automatically.
+- If `data/initial_password.txt` exists (written by v1.8.x first-run), it is a plaintext copy of an old generated password. MeshCenter warns about it at every start (System Log + notification); change your password in Settings → Security if you never did, then delete the file - it is never removed automatically.
 - Back up local data before updates or hardware migration.
 - Remove Wi-Fi credentials, channel keys and personal message content before sharing logs or backups.
-- If you ever suspect your password or session was exposed, change the password immediately — that logs out every other session at once (see above).
+- If you ever suspect your password or session was exposed, change the password immediately - that logs out every other session at once (see above).
 
 ## 19. Getting help
 

@@ -1,7 +1,7 @@
 <h1 align="center">MeshCenter - Meshtastic Control Center</h1>
 
 <p align="center">
-A complete browser-based control center for Meshtastic® base stations running on Raspberry Pi.
+A complete browser-based control center for Meshtastic® base stations running on Raspberry Pi - or in Docker on an x86-64 server or NAS (TCP radio, with some limitations).
 </p>
 
 <p align="center">
@@ -10,7 +10,7 @@ A complete browser-based control center for Meshtastic® base stations running o
 
 <p align="center">💬 Messaging · 🗺 Interactive Map · 📊 Telemetry · 📷 Camera</p>
 
-<p align="center">📡 Node Management · ⚙ Raspberry Pi · 🌦 Weather · 📶 Wi-Fi · 🔋 Power Monitoring</p>
+<p align="center">📡 Node Management · ⚙ Raspberry Pi · 🐳 Docker (TCP) · 🌦 Weather · 📶 Wi-Fi · 🔋 Power Monitoring</p>
 
 <h1 align="center">Meshtastic Powered</h1>
 
@@ -23,6 +23,7 @@ A complete browser-based control center for Meshtastic® base stations running o
   <img src="https://img.shields.io/github/license/FlintUA/MeshCenter" alt="License">
   <img src="https://img.shields.io/badge/Python-3.11+-blue" alt="Python">
   <img src="https://img.shields.io/badge/Raspberry%20Pi-Bookworm%20%2F%20Trixie-C51A4A" alt="Platform">
+  <img src="https://img.shields.io/badge/Docker-x86--64%20%7C%20TCP%20radio-2496ED" alt="Docker">
   <img src="https://img.shields.io/badge/Meshtastic-Compatible-success" alt="Meshtastic">
   <img src="https://img.shields.io/badge/Status-Active%20Development-brightgreen" alt="Status">
 </p>
@@ -31,9 +32,11 @@ A complete browser-based control center for Meshtastic® base stations running o
 
 ## Overview
 
-**MeshCenter** is an open-source browser-based control and monitoring platform for Meshtastic nodes running on Raspberry Pi. Unlike traditional clients, it combines messaging, an interactive map, telemetry, camera support, file transfer, media management and system monitoring into a single responsive web interface that runs continuously alongside the radio — reachable from any device on the local network, not just a mobile app.
+**MeshCenter** is an open-source browser-based control and monitoring platform for Meshtastic nodes running on Raspberry Pi. Unlike traditional clients, it combines messaging, an interactive map, telemetry, camera support, file transfer, media management and system monitoring into a single responsive web interface that runs continuously alongside the radio - reachable from any device on the local network, not just a mobile app.
 
 The project is optimized for Raspberry Pi Zero 2W while remaining fully compatible with more powerful Raspberry Pi models.
+
+MeshCenter can also run **in a Docker container on an x86-64 server or NAS** (server mode, tested on a Synology DS920+). In that case the radio is connected over the network (TCP), and the Raspberry Pi hardware features - camera, e-Paper display, I2C sensors/RTC, USB or Bluetooth radio, Wi-Fi manager and in-app update - are not available. See [docs/Docker_Installation.md](docs/Docker_Installation.md).
 
 ## 🌐 Live Demo
 
@@ -43,17 +46,17 @@ Explore MeshCenter in your browser: https://meshcenter.elektroniker.help/preview
 
 ## Why MeshCenter?
 
-The official Meshtastic applications are excellent for configuration, mobile operation and everyday communication. MeshCenter is **not intended to replace them** — it complements the official ecosystem with a permanent browser-based control center for fixed stations, gateways and Raspberry Pi based installations. MeshCenter relies on the official Meshtastic configuration already stored on the radio; channel management and radio configuration are still done with the official Meshtastic applications.
+The official Meshtastic applications are excellent for configuration, mobile operation and everyday communication. MeshCenter is **not intended to replace them** - it complements the official ecosystem with a permanent browser-based control center for fixed stations, gateways, Raspberry Pi based installations and home servers or NAS running the Docker image. MeshCenter relies on the official Meshtastic configuration already stored on the radio; channel management and radio configuration are still done with the official Meshtastic applications.
 
-Typical use cases: home base stations, portable field communication, emergency communication nodes, Raspberry Pi gateways, weather monitoring stations, remote telemetry, and educational/experimental projects.
+Typical use cases: home base stations, portable field communication, emergency communication nodes, Raspberry Pi gateways, NAS-hosted stations (Docker), weather monitoring stations, remote telemetry, and educational/experimental projects.
 
 ---
 
 ## License
 
-MeshCenter's own code (`server.py`, `api/`, `meshsrv/`, `static/`, `templates/`, and everything else outside `adapters/`) is MIT-licensed — see [LICENSE](LICENSE).
+MeshCenter's own code (`server.py`, `api/`, `meshsrv/`, `static/`, `templates/`, and everything else outside `adapters/`) is MIT-licensed - see [LICENSE](LICENSE).
 
-The official [`meshtastic`](https://github.com/meshtastic/python) Python package, used to talk to the radio, is GPLv3-licensed. To keep GPLv3 code from linking into MeshCenter's own MIT-licensed process, it's isolated in `adapters/meshtastic/` — its own package, its own virtual environment, running as a **separate OS process** that Core talks to over a local IPC boundary. Core itself never imports `meshtastic`. `adapters/meshtastic/` is **GPLv3-licensed as a whole**, not just the dependency it wraps, and ships its own [LICENSE](adapters/meshtastic/LICENSE). USB camera support uses the same arm's-length-external-program pattern for `ffmpeg`/`v4l-utils` (GPL-2.0-or-later).
+The official [`meshtastic`](https://github.com/meshtastic/python) Python package, used to talk to the radio, is GPLv3-licensed. To keep GPLv3 code from linking into MeshCenter's own MIT-licensed process, it's isolated in `adapters/meshtastic/` - its own package, its own virtual environment, running as a **separate OS process** that Core talks to over a local IPC boundary. Core itself never imports `meshtastic`. `adapters/meshtastic/` is **GPLv3-licensed as a whole**, not just the dependency it wraps, and ships its own [LICENSE](adapters/meshtastic/LICENSE). USB camera support uses the same arm's-length-external-program pattern for `ffmpeg`/`v4l-utils` (GPL-2.0-or-later).
 
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full dependency breakdown, and [docs/architecture/Architecture.md](docs/architecture/Architecture.md#license-boundary-why-theres-a-subprocess-at-all) for the technical detail of why this is a process boundary rather than just a code-directory split.
 
@@ -61,80 +64,80 @@ See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full dependency bre
 
 ## 📸 Screenshots
 
-*These screenshots are from v1.5.0 — the overall layout is still representative, but the current interface also has a **Files** tab (MCAttach) alongside Chats/Camera/Media/Devices that isn't shown here. Refreshing these from a current install is tracked as a follow-up.*
+*These screenshots are from v1.5.0 - the overall layout is still representative, but the current interface also has a **Files** tab (MCAttach) alongside Chats/Camera/Media/Devices that isn't shown here. Refreshing these from a current install is tracked as a follow-up.*
 
 <details>
-<summary>🗺️ Map — Light theme</summary>
+<summary>🗺️ Map - Light theme</summary>
 
 ![MeshCenter map view light theme](docs/images/MeshCenter_map_light_theme.png)
 
 </details>
 
 <details>
-<summary>🗺️ Map — Dark theme</summary>
+<summary>🗺️ Map - Dark theme</summary>
 
 ![MeshCenter map view dark theme](docs/images/MeshCenter_map_dark_theme.png)
 
 </details>
 
 <details>
-<summary>🗺️ Map + Nodes panel — Light theme</summary>
+<summary>🗺️ Map + Nodes panel - Light theme</summary>
 
 ![MeshCenter map split light theme](docs/images/MeshCenter_map_split_light_theme.png)
 
 </details>
 
 <details>
-<summary>🗺️ Map + Nodes panel — Dark theme</summary>
+<summary>🗺️ Map + Nodes panel - Dark theme</summary>
 
 ![MeshCenter map split dark theme](docs/images/MeshCenter_map_split_dark_theme.png)
 
 </details>
 
 <details>
-<summary>💬 Chats — Light theme</summary>
+<summary>💬 Chats - Light theme</summary>
 
 ![MeshCenter chats light theme](docs/images/MeshCenter_chats_light_theme.png)
 
 </details>
 
 <details>
-<summary>💬 Chats + Nodes panel — Dark theme</summary>
+<summary>💬 Chats + Nodes panel - Dark theme</summary>
 
 ![MeshCenter chats split dark theme](docs/images/MeshCenter_chats_split_dark_theme.png)
 
 </details>
 
 <details>
-<summary>🖼️ Media — Light theme</summary>
+<summary>🖼️ Media - Light theme</summary>
 
 ![MeshCenter media light theme](docs/images/MeshCenter_media_light_theme.png)
 
 </details>
 
 <details>
-<summary>🖼️ Media + Nodes panel — Light theme</summary>
+<summary>🖼️ Media + Nodes panel - Light theme</summary>
 
 ![MeshCenter media split light theme](docs/images/MeshCenter_media_split_light_theme.png)
 
 </details>
 
 <details>
-<summary>📷 Camera — Light theme</summary>
+<summary>📷 Camera - Light theme</summary>
 
 ![MeshCenter camera light theme](docs/images/MeshCenter_camera_light_theme.png)
 
 </details>
 
 <details>
-<summary>📟 Devices — Light theme</summary>
+<summary>📟 Devices - Light theme</summary>
 
 ![MeshCenter devices light theme](docs/images/MeshCenter_devices_light_theme.png)
 
 </details>
 
 <details>
-<summary>ℹ️ About — Dark theme</summary>
+<summary>ℹ️ About - Dark theme</summary>
 
 ![MeshCenter about dark theme](docs/images/MeshCenter_about_dark_theme.png)
 
@@ -146,22 +149,22 @@ See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full dependency bre
 
 The fastest path is **Automatic Installation**:
 
-1. Flash an SD card with Raspberry Pi Imager (Raspberry Pi OS Lite 64-bit). While you're in the imager's ⚙️ settings, set a hostname — it decides the `.local` address everything below uses. This guide says `meshcenter`, but if you name your Pi `MeshCenterTest`, you'll reach it at `http://meshcentertest.local` instead. Case doesn't matter: hostnames are case-insensitive, so lowercase always works no matter how you typed it.
+1. Flash an SD card with Raspberry Pi Imager (Raspberry Pi OS Lite 64-bit). While you're in the imager's ⚙️ settings, set a hostname - it decides the `.local` address everything below uses. This guide says `meshcenter`, but if you name your Pi `MeshCenterTest`, you'll reach it at `http://meshcentertest.local` instead. Case doesn't matter: hostnames are case-insensitive, so lowercase always works no matter how you typed it.
 2. Copy [`meshcenter-firstboot.sh`](https://github.com/FlintUA/MeshCenter/releases/latest/download/meshcenter-firstboot.sh) to the **root** of the bootfs drive.
 3. Open the `user-data` file on the bootfs drive (it already exists after flashing) and add this at the end:
    ```yaml
    runcmd:
      - [ bash, -lc, 'if [ -f /boot/firmware/meshcenter-firstboot.sh ]; then bash /boot/firmware/meshcenter-firstboot.sh; elif [ -f /boot/meshcenter-firstboot.sh ]; then bash /boot/meshcenter-firstboot.sh; fi' ]
    ```
-   If `runcmd:` already exists in the file, add only the `- [ bash, ... ]` line under it. **This step is required** — without it the script just sits on the SD card and never runs.
+   If `runcmd:` already exists in the file, add only the `- [ bash, ... ]` line under it. **This step is required** - without it the script just sits on the SD card and never runs.
 4. Connect your Meshtastic radio via USB **before** first boot.
 5. Power on. MeshCenter installs itself unattended (~5-20 min depending on hardware and whether camera support is requested). While it installs, open `http://meshcenter.local` (port 80) to watch a live step-by-step progress page. Once installation finishes and the Pi reboots, MeshCenter itself is reachable at `http://meshcenter.local:5000`.
 
-Prefer to install over SSH on an already-running Pi (or any Debian/Ubuntu Linux box) instead? That's **Manual Installation** — `curl -sSL https://raw.githubusercontent.com/FlintUA/MeshCenter/main/install.sh | bash`.
+Prefer to install over SSH on an already-running Pi (or any Debian/Ubuntu Linux box) instead? That's **Manual Installation** - `curl -sSL https://raw.githubusercontent.com/FlintUA/MeshCenter/main/install.sh | bash`.
 
-**Server mode (Docker, no Raspberry Pi)** — runs MeshCenter in a container on an x86-64 server or NAS (tested: Synology DS920+, DSM 7.3).
-The radio is reached over **TCP only**, so it needs Wi-Fi or Ethernet with Meshtastic's TCP API (port 4403) and a fixed IP. Host-hardware features are unavailable in the container (USB/serial and Bluetooth radio, camera, e-Paper, I2C sensors/RTC, Wi-Fi manager, reboot, in-app update). There is no public image yet — you build it yourself.
-See **[docs/Docker_Installation.md](docs/Docker_Installation.md)**. A PC or server *without* Docker is already covered by Manual Installation above (any Debian/Ubuntu, USB radio, full features) — Docker is not the only non-Pi option.
+**Server mode (Docker, no Raspberry Pi)** - runs MeshCenter in a container on an x86-64 server or NAS (tested: Synology DS920+, DSM 7.3).
+The radio is reached over **TCP only**, so it needs Wi-Fi or Ethernet with Meshtastic's TCP API (port 4403) and a fixed IP. Host-hardware features are unavailable in the container (USB/serial and Bluetooth radio, camera, e-Paper, I2C sensors/RTC, Wi-Fi manager, reboot, in-app update). There is no public image yet - you build it yourself.
+See **[docs/Docker_Installation.md](docs/Docker_Installation.md)**. A PC or server *without* Docker is already covered by Manual Installation above (any Debian/Ubuntu, USB radio, full features) - Docker is not the only non-Pi option.
 
 Full step-by-step instructions for both paths, system requirements, and the serial-access checklist that trips up most first installs: see **[INSTALL.md](INSTALL.md)**.
 
@@ -171,21 +174,23 @@ The install has been validated end-to-end on a clean Raspberry Pi Zero 2 W with 
 
 ## Features
 
-- **Messaging** — public channel and direct messages, native Meshtastic reply support, favorites/ignore list, full chat history
-- **Files (MCAttach)** — end-to-end encrypted node-to-node file transfer with a pluggable Relay, trusted-contact key exchange, and transfer lifecycle tracking
-- **Interactive Map** — embedded Leaflet map with live node positions, distance/bearing, waypoint management, synchronized selection with the node list
-- **Node Management** — automatic discovery, hardware/role info, favorites, custom icons, CSV/JSON export-import, remote Node Tools (telemetry/position request, traceroute)
-- **Telemetry** — device/environment/power history with selectable chart ranges, bounded and debounced storage (see [Data Storage](docs/architecture/Architecture.md#data-storage))
-- **Camera** — live MJPEG streaming and photo capture, Raspberry Pi Camera (CSI) and USB/UVC webcam support side by side
-- **System & Radio Health** — CPU/RAM/disk/temperature, radio listener status, automatic listener recovery, a system log
-- **Weather** — current conditions and forecast from a pluggable provider (OpenWeather or WeatherAPI)
-- **Wi-Fi Manager** — scan, connect, forget networks from the browser
-- **Automation** — a schedule engine (timed/interval-based mesh actions and data reports), stopwatch/countdown timers, and a notification center
-- **Optional hardware** — an e-Paper display (Waveshare 2.13" color or WeAct 1.54" B/W) for headless status, and I2C sensors (BME280) / a real-time clock (DS3231)
-- **Multi-radio profiles** — switch between physical radios with each one's data kept isolated
-- **Localization** — English, German, Russian and Ukrainian interface language, with the Files workspace fully translated in all four (see [docs/User_Guide.md](docs/User_Guide.md#language) for current coverage of the rest)
+- **Messaging** - public channel and direct messages, native Meshtastic reply support, favorites/ignore list, full chat history
+- **Files (MCAttach)** - end-to-end encrypted node-to-node file transfer with a pluggable Relay, trusted-contact key exchange, and transfer lifecycle tracking
+- **Interactive Map** - embedded Leaflet map with live node positions, distance/bearing, waypoint management, synchronized selection with the node list
+- **Node Management** - automatic discovery, hardware/role info, favorites, custom icons, CSV/JSON export-import, remote Node Tools (telemetry/position request, traceroute)
+- **Telemetry** - device/environment/power history with selectable chart ranges, bounded and debounced storage (see [Data Storage](docs/architecture/Architecture.md#data-storage))
+- **Camera** - live MJPEG streaming and photo capture, Raspberry Pi Camera (CSI) and USB/UVC webcam support side by side
+- **System & Radio Health** - CPU/RAM/disk/temperature, radio listener status, automatic listener recovery, a system log
+- **Weather** - current conditions and forecast from a pluggable provider (OpenWeather or WeatherAPI)
+- **Wi-Fi Manager** - scan, connect, forget networks from the browser
+- **Automation** - a schedule engine (timed/interval-based mesh actions and data reports), stopwatch/countdown timers, and a notification center
+- **Optional hardware** - an e-Paper display (Waveshare 2.13" color or WeAct 1.54" B/W) for headless status, and I2C sensors (BME280) / a real-time clock (DS3231)
+- **Multi-radio profiles** - switch between physical radios with each one's data kept isolated
+- **Localization** - English, German, Russian and Ukrainian interface language, with the Files workspace fully translated in all four (see [docs/User_Guide.md](docs/User_Guide.md#language) for current coverage of the rest)
 
-See **[docs/User_Guide.md](docs/User_Guide.md)** for the full, practical walkthrough of every feature above — installation, configuration, day-to-day usage, backup, and troubleshooting. See [docs/architecture/Architecture.md](docs/architecture/Architecture.md) for how it's built internally, and [docs/development/Roadmap.md](docs/development/Roadmap.md) for what's planned.
+In Docker server mode the host-hardware features above are not available: camera, Wi-Fi manager, e-Paper display, I2C sensors/RTC, USB/Bluetooth radio and in-app update (the image is updated instead). Everything else - messaging, Files (MCAttach), map, nodes, telemetry, weather, automation, multi-radio profiles and localization - works the same. Details: [docs/Docker_Installation.md](docs/Docker_Installation.md).
+
+See **[docs/User_Guide.md](docs/User_Guide.md)** for the full, practical walkthrough of every feature above - installation, configuration, day-to-day usage, backup, and troubleshooting. See [docs/architecture/Architecture.md](docs/architecture/Architecture.md) for how it's built internally, and [docs/development/Roadmap.md](docs/development/Roadmap.md) for what's planned.
 
 ---
 
@@ -193,33 +198,35 @@ See **[docs/User_Guide.md](docs/User_Guide.md)** for the full, practical walkthr
 
 MeshCenter can talk to your Meshtastic node three ways, switchable in **Settings → Radio Connection**:
 
-- **USB** (default, recommended) — a serial cable to the Raspberry Pi. Full send and receive.
-- **TCP** — over the local network, if your radio exposes Meshtastic's TCP API. Full send and receive, including delivery confirmations for direct messages ("delivered" only when the destination itself confirms), but no remote waypoint deletion. A node serves **one TCP client at a time** — the phone app, a second MeshCenter or a script evict each other; use **Release radio** in Node Manager to hand the radio over (see [docs/Docker_Installation.md](docs/Docker_Installation.md#one-meshtastic-tcp-client-at-a-time)).
-- **Bluetooth** (marked "Experimental") — no incoming messages/telemetry/node-info at all while active (send-only); switching connection types can take up to ~90–135 seconds in the worst case.
+- **USB** (default, recommended) - a serial cable to the Raspberry Pi (or another Linux host). Full send and receive. Not available in Docker.
+- **TCP** - over the local network, if your radio exposes Meshtastic's TCP API. Full send and receive, including delivery confirmations for direct messages ("delivered" only when the destination itself confirms), but no remote waypoint deletion. A node serves **one TCP client at a time** - the phone app, a second MeshCenter or a script evict each other; use **Release radio** in Node Manager to hand the radio over (see [docs/Docker_Installation.md](docs/Docker_Installation.md#one-meshtastic-tcp-client-at-a-time)).
+- **Bluetooth** (marked "Experimental") - no incoming messages/telemetry/node-info at all while active (send-only); switching connection types can take up to ~90-135 seconds in the worst case.
 
-See [docs/User_Guide.md](docs/User_Guide.md#12-radio-connection-type) for the full detail, and [Switching to another radio](docs/User_Guide.md#working-with-multiple-radios) for moving to a different physical device — each radio keeps its own, isolated data (messages, nodes, telemetry, waypoints).
+In the Docker image, TCP is the only connection type.
+
+See [docs/User_Guide.md](docs/User_Guide.md#12-radio-connection-type) for the full detail, and [Switching to another radio](docs/User_Guide.md#working-with-multiple-radios) for moving to a different physical device - each radio keeps its own, isolated data (messages, nodes, telemetry, waypoints).
 
 ---
 
 ## Tested Hardware
 
-MeshCenter is primarily developed and tested on a Raspberry Pi Zero 2 W, with a Raspberry Pi 4B also in regular use. Radios actually used for development and testing:
+MeshCenter is primarily developed and tested on a Raspberry Pi Zero 2 W, with a Raspberry Pi 4B also in regular use. The Docker server mode is tested on a Synology DS920+ (DSM 7.3, Container Manager) with a LilyGO T-Beam connected over TCP. Radios actually used for development and testing:
 
 - **RAK4631** (USB serial)
-- **RAK WisMesh TAP v2 / RAK3312** (USB serial) — also the install-validation reference device above
+- **RAK WisMesh TAP v2 / RAK3312** (USB serial) - also the install-validation reference device above
 - **A T-Beam, connected over TCP** rather than USB serial
 
-Cameras: a Raspberry Pi Camera (IMX219/OV5647, CSI) and a **Microsoft USB3.0 HD camera** (USB/UVC, YUYV-only — MJPEG passthrough is implemented and unit-tested but has not been separately live-verified against an MJPEG-capable USB camera). Also used: an INA226 power monitor, a BME280 environmental sensor, a DS3231 real-time clock, and a WeAct 1.54" e-Paper display.
+Cameras: a Raspberry Pi Camera (IMX219/OV5647, CSI) and a **Microsoft USB3.0 HD camera** (USB/UVC, YUYV-only - MJPEG passthrough is implemented and unit-tested but has not been separately live-verified against an MJPEG-capable USB camera). Also used: an INA226 power monitor, a BME280 environmental sensor, a DS3231 real-time clock, and a WeAct 1.54" e-Paper display.
 
-Other Raspberry Pi models and standard Meshtastic-compatible radios with a supported USB serial, TCP, or Bluetooth connection are expected to work, though not all have been specifically verified. The radio must already be configured with an official Meshtastic application — MeshCenter uses whatever region, channels and keys are already on it, and does not modify the radio's own configuration.
+Other Raspberry Pi models and standard Meshtastic-compatible radios with a supported USB serial, TCP, or Bluetooth connection are expected to work, though not all have been specifically verified. The radio must already be configured with an official Meshtastic application - MeshCenter uses whatever region, channels and keys are already on it, and does not modify the radio's own configuration.
 
-**Enable Serial access before connecting a radio by USB**: in the official Meshtastic app, `Settings → Security → Serial enabled` (some firmware versions show it under `Settings → Device` instead — don't confuse it with the separate "Serial module"). If this is off, Linux may still create `/dev/ttyACM0` while MeshCenter can't actually read the radio's identity — the most common cause of "radio not detected."
+**Enable Serial access before connecting a radio by USB**: in the official Meshtastic app, `Settings → Security → Serial enabled` (some firmware versions show it under `Settings → Device` instead - don't confuse it with the separate "Serial module"). If this is off, Linux may still create `/dev/ttyACM0` while MeshCenter can't actually read the radio's identity - the most common cause of "radio not detected."
 
 ---
 
 ## Outbound network use
 
-MeshCenter's core functionality (messaging, camera, telemetry, node management) needs no internet access at all. A few *optional* features do reach outside the local network when enabled: weather data (from the configured provider), OpenStreetMap map tiles, a once-a-day GitHub Releases check for updates, and MCAttach's Relay for file transfers that need one (the project hosts a default Relay instance; self-hosting is supported — see [`relay-server/`](relay-server/README.md)). None of these are required for day-to-day operation.
+MeshCenter's core functionality (messaging, camera, telemetry, node management) needs no internet access at all. A few *optional* features do reach outside the local network when enabled: weather data (from the configured provider), OpenStreetMap map tiles, a once-a-day GitHub Releases check for updates, and MCAttach's Relay for file transfers that need one (the project hosts a default Relay instance; self-hosting is supported - see [`relay-server/`](relay-server/README.md)). None of these are required for day-to-day operation.
 
 ---
 
@@ -227,7 +234,7 @@ MeshCenter's core functionality (messaging, camera, telemetry, node management) 
 
 A setup wizard requires a password (at least 12 characters) before the interface is usable at all; every page and `/api/` request is then session-authenticated. Changing the password immediately logs out every *other* open session. Every state-changing `/api/` request requires a CSRF token. Repeated failed logins are throttled.
 
-MeshCenter is served over plain HTTP by default and is intended for a trusted local network — password protection stops unauthorized use of the interface, but doesn't encrypt the connection itself. Use a VPN or a TLS-terminating reverse proxy for genuine remote access rather than exposing the service directly to the Internet.
+MeshCenter is served over plain HTTP by default and is intended for a trusted local network - password protection stops unauthorized use of the interface, but doesn't encrypt the connection itself. Use a VPN or a TLS-terminating reverse proxy for genuine remote access rather than exposing the service directly to the Internet.
 
 See [docs/User_Guide.md](docs/User_Guide.md#18-security-notes) for the full detail.
 
@@ -235,7 +242,7 @@ See [docs/User_Guide.md](docs/User_Guide.md#18-security-notes) for the full deta
 
 ## REST API
 
-MeshCenter's browser interface talks to itself over a REST API — primarily for internal use, though it can be used for simple third-party integrations on the same trusted network. See **[docs/API_ROUTES.md](docs/API_ROUTES.md)** for the complete, auto-generated list of every route (regenerated from the code, never hand-maintained — CI fails if it drifts), and [docs/BACKEND_API.md](docs/BACKEND_API.md) for hand-written protocol documentation of the internal radio-adapter IPC layer.
+MeshCenter's browser interface talks to itself over a REST API - primarily for internal use, though it can be used for simple third-party integrations on the same trusted network. See **[docs/API_ROUTES.md](docs/API_ROUTES.md)** for the complete, auto-generated list of every route (regenerated from the code, never hand-maintained - CI fails if it drifts), and [docs/BACKEND_API.md](docs/BACKEND_API.md) for hand-written protocol documentation of the internal radio-adapter IPC layer.
 
 ---
 
@@ -261,27 +268,27 @@ MeshCenter is currently optimized for desktop web browsers. It's partially usabl
 
 ### Does MeshCenter replace the official Meshtastic application?
 
-No. MeshCenter complements the official applications with a permanent browser-based control center for Raspberry Pi installations; radio configuration itself is still done with the official app.
+No. MeshCenter complements the official applications with a permanent browser-based control center for Raspberry Pi installations and for servers or NAS running the Docker image; radio configuration itself is still done with the official app.
 
 ### Does MeshCenter send photos over Meshtastic?
 
-Camera snapshots are stored locally on the Raspberry Pi and viewed through the web interface — they aren't sent automatically. You can, however, deliberately send a JPEG/PNG/WebP photo to another node as a direct file transfer via the **Files (MCAttach)** tab.
+Camera snapshots are stored locally on the Raspberry Pi and viewed through the web interface - they aren't sent automatically. You can, however, deliberately send a JPEG/PNG/WebP photo to another node as a direct file transfer via the **Files (MCAttach)** tab.
 
 ### Can multiple browsers connect simultaneously?
 
-Yes — multiple users on the same local network can use the interface at the same time.
+Yes - multiple users on the same local network can use the interface at the same time.
 
 ### Does MeshCenter require Internet access?
 
-No, not for core functionality — see [Outbound network use](#outbound-network-use) above for the specific optional features that do.
+No, not for core functionality - see [Outbound network use](#outbound-network-use) above for the specific optional features that do.
 
 ### Can I run MeshCenter without a Raspberry Pi?
 
-Yes, in three ways: **natively on any Debian/Ubuntu machine** (Manual Installation in [INSTALL.md](INSTALL.md); USB radio, full features); **in Docker on an x86-64 server or NAS** (TCP radio only, host-hardware features unavailable — see [docs/Docker_Installation.md](docs/Docker_Installation.md)); Windows and macOS are not supported natively.
+Yes, in three ways: **natively on any Debian/Ubuntu machine** (Manual Installation in [INSTALL.md](INSTALL.md); USB radio, full features); **in Docker on an x86-64 server or NAS** (TCP radio only, host-hardware features unavailable - see [docs/Docker_Installation.md](docs/Docker_Installation.md)); Windows and macOS are not supported natively.
 
 ### Which Raspberry Pi models are supported?
 
-Raspberry Pi Zero 2W (the primary target), 3, 4 and 5.
+Raspberry Pi Zero 2W (the primary target), 3, 4 and 5, with the normal installation. The Docker image is built for x86-64 only, so Docker on a Raspberry Pi (or on an ARM-based NAS) is not supported yet - on a Pi, use the normal installation, which also has the full feature set.
 
 ---
 
@@ -293,14 +300,14 @@ See **[docs/development/Roadmap.md](docs/development/Roadmap.md)** for current a
 
 | Version | Highlights |
 |----------|------------|
-| v1.10.0 | Messaging: message dates, jump to first unread, click a message to find its sender; node-list sort and filters; map and node list "click selects, actions via menu" model with a node context menu; serial hot-reconnect; CSRF auto-recovery, security headers, XSS CI ratchet. Applies from the Updates card — see [release notes](docs/releases/v1.10.0.md) |
-| v1.9.0 | Security and storage-reliability hardening, TCP transport with inbound receive, multi-connection radios, mandatory `/setup` password wizard, USB cameras without GPL imports. Needs a manual upgrade — see [release notes](docs/releases/v1.9.0.md) |
+| v1.10.0 | Messaging: message dates, jump to first unread, click a message to find its sender; node-list sort and filters; map and node list "click selects, actions via menu" model with a node context menu; serial hot-reconnect; CSRF auto-recovery, security headers, XSS CI ratchet. Applies from the Updates card - see [release notes](docs/releases/v1.10.0.md) |
+| v1.9.0 | Security and storage-reliability hardening, TCP transport with inbound receive, multi-connection radios, mandatory `/setup` password wizard, USB cameras without GPL imports. Needs a manual upgrade - see [release notes](docs/releases/v1.9.0.md) |
 | v1.8.4 | MCAttach control-channel index fix; production logging (`wsgi.py`); Relay server source published under `relay-server/` for optional self-hosting; a guided "Connect a Relay" setup wizard; transfer detail card with Normal/Advanced/Technical levels |
 | v1.8.2 | Documentation maintenance: `STYLE_GUIDE.md` brought up to date with the theme-registry work |
 | v1.8.1 | Installation ID (`PRIVACY.md`) with a management CLI; unified `.btn` sizing system; identity-check failures routed to the System Log instead of raw exception text |
 | v1.8.0 | I2C device support (RTC + BME280), e-Paper display redesign with auto-rotation, stored-XSS fix, gunicorn in production |
 | v1.7.0 | Auto-Installer (cloud-init), redesigned Time card, channel name/discovery fixes |
-| v1.6.0 | Time System, Notifications & Automation — Schedule Engine, Timers, Notification Center |
+| v1.6.0 | Time System, Notifications & Automation - Schedule Engine, Timers, Notification Center |
 | v1.5.0 | Localization (i18n) foundation & reliability fixes |
 | v1.4.0 | Multi-Radio Profiles & Node Manager |
 | v1.3.0 | Waypoints, Notifications, Action Engine |
@@ -315,13 +322,13 @@ Full per-release notes are in [`docs/releases/`](docs/releases/) and on the [Git
 
 ## Contributing
 
-Contributions are welcome — open an Issue or Pull Request for bugs, improvements, or documentation fixes.
+Contributions are welcome - open an Issue or Pull Request for bugs, improvements, or documentation fixes.
 
 Before opening a Pull Request, install `requirements-dev.txt` and run `pytest` from the repo root - it's quick and catches regressions in the areas it covers (CLI-output parsing, settings normalization, node ID validation, auth, storage, telemetry, and more - see `tests/`). GitHub Actions CI runs the same suite plus several static checks (byte-compilation, shell/JS syntax, the GPLv3 license boundary, i18n catalog consistency, cache-busting, and API documentation staleness) on every PR and push to `main`.
 
 ### Reporting Issues
 
-Please include: Raspberry Pi model and OS version, Python version, Meshtastic firmware/CLI version, browser, relevant log messages, and steps to reproduce.
+Please include: Raspberry Pi model and OS version (for Docker: host or NAS model and the image version), Python version, Meshtastic firmware/CLI version, browser, relevant log messages, and steps to reproduce.
 
 ---
 
@@ -335,13 +342,13 @@ If you enjoy the project: ⭐ star the repository, report bugs, suggest features
 
 ## Author
 
-**Kostiantyn Vynohradov (FlintUA)** — Electronics engineer, embedded systems enthusiast and Meshtastic hobbyist.
+**Kostiantyn Vynohradov (FlintUA)** - Electronics engineer, embedded systems enthusiast and Meshtastic hobbyist.
 
 - Live Demo: https://meshcenter.elektroniker.help/preview/
 - Information Center: https://meshcenter.elektroniker.help/
 - GitHub: [https://github.com/FlintUA](https://github.com/FlintUA)
 - Project repository: [https://github.com/FlintUA/MeshCenter](https://github.com/FlintUA/MeshCenter)
-- Website: [https://elektroniker.help](https://elektroniker.help) — additional articles and projects on Meshtastic, Raspberry Pi, embedded systems, electronics and 3D printing
+- Website: [https://elektroniker.help](https://elektroniker.help) - additional articles and projects on Meshtastic, Raspberry Pi, embedded systems, electronics and 3D printing
 
 ## Disclaimer
 

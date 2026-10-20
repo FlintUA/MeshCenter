@@ -37,10 +37,6 @@
   },
   {
     "file": "static/chat-updates-security.js",
-    "snippet": "onclick=\"navigator.clipboard.writeText('${escapeHtml((applyData.instructions || '').replace(/'/g, ''))}')\""
-  },
-  {
-    "file": "static/chat-updates-security.js",
     "snippet": "onclick=\"navigator.clipboard.writeText('git checkout ${escapeHtml(sha)} && sudo systemctl restart meshcenter.service')\""
   },
   {

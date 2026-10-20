@@ -54,7 +54,8 @@
     "title_delete_waypoint": "Удалить waypoint",
     "title_delete_waypoints": "Удалить waypoints",
     "title_delete_image": "Удалить изображение",
-    "title_delete_all_images": "Удалить все изображения"
+    "title_delete_all_images": "Удалить все изображения",
+    "rollback": "Откатить"
   },
   "nav": {
     "chats": "Чаты",
@@ -1003,10 +1004,9 @@
     "updates_restart_timeout_hint": "Это может означать, что новый код не запустился, либо процесс просто медленно поднимается на этом железе. Если веб-интерфейс всё ещё недоступен — проверьте по SSH: sudo systemctl status meshcenter.service",
     "updates_keep_waiting": "Подождать ещё",
     "updates_preflight_dirty": "Есть незакоммиченные локальные изменения: {files}. Разберитесь с ними (проверьте по SSH) прежде чем обновляться.",
-    "updates_preflight_diverged": "В этой копии есть локальные коммиты, которых нет в удалённой ветке — безопасный fast-forward невозможен.",
-    "updates_preflight_up_to_date": "Уже на последнем коммите этой ветки.",
-    "updates_preflight_no_upstream": "Для этой ветки не настроена отслеживаемая удалённая ветка.",
-    "updates_preflight_fetch_failed": "Не удалось связаться с GitHub, чтобы получить последние коммиты.",
+    "updates_preflight_diverged": "В этой копии есть локальные коммиты, которых нет в релизе - безопасно обновить нельзя.",
+    "updates_preflight_up_to_date": "Уже установлен последний релиз.",
+    "updates_preflight_fetch_failed": "Не удалось связаться с GitHub, чтобы получить релиз.",
     "updates_apply_confirm": "Обновить MeshCenter с {current} до {latest}? Сервис перезапустится автоматически.",
     "updates_blocked_deps_title": "Обновление заблокировано — изменились зависимости",
     "updates_blocked_deps_body": "Это обновление меняет файл(ы) зависимостей: {files}. Оно НЕ было применено — ваша установка не изменена.",
@@ -1038,7 +1038,21 @@
     "reception_label": "Входящие сообщения",
     "reception_not_supported": "Не принимаются (только отправка)",
     "network_rescan_no_changes": "Сканирование сети завершено, изменений не найдено",
-    "reception_tcp_partial": "Текст, waypoint, инфо об узлах и телеметрия"
+    "reception_tcp_partial": "Текст, waypoint, инфо об узлах и телеметрия",
+    "updates_rollback": "Откатить",
+    "updates_rollback_title": "Откатить MeshCenter",
+    "updates_rollback_confirm": "Откатить MeshCenter с {current} на {previous}? Служба перезапустится автоматически. Ваши данные не изменятся.",
+    "updates_rollback_blocked_title": "Откат заблокирован - зависимости различаются",
+    "updates_rollback_blocked_body": "Откат на {previous} меняет файл(ы) зависимостей: {files}. Он НЕ выполнен - установка не изменена.",
+    "updates_rollback_unavailable": "Для запущенной версии откат недоступен.",
+    "updates_last_update_ok": "Последнее обновление: {from} → {to} ({when})",
+    "updates_last_update_failed": "Последнее обновление не удалось: {from} → {to} ({when})",
+    "updates_last_rollback_ok": "Откат выполнен: {from} → {to} ({when})",
+    "updates_last_rollback_failed": "Откат не удался: {from} → {to} ({when})",
+    "updates_preflight_branch": "Вы на ветке {branch} - обновите вручную (git).",
+    "updates_preflight_ahead": "Эта копия уже содержит релиз {version} или новее - обновлять нечего.",
+    "updates_preflight_tag_missing": "Не удалось получить тег релиза {tag} с GitHub.",
+    "updates_preflight_no_target": "Нет релиза для обновления - сначала нажмите «Проверить сейчас»."
   },
   "settings": {
     "title": "Настройки",

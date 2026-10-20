@@ -62,6 +62,9 @@ def _git_repo(tmp_path: Path) -> Path:
     _run(["git", "branch", "-M", "main"], cwd=work)
     _run(["git", "remote", "add", "origin", str(origin)], cwd=work)
     _run(["git", "push", "-u", "origin", "main"], cwd=work)
+    # UPD1: updates are applied to a release TAG, so the starting point is a tagged release.
+    _run(["git", "tag", "v1.0.0"], cwd=work)
+    _run(["git", "push", "origin", "v1.0.0"], cwd=work)
     return work
 
 
@@ -71,11 +74,10 @@ def repo(tmp_path):
     return _git_repo(tmp_path)
 
 
-def _push_from_a_second_clone(repo: Path, *, mutate) -> None:
-    """Simulates 'someone else pushed an update' - a second clone makes a
-    commit and pushes it to the same origin repo's own fixture uses, then
-    repo's own working tree fetches/merges it via apply_update() itself,
-    exactly like a real `git pull` against a real upstream."""
+def _push_from_a_second_clone(repo: Path, *, mutate, tag: str = "v1.0.1") -> None:
+    """Simulates 'someone else published a release' - a second clone makes a
+    commit, pushes it to the same origin and tags it `tag`; the repo's own working
+    tree then fetches that tag and moves to it via git_preflight()/apply_update()."""
     origin_url = subprocess.run(
         ["git", "remote", "get-url", "origin"], cwd=repo, capture_output=True, text=True
     ).stdout.strip()
@@ -87,6 +89,8 @@ def _push_from_a_second_clone(repo: Path, *, mutate) -> None:
     _run(["git", "add", "."], cwd=second_clone)
     _run(["git", "commit", "-m", "update"], cwd=second_clone)
     _run(["git", "push", "origin", "main"], cwd=second_clone)
+    _run(["git", "tag", tag], cwd=second_clone)
+    _run(["git", "push", "origin", tag], cwd=second_clone)
 
 
 def test_apply_update_blocks_and_leaves_head_unchanged_when_requirements_txt_changed(repo):
@@ -95,10 +99,10 @@ def test_apply_update_blocks_and_leaves_head_unchanged_when_requirements_txt_cha
         repo, mutate=lambda clone: (clone / "requirements.txt").write_text("Flask>=3.1.0\ncbor2>=6.1.0\n", encoding="utf-8")
     )
 
-    preflight = update_service.git_preflight(str(repo))
+    preflight = update_service.git_preflight(str(repo), "v1.0.1")
     assert preflight["ok"] is True
 
-    result = update_service.apply_update(str(repo), preflight["upstream"])
+    result = update_service.apply_update(str(repo), preflight, "1.0.0")
 
     assert result["ok"] is False
     assert result["blocked"] is True
@@ -126,10 +130,10 @@ def test_apply_update_blocks_for_the_adapter_requirements_file_too(repo):
 
     _push_from_a_second_clone(repo, mutate=mutate)
 
-    preflight = update_service.git_preflight(str(repo))
+    preflight = update_service.git_preflight(str(repo), "v1.0.1")
     assert preflight["ok"] is True
 
-    result = update_service.apply_update(str(repo), preflight["upstream"])
+    result = update_service.apply_update(str(repo), preflight, "1.0.0")
 
     assert result["ok"] is False
     assert result["blocked"] is True
@@ -148,8 +152,8 @@ def test_apply_update_blocks_when_both_requirements_files_changed_in_one_update(
         (clone / "adapters" / "meshtastic" / "requirements.txt").write_text("meshtastic>=2.5.0\n", encoding="utf-8")
 
     _push_from_a_second_clone(repo, mutate=mutate)
-    preflight = update_service.git_preflight(str(repo))
-    result = update_service.apply_update(str(repo), preflight["upstream"])
+    preflight = update_service.git_preflight(str(repo), "v1.0.1")
+    result = update_service.apply_update(str(repo), preflight, "1.0.0")
 
     assert result["blocked"] is True
     assert sorted(result["changed_requirements_files"]) == [
@@ -164,10 +168,10 @@ def test_apply_update_proceeds_normally_when_requirements_txt_is_untouched(repo)
         repo, mutate=lambda clone: (clone / "server.py").write_text("# placeholder\n# a real change\n", encoding="utf-8")
     )
 
-    preflight = update_service.git_preflight(str(repo))
+    preflight = update_service.git_preflight(str(repo), "v1.0.1")
     assert preflight["ok"] is True
 
-    result = update_service.apply_update(str(repo), preflight["upstream"])
+    result = update_service.apply_update(str(repo), preflight, "1.0.0")
 
     assert result["ok"] is True
     assert result["blocked"] is False
@@ -194,8 +198,8 @@ def test_apply_update_never_runs_pip_when_blocked(repo, monkeypatch):
     _push_from_a_second_clone(
         repo, mutate=lambda clone: (clone / "requirements.txt").write_text("Flask>=3.1.0\n", encoding="utf-8")
     )
-    preflight = update_service.git_preflight(str(repo))
-    result = update_service.apply_update(str(repo), preflight["upstream"])
+    preflight = update_service.git_preflight(str(repo), "v1.0.1")
+    result = update_service.apply_update(str(repo), preflight, "1.0.0")
 
     assert result["blocked"] is True
 
@@ -213,8 +217,8 @@ def test_apply_update_never_runs_pip_when_not_blocked(repo, monkeypatch):
     _push_from_a_second_clone(
         repo, mutate=lambda clone: (clone / "server.py").write_text("# placeholder\n# a real change\n", encoding="utf-8")
     )
-    preflight = update_service.git_preflight(str(repo))
-    result = update_service.apply_update(str(repo), preflight["upstream"])
+    preflight = update_service.git_preflight(str(repo), "v1.0.1")
+    result = update_service.apply_update(str(repo), preflight, "1.0.0")
 
     assert result["ok"] is True
     assert result["blocked"] is False

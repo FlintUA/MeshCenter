@@ -3,9 +3,9 @@
 Checks GitHub Releases for a newer version, caches the result (so the
 browser never hits the GitHub API directly and a background poll never
 runs more often than the user's configured interval), and applies an
-update via a plain `git merge --ff-only` - never a blind `git pull`, and
-never with any attempt to auto-resolve a dirty tree or diverged history.
-See git_preflight()'s docstring for why.
+update to exactly that release's TAG (UPD1) - never `origin/main`, never a
+blind `git pull`, and never with any attempt to auto-resolve a dirty tree
+or diverged history. See git_preflight()'s docstring for the rules.
 
 Instance-scoped, like data/instance.json and data/settings.json - the
 installed version and git state are properties of this machine, not of
@@ -59,9 +59,19 @@ _DEFAULT_CACHE: dict[str, Any] = {
     "check_ok": None,
     "check_error": None,
     "previous_version_sha": None,
+    "previous_version": None,
+    "previous_ref": None,
     "last_update_attempt_at": None,
     "last_update_ok": None,
+    # UPD1: set by apply_update()/rollback() right before the restart, resolved by
+    # reconcile_pending() in the NEW process at boot (the old one is gone by then).
+    "pending_update": None,
+    # {"kind": "update"|"rollback", "from": "1.12.0", "to": "1.12.1", "at": epoch, "ok": bool}
+    "last_update": None,
 }
+
+TAG_RE = re.compile(r"v\d+\.\d+\.\d+")
+VERSION_RE = re.compile(r"\d+\.\d+\.\d+")
 
 
 def configure(cache_path: str) -> None:
@@ -73,38 +83,53 @@ def _load_cache() -> dict[str, Any]:
     return {**_DEFAULT_CACHE, **safe_read_json(_cache_path, {})}
 
 
+def version_tuple(version: Any) -> tuple[int, int, int] | None:
+    """(major, minor, patch) of an exact release number ("1.12.1" or "v1.12.1"), else None."""
+    text = str(version or "").strip()
+    if text.startswith("v"):
+        text = text[1:]
+    if not VERSION_RE.fullmatch(text):
+        return None
+    major, minor, patch = (int(part) for part in text.split("."))
+    return (major, minor, patch)
+
+
 def get_status(current_version: str) -> dict[str, Any]:
     with _lock:
         cache = _load_cache()
     cache["current_version"] = current_version
     cache["update_available"] = update_available(current_version, cache)
+    cache["rollback_available"] = rollback_available(current_version, cache)
     return cache
 
 
 def update_available(current_version: str, cache: dict[str, Any]) -> bool:
-    """Whether current_version is genuinely behind the cached latest release.
+    """Whether current_version is genuinely BEHIND the cached latest release.
 
-    Deliberately conservative: resolve_app_version() returns a bare
-    "X.Y.Z" only when HEAD is exactly tagged; a checkout with untagged
-    commits on top returns "X.Y.Z-N-ghash" (see server.py's
-    resolve_app_version()). That "-N-g" form means this checkout is
-    already ahead of *some* tag, so it must never be flagged as behind
-    just because it doesn't string-match the latest release tag - that
-    would misreport an ahead-of-release dev checkout as needing an
-    update. Only an exact "X.Y.Z" that differs from the cached latest
-    tag counts.
+    A numeric comparison, never a string difference (UPD1): a checkout whose version is
+    newer than the cached latest (a withdrawn release, a pre-release tag, a node ahead of
+    the published release) must never be offered a downgrade. Only an exact release number
+    can be behind one: resolve_app_version() returns the nearest reachable "vX.Y.Z" tag, so
+    anything else ("dev", "dk2", a bare hash, "unknown") is not comparable (DK3) and is
+    never offered an update.
     """
-    latest = cache.get("latest_version")
-    if not latest or not cache.get("check_ok"):
+    if not cache.get("check_ok"):
         return False
-    if "-" in str(current_version):
+    latest = version_tuple(cache.get("latest_version"))
+    current = version_tuple(current_version)
+    if latest is None or current is None:
         return False
-    # DK3: only an exact release number can be "behind" one. An image built
-    # with a label that is not a version ("dk2", "dev", "unknown") used to
-    # string-differ from the latest tag and show a false "update available".
-    if not re.fullmatch(r"\d+\.\d+\.\d+", str(current_version)):
+    return latest > current
+
+
+def rollback_available(current_version: str, cache: dict[str, Any]) -> bool:
+    """A one-click rollback is offered only after a successful update this installation
+    recorded, only to the recorded previous version, and only while the running version is
+    the one that update produced - so a stale record can never roll an unrelated checkout."""
+    last = cache.get("last_update") or {}
+    if not (cache.get("previous_version_sha") and cache.get("previous_version") and last.get("ok")):
         return False
-    return str(current_version) != str(latest)
+    return last.get("kind") == "update" and str(last.get("to")) == str(current_version)
 
 
 def check_now(current_version: str) -> dict[str, Any]:
@@ -127,7 +152,11 @@ def check_now(current_version: str) -> dict[str, Any]:
         with urlopen(request, timeout=8) as response:
             payload = json.loads(response.read().decode("utf-8"))
 
+        if payload.get("draft") or payload.get("prerelease"):
+            raise ValueError("the latest release is a draft or pre-release")
         tag = str(payload.get("tag_name") or "").strip()
+        if not TAG_RE.fullmatch(tag):
+            raise ValueError(f"the latest release tag {tag!r} is not a vX.Y.Z version tag")
         version = tag[1:] if tag.startswith("v") else tag
 
         cache.update({
@@ -183,147 +212,285 @@ def check_worker(
         time.sleep(max(300, interval))
 
 
-def git_preflight(project_dir: str) -> dict[str, Any]:
-    """Checks whether pulling is a safe, plain fast-forward: clean working
-    tree, a real upstream, and no diverged/ahead local history. Never
-    attempts to auto-stash, auto-discard or auto-merge - only reports
-    *why* it isn't safe, so the caller can show an honest error instead of
-    silently resolving something it shouldn't. Matches the discipline this
-    project has followed by hand all session: verify with `git status`/
-    `diff -b -w` before touching anything, never blind-discard.
-    """
+
+SUPPORTED_BRANCH = "main"
+
+
+def _git(project_dir: str, *args: str, timeout: int = 30) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", *args], cwd=project_dir, capture_output=True, text=True, timeout=timeout)
+
+
+def _checkout_state(project_dir: str) -> dict[str, Any]:
+    """Where HEAD is: the branch name, or detached; plus the commit and the dirty files."""
+    branch_proc = _git(project_dir, "symbolic-ref", "-q", "--short", "HEAD", timeout=10)
+    branch = branch_proc.stdout.strip() if branch_proc.returncode == 0 else None
+    head = _git(project_dir, "rev-parse", "HEAD", timeout=10).stdout.strip()
+    status = _git(project_dir, "status", "--porcelain", timeout=10)
+    dirty = [line[3:] for line in status.stdout.splitlines() if line.strip()]
+    return {"branch": branch, "detached": branch is None, "head_sha": head, "dirty_files": dirty}
+
+
+def _is_ancestor(project_dir: str, ancestor: str, descendant: str) -> bool:
+    return _git(project_dir, "merge-base", "--is-ancestor", ancestor, descendant, timeout=10).returncode == 0
+
+
+def git_preflight(project_dir: str, target_tag: str | None) -> dict[str, Any]:
+    """Whether moving this checkout to the release tag `target_tag` is safe (UPD1).
+
+    The target is the latest GitHub release's TAG (never origin/main). Allowed starting
+    points: branch `main` or a detached HEAD (how the nodes sit after `git checkout vX.Y.Z`);
+    any other branch is a development checkout and is left alone. Refused, with a reason and
+    nothing touched, when: there is no valid target (`no_target`), the branch is not main
+    (`unsupported_branch`), the tree is dirty (`dirty_tree`), the tag cannot be fetched from
+    origin (`fetch_failed` / `tag_missing`), HEAD already is the tag (`up_to_date`), HEAD
+    already contains the tag - newer than the release, a downgrade (`ahead`), or the history
+    has diverged from the tag (`diverged`). Only "HEAD is a plain ancestor of the tag" is ok.
+    Never auto-stashes, auto-discards or auto-merges."""
     result: dict[str, Any] = {
         "ok": False, "clean": False, "behind": 0, "ahead": 0,
-        "dirty_files": [], "branch": None, "upstream": None,
+        "dirty_files": [], "branch": None, "detached": False,
+        "target_tag": target_tag, "target_sha": None, "head_sha": None,
         "reason": None, "error": None,
     }
-
-    def run(args, timeout=10):
-        return subprocess.run(
-            args, cwd=project_dir, capture_output=True, text=True, timeout=timeout,
-        )
-
     try:
-        branch_proc = run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
-        result["branch"] = branch_proc.stdout.strip()
-
-        upstream_proc = run(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
-        if upstream_proc.returncode != 0:
-            result["reason"] = "no_upstream"
-            result["error"] = upstream_proc.stderr.strip()
-            return result
-        upstream = upstream_proc.stdout.strip()
-        result["upstream"] = upstream
-
-        status_proc = run(["git", "status", "--porcelain"])
-        dirty = [line[3:] for line in status_proc.stdout.splitlines() if line.strip()]
-        result["dirty_files"] = dirty
-        result["clean"] = len(dirty) == 0
-
-        fetch_proc = run(["git", "fetch"], timeout=20)
-        if fetch_proc.returncode != 0:
-            result["reason"] = "fetch_failed"
-            result["error"] = fetch_proc.stderr.strip()
+        if not target_tag or not TAG_RE.fullmatch(str(target_tag)):
+            result["reason"] = "no_target"
             return result
 
-        behind = run(["git", "rev-list", "--count", f"HEAD..{upstream}"])
-        ahead = run(["git", "rev-list", "--count", f"{upstream}..HEAD"])
-        result["behind"] = int(behind.stdout.strip() or 0)
-        result["ahead"] = int(ahead.stdout.strip() or 0)
+        state = _checkout_state(project_dir)
+        result.update(branch=state["branch"], detached=state["detached"],
+                      head_sha=state["head_sha"], dirty_files=state["dirty_files"],
+                      clean=not state["dirty_files"])
 
-        if not result["clean"]:
+        if not state["detached"] and state["branch"] != SUPPORTED_BRANCH:
+            result["reason"] = "unsupported_branch"
+            return result
+        if state["dirty_files"]:
             result["reason"] = "dirty_tree"
-        elif result["ahead"] > 0:
-            result["reason"] = "diverged"
-        elif result["behind"] == 0:
+            return result
+
+        fetch = _git(project_dir, "fetch", "--no-tags", "origin", f"refs/tags/{target_tag}:refs/tags/{target_tag}", timeout=30)
+        if fetch.returncode != 0:
+            error = fetch.stderr.strip()
+            result["error"] = error
+            result["reason"] = "tag_missing" if "couldn't find remote ref" in error else "fetch_failed"
+            return result
+
+        target = _git(project_dir, "rev-parse", "--verify", "--quiet", f"refs/tags/{target_tag}^{{commit}}", timeout=10)
+        if target.returncode != 0 or not target.stdout.strip():
+            result["reason"] = "tag_missing"
+            return result
+        target_sha = target.stdout.strip()
+        result["target_sha"] = target_sha
+
+        if state["head_sha"] == target_sha:
             result["reason"] = "up_to_date"
-        else:
+        elif _is_ancestor(project_dir, target_sha, state["head_sha"]):
+            result["reason"] = "ahead"
+        elif _is_ancestor(project_dir, state["head_sha"], target_sha):
+            behind = _git(project_dir, "rev-list", "--count", f"{state['head_sha']}..{target_sha}", timeout=10)
+            result["behind"] = int(behind.stdout.strip() or 0)
             result["ok"] = True
+        else:
+            result["reason"] = "diverged"
     except Exception as error:
         result["error"] = str(error)
         if not result["reason"]:
             result["reason"] = "error"
-
     return result
 
 
 _REQUIREMENTS_FILES = ("requirements.txt", "adapters/meshtastic/requirements.txt")
 
 
-def apply_update(project_dir: str, upstream: str) -> dict[str, Any]:
-    """Only call this after git_preflight() reported ok=True for this same
-    upstream - it does not re-verify safety itself, so the preflight
-    snapshot the user actually confirmed against is exactly what gets
-    applied, not a second, silently different check a few seconds later.
+def _changed_requirements(project_dir: str, target: str) -> list[str]:
+    diff = _git(project_dir, "diff", "--name-only", "HEAD", target, "--", *_REQUIREMENTS_FILES, timeout=10)
+    return [line for line in diff.stdout.strip().splitlines() if line]
 
-    PR #231 review (3rd pass): dependency-file changes are now detected
-    BEFORE `git merge --ff-only` ever runs, using a plain `git diff`
-    between the current `HEAD` and `upstream` - computing a diff between
-    two refs needs no merge and touches neither `HEAD` nor the working
-    tree. If `requirements.txt`/`adapters/meshtastic/requirements.txt`
-    changed, this function stops here: it never calls `git merge` at
-    all, so `HEAD` and the working tree are left completely unchanged
-    (confirmed directly by this module's own tests, not just asserted in
-    this comment) - not "merged then detected", which the previous pass
-    of this fix did, and which left a merged-but-possibly-broken
-    (missing dependency) tree behind even though it correctly skipped
-    the auto-restart that would have followed. Never runs pip itself
-    either way - shelling out to pip from inside the live Flask process,
-    against the exact venv that process is currently running out of,
-    with no isolation from in-flight request handling, is its own hazard
-    distinct from (and not fixed by) checking earlier; the safe fix
-    remains surfacing the need for a manual
-    `pip install -r requirements.txt` (see INSTALL.md and
-    scripts/verify-install.sh's own dependency-import checks)."""
-    def run(args, timeout=30):
-        return subprocess.run(
-            args, cwd=project_dir, capture_output=True, text=True, timeout=timeout,
-        )
 
-    previous_sha = run(["git", "rev-parse", "HEAD"], timeout=10).stdout.strip()
+def _blocked_by_requirements(project_dir: str, files: list[str], previous_sha: str, *, manual_command: str) -> dict[str, Any]:
+    with _lock:
+        cache = _load_cache()
+        cache["last_update_attempt_at"] = int(time.time())
+        cache["last_update_ok"] = False
+        _save_cache(cache)
+    return {
+        "ok": False,
+        "blocked": True,
+        "reason": "requirements_changed",
+        "previous_sha": previous_sha,
+        "requirements_changed": True,
+        "changed_requirements_files": files,
+        "output": "",
+        "instructions": (
+            "This change touches dependency file(s): {files}. It was NOT applied - "
+            "HEAD and the working tree are unchanged. To do it manually: "
+            "1) {command}  "
+            "2) source venv/bin/activate && pip install -r requirements.txt "
+            "(and, if adapters/meshtastic/requirements.txt is listed above, "
+            "adapters/meshtastic/venv/bin/pip install -r adapters/meshtastic/requirements.txt)  "
+            "3) sudo systemctl restart meshcenter.service"
+        ).format(files=", ".join(files), command=manual_command),
+    }
 
-    diff = run(["git", "diff", "--name-only", "HEAD", upstream, "--", *_REQUIREMENTS_FILES], timeout=10)
-    changed_requirements_files = [line for line in diff.stdout.strip().splitlines() if line]
-    if changed_requirements_files:
-        with _lock:
-            cache = _load_cache()
-            cache["previous_version_sha"] = previous_sha
-            cache["last_update_attempt_at"] = int(time.time())
-            cache["last_update_ok"] = False
-            _save_cache(cache)
-        return {
-            "ok": False,
-            "blocked": True,
-            "reason": "requirements_changed",
-            "previous_sha": previous_sha,
-            "requirements_changed": True,
-            "changed_requirements_files": changed_requirements_files,
-            "output": "",
-            "instructions": (
-                "This update changes dependency file(s): {files}. It was NOT merged - "
-                "HEAD and the working tree are unchanged. To apply it manually: "
-                "1) git merge --ff-only {upstream}  "
-                "2) source venv/bin/activate && pip install -r requirements.txt "
-                "(and, if adapters/meshtastic/requirements.txt is listed above, "
-                "adapters/meshtastic/venv/bin/pip install -r adapters/meshtastic/requirements.txt)  "
-                "3) sudo systemctl restart meshcenter.service"
-            ).format(files=", ".join(changed_requirements_files), upstream=upstream),
-        }
 
-    pull = run(["git", "merge", "--ff-only", upstream])
+def apply_update(project_dir: str, preflight: dict[str, Any], current_version: str | None = None) -> dict[str, Any]:
+    """Move this checkout to the preflight's target tag. Only call after git_preflight()
+    reported ok=True; the commit that preflight resolved (`target_sha`) is exactly what is
+    applied, not a second, silently different lookup.
+
+    Dependency-file changes are detected BEFORE anything moves (a plain `git diff HEAD
+    <target>` touches neither HEAD nor the tree); if requirements.txt or the adapter's
+    requirements.txt differ, nothing is applied and the manual steps are returned. Never runs
+    pip (shelling out to pip against the venv the live process is running out of is its own
+    hazard). On branch `main` the branch fast-forwards to the TAG's commit (`git merge
+    --ff-only`), on a detached HEAD it is re-detached at the tag (`git checkout --detach`)."""
+    target_tag = preflight.get("target_tag")
+    target_sha = preflight.get("target_sha")
+    previous_sha = _git(project_dir, "rev-parse", "HEAD", timeout=10).stdout.strip()
+    detached = bool(preflight.get("detached"))
+    previous_ref = "detached" if detached else str(preflight.get("branch") or SUPPORTED_BRANCH)
+
+    changed = _changed_requirements(project_dir, target_sha)
+    if changed:
+        command = f"git checkout --detach {target_tag}" if detached else f"git merge --ff-only {target_tag}"
+        return _blocked_by_requirements(project_dir, changed, previous_sha, manual_command=command)
+
+    if detached:
+        moved = _git(project_dir, "checkout", "--quiet", "--detach", target_sha)
+    else:
+        moved = _git(project_dir, "merge", "--ff-only", target_sha)
+    ok = moved.returncode == 0
+    to_version = str(target_tag)[1:]
 
     with _lock:
         cache = _load_cache()
-        cache["previous_version_sha"] = previous_sha
         cache["last_update_attempt_at"] = int(time.time())
-        cache["last_update_ok"] = pull.returncode == 0
+        cache["last_update_ok"] = ok
+        if ok:
+            cache["previous_version_sha"] = previous_sha
+            cache["previous_version"] = current_version
+            cache["previous_ref"] = previous_ref
+            cache["pending_update"] = {
+                "kind": "update", "from": current_version, "to": to_version, "tag": target_tag,
+                "from_sha": previous_sha, "to_sha": target_sha, "started_at": int(time.time()),
+            }
         _save_cache(cache)
 
     return {
-        "ok": pull.returncode == 0,
+        "ok": ok,
         "blocked": False,
         "previous_sha": previous_sha,
-        "output": (pull.stdout + pull.stderr).strip(),
+        "previous_version": current_version,
+        "to_version": to_version,
+        "target_tag": target_tag,
+        "target_sha": target_sha,
+        "output": (moved.stdout + moved.stderr).strip(),
         "requirements_changed": False,
         "changed_requirements_files": [],
     }
+
+
+def rollback_preflight(project_dir: str, current_version: str) -> dict[str, Any]:
+    """Whether going back to the recorded previous version is allowed. Same checkout rules
+    as an update (main or detached, clean tree); the recorded commit must still be in the
+    repository and an ancestor of HEAD (a rollback is a step back along this history)."""
+    with _lock:
+        cache = _load_cache()
+    result: dict[str, Any] = {
+        "ok": False, "reason": None, "error": None, "branch": None, "detached": False,
+        "dirty_files": [], "previous_sha": cache.get("previous_version_sha"),
+        "previous_version": cache.get("previous_version"), "head_sha": None,
+    }
+    try:
+        if not rollback_available(current_version, cache):
+            result["reason"] = "rollback_unavailable"
+            return result
+        state = _checkout_state(project_dir)
+        result.update(branch=state["branch"], detached=state["detached"],
+                      head_sha=state["head_sha"], dirty_files=state["dirty_files"])
+        if not state["detached"] and state["branch"] != SUPPORTED_BRANCH:
+            result["reason"] = "unsupported_branch"
+        elif state["dirty_files"]:
+            result["reason"] = "dirty_tree"
+        else:
+            previous = str(cache.get("previous_version_sha"))
+            known = _git(project_dir, "cat-file", "-e", f"{previous}^{{commit}}", timeout=10).returncode == 0
+            if not known or not _is_ancestor(project_dir, previous, state["head_sha"]) or previous == state["head_sha"]:
+                result["reason"] = "rollback_unavailable"
+            else:
+                result["ok"] = True
+    except Exception as error:
+        result["error"] = str(error)
+        result["reason"] = result["reason"] or "error"
+    return result
+
+
+def rollback(project_dir: str, preflight: dict[str, Any], current_version: str) -> dict[str, Any]:
+    """Go back to the version recorded by the last update. Call only after
+    rollback_preflight() reported ok. Blocked (nothing moved, manual command returned) when the
+    dependency files differ between here and there - same rule as an update."""
+    previous_sha = str(preflight.get("previous_sha"))
+    previous_version = preflight.get("previous_version")
+    detached = bool(preflight.get("detached"))
+    head_sha = _git(project_dir, "rev-parse", "HEAD", timeout=10).stdout.strip()
+
+    changed = _changed_requirements(project_dir, previous_sha)
+    if changed:
+        command = f"git checkout --detach {previous_sha}" if detached else f"git reset --keep {previous_sha}"
+        return _blocked_by_requirements(project_dir, changed, head_sha, manual_command=command)
+
+    if detached:
+        moved = _git(project_dir, "checkout", "--quiet", "--detach", previous_sha)
+    else:
+        moved = _git(project_dir, "reset", "--keep", previous_sha)
+    ok = moved.returncode == 0
+
+    with _lock:
+        cache = _load_cache()
+        cache["last_update_attempt_at"] = int(time.time())
+        cache["last_update_ok"] = ok
+        if ok:
+            cache["previous_version_sha"] = None
+            cache["previous_version"] = None
+            cache["previous_ref"] = None
+            cache["pending_update"] = {
+                "kind": "rollback", "from": current_version, "to": previous_version, "tag": None,
+                "from_sha": head_sha, "to_sha": previous_sha, "started_at": int(time.time()),
+            }
+        _save_cache(cache)
+
+    return {
+        "ok": ok, "blocked": False, "previous_sha": head_sha, "to_version": previous_version,
+        "output": (moved.stdout + moved.stderr).strip(),
+        "requirements_changed": False, "changed_requirements_files": [],
+    }
+
+
+def reconcile_pending(current_version: str, log: Callable[..., None]) -> dict[str, Any] | None:
+    """Called once at boot by the NEW process: resolve an update/rollback the previous process
+    started. Records `last_update` ({kind, from, to, at, ok}) and logs "Update finished" or
+    "Update failed" (the same for rollbacks) to the system log via `log(title, level, details,
+    source=...)`. A running version that is not the target is a failure (the new code did not
+    come up as the version that was applied)."""
+    with _lock:
+        cache = _load_cache()
+        pending = cache.get("pending_update")
+        if not pending:
+            return None
+        kind = pending.get("kind") or "update"
+        ok = str(current_version) == str(pending.get("to"))
+        cache["pending_update"] = None
+        cache["last_update_ok"] = ok
+        cache["last_update"] = {
+            "kind": kind, "from": pending.get("from"), "to": pending.get("to"),
+            "at": int(time.time()), "ok": ok,
+        }
+        _save_cache(cache)
+    noun = "Rollback" if kind == "rollback" else "Update"
+    if ok:
+        log(f"{noun} finished", "OK", f"MeshCenter {pending.get('from')} -> {pending.get('to')}", source="update")
+    else:
+        log(f"{noun} failed", "ERROR",
+            f"{pending.get('from')} -> {pending.get('to')} was applied but {current_version} is running", source="update")
+    return cache["last_update"]

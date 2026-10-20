@@ -407,8 +407,8 @@ of this automatically.
   didn't, and it only surfaced when a deploy needed a restart. Do this step
   during install, don't defer it.
 - **A `git pull` update never installs new sudoers/helper files** — updating
-  MeshCenter is deliberately just `git merge --ff-only` + a service restart
-  (see `meshsrv/update_service.py`), it never touches `/etc/sudoers.d/` or
+  MeshCenter is deliberately just moving to the release tag (`git merge --ff-only` /
+  `git checkout --detach`) + a service restart (see `meshsrv/update_service.py`), it never touches `/etc/sudoers.d/` or
   `/usr/local/sbin/`. A node installed before `deploy/meshcenter-hw.sudoers`
   existed (task 23) and only ever updated via `git pull` since will silently
   be missing it — the Devices tab's I2C/RTC card just fails when clicked,

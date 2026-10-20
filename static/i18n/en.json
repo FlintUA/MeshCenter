@@ -54,7 +54,8 @@
     "title_delete_waypoint": "Delete waypoint",
     "title_delete_waypoints": "Delete waypoints",
     "title_delete_image": "Delete image",
-    "title_delete_all_images": "Delete all images"
+    "title_delete_all_images": "Delete all images",
+    "rollback": "Roll back"
   },
   "nav": {
     "chats": "Chats",
@@ -1003,10 +1004,9 @@
     "updates_restart_timeout_hint": "This could mean the new code failed to start, or the process is just slow on this hardware. If the web interface stays unreachable, check via SSH: sudo systemctl status meshcenter.service",
     "updates_keep_waiting": "Keep waiting",
     "updates_preflight_dirty": "Uncommitted local changes exist: {files}. Resolve them (SSH in and review) before updating.",
-    "updates_preflight_diverged": "This checkout has local commits not on the remote branch - can't fast-forward safely.",
-    "updates_preflight_up_to_date": "Already on the latest commit for this branch.",
-    "updates_preflight_no_upstream": "This branch has no upstream tracking branch configured.",
-    "updates_preflight_fetch_failed": "Could not reach GitHub to fetch the latest commits.",
+    "updates_preflight_diverged": "This checkout has local commits that are not part of the release - can't update safely.",
+    "updates_preflight_up_to_date": "Already on the latest release.",
+    "updates_preflight_fetch_failed": "Could not reach GitHub to fetch the release.",
     "updates_apply_confirm": "Update MeshCenter from {current} to {latest}? The service will restart automatically.",
     "updates_blocked_deps_title": "Update blocked — dependencies changed",
     "updates_blocked_deps_body": "This update changes dependency file(s): {files}. It was NOT applied — your installation is unchanged.",
@@ -1038,7 +1038,21 @@
     "reception_label": "Incoming messages",
     "reception_not_supported": "Not received (send only)",
     "network_rescan_no_changes": "Network rescan completed, no changes found",
-    "reception_tcp_partial": "Text, waypoints, node info & telemetry"
+    "reception_tcp_partial": "Text, waypoints, node info & telemetry",
+    "updates_rollback": "Roll back",
+    "updates_rollback_title": "Roll back MeshCenter",
+    "updates_rollback_confirm": "Roll back MeshCenter from {current} to {previous}? The service will restart automatically. Your data is not changed.",
+    "updates_rollback_blocked_title": "Rollback blocked - dependencies differ",
+    "updates_rollback_blocked_body": "Going back to {previous} changes dependency file(s): {files}. It was NOT applied - your installation is unchanged.",
+    "updates_rollback_unavailable": "No rollback is available for the running version.",
+    "updates_last_update_ok": "Last update: {from} → {to} ({when})",
+    "updates_last_update_failed": "Last update failed: {from} → {to} ({when})",
+    "updates_last_rollback_ok": "Rolled back: {from} → {to} ({when})",
+    "updates_last_rollback_failed": "Rollback failed: {from} → {to} ({when})",
+    "updates_preflight_branch": "On branch {branch} - update manually (git).",
+    "updates_preflight_ahead": "This checkout already contains release {version} or newer - nothing to update.",
+    "updates_preflight_tag_missing": "Release tag {tag} could not be fetched from GitHub.",
+    "updates_preflight_no_target": "No release to update to - press Check now first."
   },
   "settings": {
     "title": "Settings",

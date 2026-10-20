@@ -4,7 +4,7 @@ import time
 
 from flask import jsonify, request
 
-from meshsrv import error_reporting, network_config, runtime_env
+from meshsrv import error_reporting, network_config, planned_restart, runtime_env
 from system_log import get_system_events, log_system_event
 from utils.helpers import get_device_model
 
@@ -71,15 +71,17 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
             runtime_env.request_self_restart()
             return
 
-        try:
-            subprocess.run(command, check=True, capture_output=True, text=True, timeout=20)
-        except Exception as exc:
-            log_system_event(
-                f"{label} failed",
-                "ERROR",
-                str(exc),
-                source="system",
-            )
+        # UPD1: `systemctl restart meshcenter.service` stops THIS service first, and the
+        # control-group kill takes the helper (a child of this process) down with SIGTERM
+        # before it can report success - that is the restart working, not a failure.
+        planned_restart.run_restart_command(
+            command, label=label, log=log_system_event, source="system",
+            info_detail={
+                "restart_meshcenter": "MeshCenter is restarting",
+                "reboot": "The device is rebooting",
+                "shutdown": "The device is shutting down",
+            }[action],
+        )
 
     @app.route("/api/system/action", methods=["POST"])
     def api_system_action():
@@ -109,6 +111,9 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
             detail,
             source="system",
         )
+
+        # UPD1: the listener dies with the process - expected, not "unexpected exit".
+        planned_restart.begin(action)
 
         threading.Thread(
             target=execute_system_action,

@@ -54,8 +54,83 @@ function renderUpdatesStatus(status) {
         }
     }
 
+    renderUpdatesLastUpdate(status);
+
     const autoCheckEl = document.getElementById('updatesAutoCheckEnabled');
     if (autoCheckEl) autoCheckEl.checked = appSettings?.updates?.auto_check !== false;
+}
+
+// UPD1: "Last update: 1.12.0 -> 1.12.1 (date)" plus, after a successful update, a Roll back
+// button and the exact manual command (always visible, also when the button is blocked).
+function updatesRollbackCommand(status) {
+    const sha = status?.previous_version_sha || '';
+    if (!sha) return '';
+    const move = status.previous_ref === 'detached' ? `git checkout --detach ${sha}` : `git reset --keep ${sha}`;
+    return `${move} && sudo systemctl restart meshcenter.service`;
+}
+
+function renderUpdatesLastUpdate(status) {
+    const lastEl = document.getElementById('updatesLastUpdate');
+    const rollbackBtn = document.getElementById('updatesRollbackBtn');
+    const rollbackRow = document.getElementById('updatesRollbackRow');
+    const commandEl = document.getElementById('updatesRollbackCommand');
+    const last = status.last_update;
+
+    if (lastEl) {
+        if (last && last.from && last.to) {
+            const key = `system.updates_last_${last.kind === 'rollback' ? 'rollback' : 'update'}_${last.ok ? 'ok' : 'failed'}`;
+            lastEl.textContent = window.I18N.t(key, {
+                from: last.from,
+                to: last.to,
+                when: last.at ? new Date(last.at * 1000).toLocaleString() : '',
+            });
+            lastEl.style.display = 'block';
+        } else {
+            lastEl.style.display = 'none';
+        }
+    }
+
+    const command = status.rollback_available ? updatesRollbackCommand(status) : '';
+    if (rollbackBtn) rollbackBtn.style.display = status.rollback_available ? 'inline-block' : 'none';
+    if (rollbackRow) rollbackRow.style.display = command ? 'flex' : 'none';
+    if (commandEl) commandEl.textContent = command;
+}
+
+function copyUpdatesRollbackCommand() {
+    const command = updatesRollbackCommand(_lastUpdatesStatus);
+    if (command && navigator.clipboard) navigator.clipboard.writeText(command);
+}
+
+// Why an update / rollback was refused, as a sentence (same keys for both).
+function updatesRefusalMessage(preflight) {
+    const t = (key, params) => window.I18N.t(key, params);
+    const latest = _lastUpdatesStatus?.latest_version || '';
+    const reasons = {
+        dirty_tree: () => t('system.updates_preflight_dirty', { files: (preflight.dirty_files || []).join(', ') }),
+        diverged: () => t('system.updates_preflight_diverged'),
+        up_to_date: () => t('system.updates_preflight_up_to_date'),
+        ahead: () => t('system.updates_preflight_ahead', { version: latest }),
+        unsupported_branch: () => t('system.updates_preflight_branch', { branch: preflight.branch || '?' }),
+        tag_missing: () => t('system.updates_preflight_tag_missing', { tag: preflight.target_tag || '' }),
+        no_target: () => t('system.updates_preflight_no_target'),
+        fetch_failed: () => t('system.updates_preflight_fetch_failed'),
+        rollback_unavailable: () => t('system.updates_rollback_unavailable'),
+    };
+    const message = reasons[preflight.reason] ? reasons[preflight.reason]() : '';
+    return message || preflight.error || t('errors.unknown_error');
+}
+
+// The persistent "blocked: dependency files changed" panel (update and rollback share it).
+function renderUpdatesBlockedPanel(titleKey, bodyKey, bodyParams, data) {
+    renderUpdatesResult(`
+        <div class="updates-result-error">⚠️ ${escapeHtml(window.I18N.t(titleKey))}</div>
+        <div class="updates-result-hint">${escapeHtml(window.I18N.t(bodyKey, bodyParams))}</div>
+        <div class="updates-result-hint">${escapeHtml(window.I18N.t('system.updates_blocked_deps_instructions'))}</div>
+        <div class="updates-rollback-row">
+            <code class="updates-rollback-command">${escapeHtml(data.instructions || '')}</code>
+            <button type="button" class="btn btn-xs" data-updates-copy="${escapeHtml(data.instructions || '')}">${escapeHtml(window.I18N.t('modals.copy'))}</button>
+        </div>
+    `);
 }
 
 async function loadUpdatesStatus() {
@@ -270,6 +345,12 @@ function renderUpdatesResult(html) {
     if (!panel) return;
     panel.style.display = 'block';
     panel.innerHTML = html;
+    // Copy buttons carry their text in data-updates-copy (no inline handler built from a template literal).
+    panel.querySelectorAll('[data-updates-copy]').forEach((button) => {
+        button.addEventListener('click', () => {
+            if (navigator.clipboard) navigator.clipboard.writeText(button.getAttribute('data-updates-copy') || '');
+        });
+    });
 }
 
 // Polls /api/system/info after a restart, staged per the design worked out
@@ -339,14 +420,7 @@ async function applyUpdate(button) {
         const preflight = await preflightResponse.json();
 
         if (!preflight.ok) {
-            const reasons = {
-                dirty_tree: window.I18N.t('system.updates_preflight_dirty', { files: (preflight.dirty_files || []).join(', ') }),
-                diverged: window.I18N.t('system.updates_preflight_diverged'),
-                up_to_date: window.I18N.t('system.updates_preflight_up_to_date'),
-                no_upstream: window.I18N.t('system.updates_preflight_no_upstream'),
-                fetch_failed: window.I18N.t('system.updates_preflight_fetch_failed'),
-            };
-            const message = reasons[preflight.reason] || preflight.error || window.I18N.t('errors.unknown_error');
+            const message = updatesRefusalMessage(preflight);
             showToast(`❌ ${message}`, 'error');
             if (button) button.disabled = false;
             return;
@@ -380,17 +454,9 @@ async function applyUpdate(button) {
         // the button is re-enabled and pollAfterUpdateRestart() is never
         // called, since there is nothing restarting to poll for.
         if (applyResponse.status === 409 && applyData.blocked) {
-            renderUpdatesResult(`
-                <div class="updates-result-error">⚠️ ${escapeHtml(window.I18N.t('system.updates_blocked_deps_title'))}</div>
-                <div class="updates-result-hint">${escapeHtml(window.I18N.t('system.updates_blocked_deps_body', {
-                    files: (applyData.changed_requirements_files || []).join(', '),
-                }))}</div>
-                <div class="updates-result-hint">${escapeHtml(window.I18N.t('system.updates_blocked_deps_instructions'))}</div>
-                <div class="updates-rollback-row">
-                    <code class="updates-rollback-command">${escapeHtml(applyData.instructions || '')}</code>
-                    <button type="button" class="btn btn-xs" onclick="navigator.clipboard.writeText('${escapeHtml((applyData.instructions || '').replace(/'/g, ''))}')">${escapeHtml(window.I18N.t('modals.copy'))}</button>
-                </div>
-            `);
+            renderUpdatesBlockedPanel('system.updates_blocked_deps_title', 'system.updates_blocked_deps_body', {
+                files: (applyData.changed_requirements_files || []).join(', '),
+            }, applyData);
             if (button) button.disabled = false;
             return;
         }
@@ -406,6 +472,51 @@ async function applyUpdate(button) {
         // as the primary status indicator until that resolves.
         const expectedVersion = _lastUpdatesStatus?.latest_version || '';
         pollAfterUpdateRestart(expectedVersion, Date.now());
+    } catch (error) {
+        showToast(`❌ ${error.message}`, 'error');
+        if (button) button.disabled = false;
+    }
+}
+
+// UPD1: one-click rollback to the version recorded by the last update. Explicit only, a danger
+// dialog naming both versions; blocked (manual command shown) when the dependency files differ.
+async function rollbackUpdate(button) {
+    const current = _lastUpdatesStatus?.current_version || '?';
+    const previous = _lastUpdatesStatus?.previous_version || '?';
+    if (button) button.disabled = true;
+
+    try {
+        const proceed = await appConfirm({
+            title: window.I18N.t('system.updates_rollback_title'),
+            message: window.I18N.t('system.updates_rollback_confirm', { current, previous }),
+            confirmLabel: window.I18N.t('dialog.rollback'),
+            danger: true,
+        });
+        if (!proceed) {
+            if (button) button.disabled = false;
+            return;
+        }
+
+        const response = await fetch('/api/updates/rollback', { method: 'POST' });
+        const data = await response.json();
+
+        if (response.status === 409 && data.blocked) {
+            renderUpdatesBlockedPanel('system.updates_rollback_blocked_title', 'system.updates_rollback_blocked_body', {
+                files: (data.changed_requirements_files || []).join(', '),
+                previous,
+            }, data);
+            if (button) button.disabled = false;
+            return;
+        }
+
+        if (!response.ok || !data.ok) {
+            const message = data.preflight ? updatesRefusalMessage(data.preflight) : (data.error || window.I18N.t('errors.unknown_error'));
+            showToast(`❌ ${message}`, 'error');
+            if (button) button.disabled = false;
+            return;
+        }
+
+        pollAfterUpdateRestart(data.to_version || previous, Date.now());
     } catch (error) {
         showToast(`❌ ${error.message}`, 'error');
         if (button) button.disabled = false;

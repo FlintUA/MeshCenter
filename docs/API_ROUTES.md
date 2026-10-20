@@ -160,11 +160,11 @@ Auth/CSRF columns mirror `api/api_auth.py`'s own `_enforce_auth()`/`_enforce_csr
 | `/api/timers/<tid>/stop` | PATCH | `api/api_system.py:611` (`api_stop_timer`) | required | required |
 | `/api/toggle_favorite` | POST | `server.py:8469` (`api_toggle_favorite`) | required | required |
 | `/api/toggle_ignore` | POST | `server.py:8454` (`api_toggle_ignore`) | required | required |
-| `/api/updates/apply` | POST | `api/api_updates.py:67` (`api_updates_apply`) | required | required |
-| `/api/updates/check` | POST | `api/api_updates.py:55` (`api_updates_check`) | required | required |
-| `/api/updates/preflight` | GET | `api/api_updates.py:60` (`api_updates_preflight`) | required | exempt |
-| `/api/updates/rollback` | POST | `api/api_updates.py:126` (`api_updates_rollback`) | required | required |
-| `/api/updates/status` | GET | `api/api_updates.py:50` (`api_updates_status`) | required | exempt |
+| `/api/updates/apply` | POST | `api/api_updates.py:71` (`api_updates_apply`) | required | required |
+| `/api/updates/check` | POST | `api/api_updates.py:59` (`api_updates_check`) | required | required |
+| `/api/updates/preflight` | GET | `api/api_updates.py:64` (`api_updates_preflight`) | required | exempt |
+| `/api/updates/rollback` | POST | `api/api_updates.py:131` (`api_updates_rollback`) | required | required |
+| `/api/updates/status` | GET | `api/api_updates.py:54` (`api_updates_status`) | required | exempt |
 | `/api/waypoints` | DELETE | `api/api_waypoints.py:101` (`api_waypoints_delete_all`) | required | required |
 | `/api/waypoints` | GET | `api/api_waypoints.py:31` (`api_waypoints`) | required | exempt |
 | `/api/waypoints/<int:waypoint_id>` | DELETE | `api/api_waypoints.py:79` (`api_waypoint_delete`) | required | required |

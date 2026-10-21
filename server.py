@@ -1080,7 +1080,7 @@ camera_power_enabled_at_startup = register_camera_routes(
 # rescan/switch routes now dispatch through the same CameraManager
 # instance.
 register_camera_manager_routes(app, device_manager, handle_errors, camera_manager_state)
-register_system_routes(app, get_cpu_temperature=lambda: read_cpu_temperature(), get_app_version=lambda: APP_VERSION)
+register_system_routes(app, get_cpu_temperature=lambda: read_cpu_temperature(), get_app_version=lambda: APP_VERSION, handle_errors=handle_errors)
 register_cpu_history_routes(app, CPU_HISTORY_FILE)
 register_updates_routes(app, resolve_version=lambda: APP_VERSION, project_dir=PROJECT_DIR, handle_errors=handle_errors, log_event=log_system_event)
 register_attachments_routes(app, handle_errors)

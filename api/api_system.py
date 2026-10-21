@@ -37,9 +37,11 @@ def _json_object_or_none():
 _INVALID_BODY = ({"ok": False, "error": "Invalid JSON payload"}, 400)
 
 
-def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
+def register_system_routes(app, get_cpu_temperature=None, get_app_version=None, handle_errors=None):
+    _handle_errors = handle_errors or (lambda f: f)
 
     @app.route("/api/system/log")
+    @_handle_errors
     def api_system_log():
         limit = request.args.get("limit", 100)
         level = (request.args.get("level") or "").strip() or None
@@ -84,6 +86,7 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         )
 
     @app.route("/api/system/action", methods=["POST"])
+    @_handle_errors
     def api_system_action():
         data = request.get_json(silent=True) or {}
         action = str(data.get("action") or "").strip()
@@ -129,6 +132,7 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         }), 202
 
     @app.route("/api/system/info")
+    @_handle_errors
     def api_system_info():
         import os
         import shutil
@@ -244,6 +248,7 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         return jsonify(result)
 
     @app.route("/api/system/top-processes")
+    @_handle_errors
     def api_system_top_processes():
         """On-demand top-5 CPU consumers, system-wide (not just MeshCenter).
 
@@ -303,6 +308,7 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         return result.get("ssids", set()) if result.get("ok") else set()
 
     @app.route("/api/system/wifi/scan")
+    @_handle_errors
     def api_system_wifi_scan():
         if not runtime_env.capabilities()["can_manage_wifi"]:
             return jsonify(runtime_env.refusal("can_manage_wifi")), 403
@@ -389,6 +395,7 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         return jsonify(result)
 
     @app.route("/api/system/wifi/connect", methods=["POST"])
+    @_handle_errors
     def api_system_wifi_connect():
         if not runtime_env.capabilities()["can_manage_wifi"]:
             return jsonify(runtime_env.refusal("can_manage_wifi")), 403
@@ -413,6 +420,7 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         return jsonify({"ok": False, "error": result.get("reason", "connect failed")}), 500
 
     @app.route("/api/system/wifi/forget", methods=["POST"])
+    @_handle_errors
     def api_system_wifi_forget():
         if not runtime_env.capabilities()["can_manage_wifi"]:
             return jsonify(runtime_env.refusal("can_manage_wifi")), 403
@@ -429,6 +437,7 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         return jsonify({"ok": False, "error": result.get("reason", "forget failed")}), 500
 
     @app.route("/api/system/network")
+    @_handle_errors
     def api_system_network():
         if not runtime_env.capabilities()["can_manage_wifi"]:
             # Also skips the `ping 8.8.8.8` reachability probe, and the
@@ -479,18 +488,21 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         return jsonify(result)
 
     @app.route("/api/time")
+    @_handle_errors
     def api_get_time():
         from meshsrv.time_service import get_status
 
         return jsonify(get_status())
 
     @app.route("/api/notifications", methods=["GET"])
+    @_handle_errors
     def api_get_notifications():
         from meshsrv.notification_service import get_all, get_unread_count
 
         return jsonify({"notifications": get_all(), "unread_count": get_unread_count()})
 
     @app.route("/api/notifications/test", methods=["POST"])
+    @_handle_errors
     def api_test_notification():
         from meshsrv.notification_service import push_notification
 
@@ -501,6 +513,7 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         return jsonify({"ok": True, "event": event})
 
     @app.route("/api/notifications/read-all", methods=["POST"])
+    @_handle_errors
     def api_mark_all_notifications_read():
         from meshsrv.notification_service import mark_all_read
 
@@ -508,6 +521,7 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         return jsonify({"marked": count})
 
     @app.route("/api/notifications/<nid>/read", methods=["PATCH"])
+    @_handle_errors
     def api_mark_notification_read(nid):
         from meshsrv.notification_service import mark_read
 
@@ -515,6 +529,7 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         return jsonify({"ok": ok})
 
     @app.route("/api/notifications/<nid>", methods=["DELETE"])
+    @_handle_errors
     def api_delete_notification(nid):
         from meshsrv.notification_service import delete_one
 
@@ -522,6 +537,7 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         return jsonify({"ok": ok})
 
     @app.route("/api/notifications", methods=["DELETE"])
+    @_handle_errors
     def api_clear_notifications():
         from meshsrv.notification_service import clear_all
 
@@ -529,12 +545,14 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         return jsonify({"cleared": count})
 
     @app.route("/api/schedules", methods=["GET"])
+    @_handle_errors
     def api_get_schedules():
         from meshsrv.schedule_engine import get_all_rules
 
         return jsonify(get_all_rules())
 
     @app.route("/api/schedules", methods=["POST"])
+    @_handle_errors
     def api_create_schedule():
         from meshsrv.schedule_engine import create_rule
 
@@ -544,6 +562,7 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         return jsonify(create_rule(data)), 201
 
     @app.route("/api/schedules/<sid>", methods=["PUT"])
+    @_handle_errors
     def api_update_schedule(sid):
         from meshsrv.schedule_engine import update_rule
 
@@ -556,6 +575,7 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         return jsonify(result)
 
     @app.route("/api/schedules/<sid>/toggle", methods=["PATCH"])
+    @_handle_errors
     def api_toggle_schedule(sid):
         from meshsrv.schedule_engine import toggle_rule
 
@@ -565,6 +585,7 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         return jsonify(result)
 
     @app.route("/api/schedules/<sid>", methods=["DELETE"])
+    @_handle_errors
     def api_delete_schedule(sid):
         from meshsrv.schedule_engine import delete_rule
 
@@ -572,12 +593,14 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         return jsonify({"ok": ok})
 
     @app.route("/api/timers", methods=["GET"])
+    @_handle_errors
     def api_get_timers():
         from meshsrv.timer_service import get_all
 
         return jsonify(get_all())
 
     @app.route("/api/timers", methods=["POST"])
+    @_handle_errors
     def api_create_timer():
         from meshsrv.timer_service import create_timer
 
@@ -591,6 +614,7 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         return jsonify(t), 201
 
     @app.route("/api/timers/<tid>/pause", methods=["PATCH"])
+    @_handle_errors
     def api_pause_timer(tid):
         from meshsrv.timer_service import pause_timer
 
@@ -600,6 +624,7 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         return jsonify(t)
 
     @app.route("/api/timers/<tid>/resume", methods=["PATCH"])
+    @_handle_errors
     def api_resume_timer(tid):
         from meshsrv.timer_service import resume_timer
 
@@ -609,6 +634,7 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         return jsonify(t)
 
     @app.route("/api/timers/<tid>/stop", methods=["PATCH"])
+    @_handle_errors
     def api_stop_timer(tid):
         from meshsrv.timer_service import stop_timer
 
@@ -618,6 +644,7 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         return jsonify(t)
 
     @app.route("/api/timers/<tid>/reset", methods=["PATCH"])
+    @_handle_errors
     def api_reset_timer(tid):
         from meshsrv.timer_service import reset_timer
 
@@ -627,6 +654,7 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         return jsonify(t)
 
     @app.route("/api/timers/<tid>/finish", methods=["POST"])
+    @_handle_errors
     def api_finish_timer(tid):
         from meshsrv.timer_service import mark_finished
         from meshsrv.notification_service import push_notification
@@ -658,6 +686,7 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         return jsonify(t)
 
     @app.route("/api/timers/<tid>", methods=["DELETE"])
+    @_handle_errors
     def api_delete_timer(tid):
         from meshsrv.timer_service import delete_timer
 

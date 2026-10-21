@@ -187,3 +187,34 @@ def test_system_info_model_field_is_none_when_unavailable(client, monkeypatch):
     response = client.get("/api/system/info")
 
     assert response.get_json()["model"] is None
+
+
+def test_system_routes_handle_errors_sanitizes_uncaught_exceptions():
+    from meshsrv import error_reporting
+
+    def mock_handle_errors(f):
+        def wrapper(*args, **kwargs):
+            try:
+                return f(*args, **kwargs)
+            except Exception as exc:
+                error_id = error_reporting.report_unexpected_error(exc, "test_context")
+                return error_reporting.internal_error_payload(error_id), 500
+        wrapper.__name__ = f.__name__
+        return wrapper
+
+    app = Flask(__name__)
+    register_system_routes(app, handle_errors=mock_handle_errors)
+    test_client = app.test_client()
+
+    # Trigger an exception in a system route by raising inside get_all
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr("meshsrv.notification_service.get_all", lambda: 1 / 0)
+        response = test_client.get("/api/notifications")
+
+    assert response.status_code == 500
+    data = response.get_json()
+    assert data["ok"] is False
+    assert data["error"] == "Internal server error"
+    assert data["error_code"] == "internal_error"
+    assert "error_id" in data
+    assert "ZeroDivisionError" not in response.get_data(as_text=True)

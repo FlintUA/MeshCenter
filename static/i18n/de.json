@@ -571,7 +571,10 @@
     "date_yesterday": "gestern",
     "unread_divider": "Ungelesene Nachrichten ({count})",
     "jump_to_latest": "Zur neuesten Nachricht springen",
-    "node_ignored_hidden": "Node ignoriert - aus der Liste ausgeblendet"
+    "node_ignored_hidden": "Node ignoriert - aus der Liste ausgeblendet",
+    "info_snr": "SNR",
+    "info_rssi": "RSSI",
+    "info_hops": "Hops"
   },
   "camera": {
     "live_camera": "Live-Kamera",
@@ -1232,7 +1235,8 @@
     "show_hide_api_key": "API-Schlüssel anzeigen oder verbergen",
     "reply": "Antworten",
     "copy": "Kopieren",
-    "sender_node": "Node des Absenders"
+    "sender_node": "Node des Absenders",
+    "reply_with_signal": "Antwort mit Signal"
   },
   "waypoints": {
     "delete_selected_confirm": {

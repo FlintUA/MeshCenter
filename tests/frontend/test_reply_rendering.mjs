@@ -34,10 +34,16 @@ const STRINGS = {
     'nodes.unknown_node': 'Unknown node',
 };
 
+// The real display helpers (SIG1: a literal backslash-n in a quoted text becomes a line break).
+const viewsWindow = {};
+vm.createContext(viewsWindow);
+viewsWindow.window = viewsWindow;
+vm.runInContext(readFileSync(path.join(__dirname, '..', '..', 'static', 'chat-views.js'), 'utf8'), viewsWindow);
+
 function build() {
     const sandbox = {
         console,
-        window: { I18N: { t: (k) => (k in STRINGS ? STRINGS[k] : `[[${k}]]`) } },
+        window: { I18N: { t: (k) => (k in STRINGS ? STRINGS[k] : `[[${k}]]`) }, MCViews: viewsWindow.MCViews },
         // The real escapeHtml() - close enough for these assertions, and
         // keeps the test honest about what actually reaches the DOM.
         escapeHtml: (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({

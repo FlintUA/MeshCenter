@@ -541,7 +541,19 @@ def rollback(project_dir: str, preflight: dict[str, Any], current_version: str) 
     }
 
 
-def reconcile_pending(current_version: str, log: Callable[..., None]) -> dict[str, Any] | None:
+def refresh_origin_main(project_dir: str) -> bool:
+    """Best effort: bring refs/remotes/origin/main up to date. An update fetches only the release TAG, so
+    the remote-tracking ref of main goes stale and `git status` then claims "ahead N" on a node that is
+    exactly on a release. Cosmetic only: touches no branch, no HEAD, no working tree; any failure (offline,
+    no `main` on origin, a scratch remote) is ignored."""
+    try:
+        result = _git(project_dir, "fetch", "--no-tags", "origin", "+refs/heads/main:refs/remotes/origin/main", timeout=30)
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def reconcile_pending(current_version: str, log: Callable[..., None], project_dir: str | None = None) -> dict[str, Any] | None:
     """Called once at boot by the NEW process: resolve an update/rollback the previous process
     started. Records `last_update` ({kind, from, to, at, ok}) and logs "Update finished" or
     "Update failed" (the same for rollbacks) to the system log via `log(title, level, details,
@@ -562,6 +574,9 @@ def reconcile_pending(current_version: str, log: Callable[..., None]) -> dict[st
             "manual_steps": list(pending.get("manual_steps") or []),
         }
         _save_cache(cache)
+    if project_dir and ok:
+        # after the lock is released, off the boot path: a slow network must not delay start-up
+        threading.Thread(target=refresh_origin_main, args=(project_dir,), daemon=True, name="refresh-origin-main").start()
     noun = "Rollback" if kind == "rollback" else "Update"
     if ok:
         steps = pending.get("manual_steps") or []

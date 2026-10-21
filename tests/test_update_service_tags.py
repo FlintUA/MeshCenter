@@ -355,3 +355,35 @@ def test_reconcile_names_a_rollback_as_one(env):
 
 def test_reconcile_without_a_pending_update_does_nothing(env):
     assert update_service.reconcile_pending("1.0.0", lambda *a, **k: pytest.fail("no event expected")) is None
+
+
+# ------------------------------------------------------------------ SIG2: no stale "ahead N" after a tag update
+def test_refresh_origin_main_makes_git_status_honest_after_a_tag_update(env):
+    env.publish("v1.0.1")
+    env.publish("later", {"server.py": "# main moved on\n"}, tag_it=False)
+    _update(env, "v1.0.1")
+    stale = _git(env.work, "rev-parse", "refs/remotes/origin/main")
+    origin_main = _git(env.dev, "rev-parse", "HEAD")
+    assert stale != origin_main, "a tag-only fetch leaves origin/main stale"
+    assert update_service.refresh_origin_main(str(env.work)) is True
+    assert _git(env.work, "rev-parse", "refs/remotes/origin/main") == origin_main
+    # nothing else moved: HEAD is still the tag's commit, on branch main
+    assert env.head() == _git(env.work, "rev-parse", "v1.0.1^{commit}") and env.branch() == "main" and env.clean()
+
+
+def test_refresh_origin_main_ignores_failures(env, tmp_path):
+    _run(["git", "remote", "set-url", "origin", str(tmp_path / "nowhere.git")], cwd=env.work)
+    assert update_service.refresh_origin_main(str(env.work)) is False
+    assert update_service.refresh_origin_main(str(tmp_path / "not-a-repo")) is False
+
+
+def test_reconcile_refreshes_origin_main_in_the_background_only_for_a_successful_update(env):
+    import threading
+
+    env.publish("v1.0.1")
+    env.publish("later", {"server.py": "# main moved on\n"}, tag_it=False)
+    _update(env, "v1.0.1")
+    update_service.reconcile_pending("1.0.1", lambda *a, **k: None, str(env.work))
+    for thread in [t for t in threading.enumerate() if t.name == "refresh-origin-main"]:
+        thread.join(timeout=30)
+    assert _git(env.work, "rev-parse", "refs/remotes/origin/main") == _git(env.dev, "rev-parse", "HEAD")

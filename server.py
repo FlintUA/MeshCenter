@@ -3966,9 +3966,99 @@ def resolve_reply_reference(message):
     return enriched
 
 
+_TEXT_DECODE_WARNED = False
+
+
+def _python_string_literal_at(line, start):
+    """The Python/JSON string literal that begins at `line[start]` (a quote character), as the exact
+    source token (quotes included), or None when `start` is not a quote or the string never closes.
+    Escape-aware: a backslash protects the next character, so an escaped quote does not end it."""
+    if start >= len(line) or line[start] not in "'\"":
+        return None
+    quote = line[start]
+    i = start + 1
+    while i < len(line):
+        ch = line[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == quote:
+            return line[start:i + 1]
+        i += 1
+    return None
+
+
+def _decode_python_string_literal(token):
+    """The str a Python string-literal token stands for (\\n, \\\\, \\', \\xNN, \\uNNNN, emoji, ...).
+    `ast.literal_eval` on ONE verified string token only (see _python_string_literal_at): nothing else is
+    ever evaluated. None when it is not a plain str."""
+    value = ast.literal_eval(token)
+    return value if isinstance(value, str) else None
+
+
+def line_without_text_literals(line):
+    """`line` with the packet's `payload` bytes literal and its `text` string literal replaced by empty ones.
+    The metadata of a text line (sender id, channel, SNR, ...) is read from THIS copy, so a message whose
+    text contains something like `'fromId': '!deadbeef'` or `'to': '!...'` can never spoof the sender or the
+    routing (the real fields come after the text in the printed dict, and a first-match regex would pick the
+    fake one). Same escape-aware scanning as extract_text_message()."""
+    out = line
+    payload = re.search(r"""['"]payload['"]\s*:\s*b?""", out)
+    if payload:
+        token = _python_string_literal_at(out, payload.end())
+        if token:
+            out = out[:payload.end()] + "''" + out[payload.end() + len(token):]
+    text_key = re.compile(r"""['"]text['"]\s*:\s*""")
+    match = text_key.search(out, payload.end() if payload else 0)
+    while match:
+        token = _python_string_literal_at(out, match.end())
+        if token:
+            return out[:match.end()] + "''" + out[match.end() + len(token):]
+        match = text_key.search(out, match.end())
+    return out
+
+
 def extract_text_message(line):
+    """The text of a received message from a `--listen` line.
+
+    The CLI prints the packet as a Python dict, so the text arrives in repr form: a real newline is the two
+    characters backslash-n, a real backslash is two backslashes, a quote may be escaped, non-printable
+    characters are \\xNN / \\uNNNN. SIG2: the string literal is DECODED here (strict `ast.literal_eval` of a
+    single string token), so serial stores exactly what the TCP adapter stores for the same packet - real
+    newlines, single backslashes, quotes, emoji, Cyrillic - and is not stripped (TCP does not strip either;
+    a whitespace-only text is skipped on both). Malformed input falls back to the raw capture (the old
+    behaviour) and logs once."""
+    global _TEXT_DECODE_WARNED
     if "TEXT_MESSAGE_APP" not in line and "'text':" not in line and '"text":' not in line:
         return None
+
+    # Skip the packet's own `payload` (bytes repr of the same text): a text that itself contains
+    # "'text': " must not be mistaken for the field.
+    position = 0
+    payload = re.search(r"""['"]payload['"]\s*:\s*b?""", line)
+    if payload:
+        token = _python_string_literal_at(line, payload.end())
+        if token:
+            position = payload.end() + len(token)
+
+    key = re.compile(r"""['"]text['"]\s*:\s*""")
+    match = key.search(line, position)
+    while match:
+        token = _python_string_literal_at(line, match.end())
+        if token:
+            try:
+                decoded = _decode_python_string_literal(token)
+            except (ValueError, SyntaxError, MemoryError, RecursionError):
+                decoded = None
+                if not _TEXT_DECODE_WARNED:
+                    _TEXT_DECODE_WARNED = True
+                    print("[LISTEN] Could not decode a received text's escapes; using the raw text "
+                          "(further failures are not logged)", flush=True)
+            if decoded is not None:
+                return decoded if decoded.strip() else None
+            break  # undecodable: fall back to the raw capture below
+        match = key.search(line, match.end())
+
     patterns = [
         r"'text':\s*'([^']*)'", r'"text":\s*"([^"]*)"',
         r"'text':\s*\"([^\"]*)\"", r'"text":\s*\'([^\']*)\'',
@@ -5143,6 +5233,10 @@ def build_serial_text_event(line, text):
     """CLI line -> (neutral ReceivedTextEvent, serial-only context). Pure
     parsing with the existing extract_* helpers - no state is read or written,
     so it can run before the dedup checks exactly as the old inline code did."""
+    # Metadata comes from the line with the message's own text blanked out (see line_without_text_literals):
+    # the text is attacker-controlled and must not be able to forge the sender, channel or radio metrics.
+    raw_line = line
+    line = line_without_text_literals(line)
     node_id = extract_node_id(line) or ""
     sender_hint = "" if node_id else extract_sender(line)
     snr_text = extract_snr(line)
@@ -5164,7 +5258,7 @@ def build_serial_text_event(line, text):
         relay_node=_optional_int(extract_relay_node(line)),
     )
     context = inbound_events.SerialLineContext(
-        raw_line=line,
+        raw_line=raw_line,
         sender_hint=sender_hint,
         role=extract_field(line, ["role", "Role"]),
         rx_snr_text=snr_text,
@@ -9944,7 +10038,7 @@ def start_runtime():
     # UPD1: resolve an update/rollback the previous process started (writes "Update
     # finished" / "Update failed" to the System Log, records last_update for the card).
     try:
-        update_service.reconcile_pending(APP_VERSION, log_system_event)
+        update_service.reconcile_pending(APP_VERSION, log_system_event, PROJECT_DIR)
     except Exception as error:
         print(f"[UPDATES] Could not reconcile a pending update: {error}", flush=True)
 

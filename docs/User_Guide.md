@@ -450,7 +450,7 @@ Use the action button on a message to:
 - View message information
 - Delete the message from local MeshCenter history
 
-Some stations send the two characters backslash and n instead of a real line break. MeshCenter shows those as line breaks in chat bubbles, reply quotes and the node card (and as " · " in one-line previews such as the chat list); the stored text is not changed and Copy copies the original.
+Some stations send the two characters backslash and n instead of a real line break. MeshCenter shows those as line breaks in chat bubbles, reply quotes and the node card (and as " · " in one-line previews such as the chat list); the stored text is not changed and Copy copies the original. Since v1.12.3 a USB (serial) radio stores received texts exactly like a TCP radio does (real line breaks, single backslashes); the conversion remains for older stored messages, and a backslash followed by the letter n that someone typed on purpose is also shown as a line break.
 
 Deleting or clearing a message removes only the local stored copy. It cannot recall a LoRa message that was already transmitted.
 

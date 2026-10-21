@@ -571,7 +571,10 @@
     "date_yesterday": "вчора",
     "unread_divider": "Непрочитані повідомлення ({count})",
     "jump_to_latest": "До останнього повідомлення",
-    "node_ignored_hidden": "Вузол ігнорується - приховано зі списку"
+    "node_ignored_hidden": "Вузол ігнорується - приховано зі списку",
+    "info_snr": "SNR",
+    "info_rssi": "RSSI",
+    "info_hops": "Хопи"
   },
   "camera": {
     "live_camera": "Камера в реальному часі",
@@ -1232,7 +1235,8 @@
     "show_hide_api_key": "Показати або приховати API-ключ",
     "reply": "Відповісти",
     "copy": "Копіювати",
-    "sender_node": "Вузол відправника"
+    "sender_node": "Вузол відправника",
+    "reply_with_signal": "Відповідь із сигналом"
   },
   "waypoints": {
     "delete_selected_confirm": {

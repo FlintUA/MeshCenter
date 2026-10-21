@@ -445,9 +445,12 @@ On a desktop-width screen, click a message bubble to scroll the node list to the
 Use the action button on a message to:
 
 - Reply with Meshtastic reply metadata
+- **Reply with signal** (received messages that carry radio metrics): one click sends a native reply, at once and into the same chat, that tells the sender how you heard them, for example `Rx 16:28:06`, `SNR -5.5 dB | RSSI -87 dBm`, `Hops 3` on three lines (`Hops 0 (direct)` when heard directly; a value the radio did not report is left out). The item is hidden for your own messages, for messages without SNR/RSSI (including messages stored before this feature existed) and is disabled while the radio is released
 - Copy the message
 - View message information
 - Delete the message from local MeshCenter history
+
+Some stations send the two characters backslash and n instead of a real line break. MeshCenter shows those as line breaks in chat bubbles, reply quotes and the node card (and as " · " in one-line previews such as the chat list); the stored text is not changed and Copy copies the original.
 
 Deleting or clearing a message removes only the local stored copy. It cannot recall a LoRa message that was already transmitted.
 

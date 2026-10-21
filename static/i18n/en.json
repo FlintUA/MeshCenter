@@ -571,7 +571,10 @@
     "date_yesterday": "yesterday",
     "unread_divider": "Unread messages ({count})",
     "jump_to_latest": "Jump to latest message",
-    "node_ignored_hidden": "Node ignored - hidden from the list"
+    "node_ignored_hidden": "Node ignored - hidden from the list",
+    "info_snr": "SNR",
+    "info_rssi": "RSSI",
+    "info_hops": "Hops"
   },
   "camera": {
     "live_camera": "Live Camera",
@@ -1232,7 +1235,8 @@
     "show_hide_api_key": "Show or hide API key",
     "reply": "Reply",
     "copy": "Copy",
-    "sender_node": "Sender's node"
+    "sender_node": "Sender's node",
+    "reply_with_signal": "Reply with signal"
   },
   "waypoints": {
     "delete_selected_confirm": {

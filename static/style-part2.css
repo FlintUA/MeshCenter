@@ -3427,6 +3427,7 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
     min-width: 0;
     overflow-wrap: anywhere;
     word-break: break-word;
+    white-space: pre-line;
 }
 
 @media (max-width: 520px) {

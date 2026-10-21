@@ -2401,7 +2401,7 @@ function detectAndNotifyNewMessages(previousChats, nextChats) {
         const title = chat.is_channel && chat.last_sender
             ? `${chat.name}: ${chat.last_sender}`
             : chat.name;
-        maybeShowBrowserNotification(category, title, truncateText(chat.last_message || '', 120), chat.id);
+        maybeShowBrowserNotification(category, title, truncateText(window.MCViews.previewText(chat.last_message || ''), 120), chat.id);
     }
 }
 
@@ -4483,7 +4483,7 @@ function renderChatItem(chat) {
     const iconClass = chat.is_channel
         ? `channel${isDemo ? ' demo' : ''}`
         : `dm node-short-name${chat.favorite ? ' favorite' : ''}`;
-    const lastMsg = chat.last_message || window.I18N.t('chat.no_messages_yet_short');
+    const lastMsg = window.MCViews.previewText(chat.last_message || '') || window.I18N.t('chat.no_messages_yet_short');
     const time = formatChatTimestamp(chat.last_ts, chat.last_time || '');
     const ignored = chat.ignored ? '🚫 ' : '';
     const favorite = chat.favorite ? '⚑ ' : '';
@@ -5426,7 +5426,7 @@ function renderNodeCard(node) {
     // (overflow-wrap: anywhere) instead of hard-truncated with "..." - the
     // card grows as tall as the message needs, never clips or overflows.
     const lastText = node.last_text
-        ? `<div class="node-last-text"><span class="node-last-text-icon">💬</span><span class="node-last-text-body">${escapeHtml(node.last_text)}</span></div>`
+        ? `<div class="node-last-text"><span class="node-last-text-icon">💬</span><span class="node-last-text-body">${escapeHtml(window.MCViews.expandEscapedNewlines(node.last_text))}</span></div>`
         : '';
 
     const mapBadge = renderNodeMapBadge(node);
@@ -6160,6 +6160,8 @@ function openMessageActions(messageId, anchorElement, pointerEvent = null) {
         senderItem.hidden = !(isNodePanelVisible() && messageSenderNodeId(message));
     }
 
+    updateSignalReplyMenuItem(message);
+
     positionMessageActionsMenu(anchorElement || messageElement, pointerEvent);
 }
 
@@ -6438,7 +6440,7 @@ function updateReplyComposer() {
     }
 
     sender.textContent = window.I18N.t('chat.reply_to', { sender: activeReply.sender || window.I18N.t('nodes.unknown_node') });
-    text.textContent = activeReply.text || '';
+    text.textContent = window.MCViews.previewText(activeReply.text || '');
     preview.hidden = false;
 }
 
@@ -6482,6 +6484,39 @@ function messageDirectionLabel(message) {
     return messageBelongsToActiveRadio(message) ? window.I18N.t('chat.direction_sent') : window.I18N.t('chat.direction_received');
 }
 
+// SIG1: "Reply with signal" - shown for received messages that carry SNR/RSSI; disabled (same reason as
+// the composer) while the radio is released.
+function signalReplyState(message) {
+    return window.MCViews.signalReplyMenuState(message, {
+        isOwn: messageBelongsToActiveRadio(message),
+        releasedReason: radioReleasedInfo ? window.I18N.t('chat.radio_released_placeholder') : '',
+    });
+}
+
+function updateSignalReplyMenuItem(message) {
+    const item = document.getElementById('messageActionSignalReply');
+    if (!item) return;
+    const state = signalReplyState(message);
+    item.hidden = !state.visible;
+    item.disabled = state.disabled;
+    item.setAttribute('aria-disabled', state.disabled ? 'true' : 'false');
+    if (state.disabled) item.title = state.reason;
+    else item.removeAttribute('title');
+}
+
+async function replyWithSignal() {
+    const message = messageActionTarget;
+    closeMessageActionsMenu();
+    if (!message || !currentChatId) return;
+
+    const state = signalReplyState(message);
+    if (!state.visible || state.disabled) return;
+
+    // A native Meshtastic reply (reply_id = the original packet) into the SAME chat: the channel for a
+    // channel message, the DM for a DM. Sent at once - no confirmation, no composer step.
+    await submitOutgoingMessage(currentChatId, currentChatType, currentChatName, state.text, buildReplyPayload(message));
+}
+
 function startReplyToMessage() {
     const message = messageActionTarget;
     closeMessageActionsMenu();
@@ -6514,6 +6549,13 @@ function showMessageInfo() {
         [window.I18N.t('chat.message_id_label'), message.id || '-'],
         [window.I18N.t('chat.packet_id_label'), message.packet_id ?? '-']
     ];
+    if (message.rx && typeof message.rx === 'object') {
+        if (message.rx.snr !== undefined && message.rx.snr !== null) fields.push([window.I18N.t('chat.info_snr'), `${message.rx.snr} dB`]);
+        if (message.rx.rssi !== undefined && message.rx.rssi !== null) fields.push([window.I18N.t('chat.info_rssi'), `${message.rx.rssi} dBm`]);
+        if (Number(message.rx.hop_start) > 0 && Number.isFinite(Number(message.rx.hop_limit))) {
+            fields.push([window.I18N.t('chat.info_hops'), String(Number(message.rx.hop_start) - Number(message.rx.hop_limit))]);
+        }
+    }
 
     const content = document.getElementById('messageInfoContent');
     if (content) {
@@ -6725,7 +6767,7 @@ function buildReplyBlockHtml(msg) {
         return `
             <button type="button" class="message-reply-quote" data-reply-message-id="${escapeHtml(String(reply.id || ''))}" title="${escapeHtml(window.I18N.t('chat.referenced_message'))}">
                 <span class="message-reply-label">↪ ${escapeHtml(String(reply.sender || window.I18N.t('nodes.unknown_node')))}</span>
-                <span class="message-reply-text">${escapeHtml(String(reply.text || ''))}</span>
+                <span class="message-reply-text">${escapeHtml(window.MCViews.expandEscapedNewlines(String(reply.text || '')))}</span>
             </button>
         `;
     }
@@ -6828,7 +6870,7 @@ function renderMessages(container, messages, chatId) {
             const isMe = messageBelongsToActiveRadio(msg);
             const isSystem = msg.kind === 'system' || msg.sender === 'SYSTEM ERROR';
             const sender = escapeHtml(msg.sender || window.I18N.t('nodes.unknown_node'));
-            const text = escapeHtml(msg.text || '');
+            const text = escapeHtml(window.MCViews.expandEscapedNewlines(msg.text || ''));
             const time = escapeHtml(formatChatTimestamp(msg.ts, msg.time));
 
             const messageId = escapeHtml(String(msg.id || ''));

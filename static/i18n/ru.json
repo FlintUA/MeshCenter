@@ -571,7 +571,10 @@
     "date_yesterday": "вчера",
     "unread_divider": "Непрочитанные сообщения ({count})",
     "jump_to_latest": "К последнему сообщению",
-    "node_ignored_hidden": "Узел игнорируется - скрыт из списка"
+    "node_ignored_hidden": "Узел игнорируется - скрыт из списка",
+    "info_snr": "SNR",
+    "info_rssi": "RSSI",
+    "info_hops": "Хопы"
   },
   "camera": {
     "live_camera": "Камера в реальном времени",
@@ -1232,7 +1235,8 @@
     "show_hide_api_key": "Показать или скрыть API-ключ",
     "reply": "Ответить",
     "copy": "Копировать",
-    "sender_node": "Узел отправителя"
+    "sender_node": "Узел отправителя",
+    "reply_with_signal": "Ответ с сигналом"
   },
   "waypoints": {
     "delete_selected_confirm": {

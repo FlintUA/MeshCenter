@@ -405,6 +405,17 @@
     opacity: 0.78;
 }
 
+/* SIG1: a quoted multi-line text shows up to three lines (a literal "\n" in a received text is a line break) */
+.message-reply-text {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    white-space: pre-line;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .message-reply-highlight .bubble {
     animation: messageReplyHighlight 1.6s ease;
 }

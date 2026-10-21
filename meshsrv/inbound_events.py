@@ -408,6 +408,14 @@ def ingest_received_text(
             # indistinguishable from a plain message.
             reply_id=event.reply_id,
             rx_time=event.rx_time,
+            # Per-message radio metrics (SNR/RSSI/hops), kept so "Reply with signal" and Message Info
+            # can show them for THIS packet (the node record only holds the latest values).
+            rx={
+                "snr": event.rx_snr,
+                "rssi": event.rx_rssi,
+                "hop_start": event.hop_start,
+                "hop_limit": event.hop_limit,
+            },
         )
     _count("text_stored")
 

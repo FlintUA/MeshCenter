@@ -461,7 +461,7 @@ body {
 
 .message.me .bubble .sender { color: rgba(255,255,255,0.8); }
 
-.bubble .text { font-size: 14px; line-height: 1.4; }
+.bubble .text { font-size: 14px; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
 .bubble .time { font-size: 10px; opacity: 0.6; margin-top: 4px; text-align: right; }
 
 /* ===== INPUT AREA ===== */

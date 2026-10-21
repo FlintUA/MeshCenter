@@ -474,6 +474,94 @@
         return { state: 'offline', labelKey: 'node_manager.badge_offline' };
     }
 
+    // ---- SIG1: literal "\n" in received texts -------------------------------------------------
+    // Some stations (automatic responders) send the two characters backslash + n instead of a real
+    // newline. DISPLAY ONLY (the stored text is never changed; Copy keeps the original): a literal
+    // "\n" / "\r\n" becomes a real line break, real CR LF is normalised. Callers escape the result
+    // (escapeHtml / textContent) - this function never builds HTML.
+    function expandEscapedNewlines(text) {
+        return String(text === null || text === undefined ? '' : text)
+            .replace(/\\r\\n|\\n/g, '\n')
+            .replace(/\r\n/g, '\n');
+    }
+
+    // One-line previews (chat list, browser notifications, reply composer): line breaks become " · ".
+    function previewText(text) {
+        return expandEscapedNewlines(text).split('\n').map((part) => part.trim()).filter(Boolean).join(' · ');
+    }
+
+    // ---- SIG1: "Reply with signal" -----------------------------------------------------------
+    function finiteNumber(value) {
+        if (value === null || value === undefined || value === '' || typeof value === 'boolean') return null;
+        const number = Number(value);
+        return Number.isFinite(number) ? number : null;
+    }
+
+    function pad2(n) {
+        return n < 10 ? '0' + n : String(n);
+    }
+
+    // HH:MM:SS of the message's receive time (epoch `ts` in the browser's local time, else the stored string).
+    function signalReplyTime(message) {
+        const ts = finiteNumber(message && message.ts);
+        if (ts !== null && ts > 0) {
+            const d = new Date(ts * 1000);
+            return pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
+        }
+        const stored = String((message && message.time) || '').trim();
+        return /^\d{1,2}:\d{2}:\d{2}$/.test(stored) ? stored : '';
+    }
+
+    function formatSignalNumber(value) {
+        return String(Math.round(value * 100) / 100);
+    }
+
+    // The text of "Reply with signal", or null when the message has neither SNR nor RSSI. Language-neutral,
+    // real newlines, no names (emoji names blow the byte budget):
+    //   Rx 16:28:06\nSNR -5.5 dB | RSSI -87 dBm\nHops 3
+    function buildSignalReplyText(message) {
+        const rx = (message && message.rx && typeof message.rx === 'object') ? message.rx : {};
+        const snr = finiteNumber(rx.snr);
+        const rssi = finiteNumber(rx.rssi);
+        if (snr === null && rssi === null) return null;
+
+        const lines = [];
+        const time = signalReplyTime(message);
+        if (time) lines.push('Rx ' + time);
+
+        const signal = [];
+        if (snr !== null) signal.push('SNR ' + formatSignalNumber(snr) + ' dB');
+        if (rssi !== null) signal.push('RSSI ' + Math.round(rssi) + ' dBm');
+        lines.push(signal.join(' | '));
+
+        // hop_start 0 means "unknown" in the protocol (older firmware), so it is not a hop count.
+        const hopStart = finiteNumber(rx.hop_start);
+        const hopLimit = finiteNumber(rx.hop_limit);
+        if (hopStart !== null && hopLimit !== null && hopStart > 0 && hopStart >= hopLimit) {
+            const hops = hopStart - hopLimit;
+            lines.push(hops === 0 ? 'Hops 0 (direct)' : 'Hops ' + hops);
+        }
+        return lines.join('\n');
+    }
+
+    function utf8Length(text) {
+        if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(text).length;
+        return unescape(encodeURIComponent(text)).length;
+    }
+
+    // Menu state for the "Reply with signal" item. `isOwn`: our own radio sent it; `releasedReason`: the
+    // composer's reason text when the radio is released (the item is then shown but disabled).
+    function signalReplyMenuState(message, options) {
+        const opts = options || {};
+        const hidden = { visible: false, disabled: false, text: null, reason: '' };
+        if (!message || message.kind !== 'rx' || opts.isOwn) return hidden;
+        if (finiteNumber(message.packet_id) === null) return hidden; // a native reply needs the packet id
+        const text = buildSignalReplyText(message);
+        if (text === null) return hidden;
+        const released = Boolean(opts.releasedReason);
+        return { visible: true, disabled: released, text: text, reason: released ? String(opts.releasedReason) : '' };
+    }
+
     const api = {
         newMarkReadState: newMarkReadState,
         newestIncomingKey: newestIncomingKey,
@@ -495,6 +583,11 @@
         stateRevealingNode: stateRevealingNode,
         formatMessageTime: formatMessageTime,
         releasedComposerState: releasedComposerState,
+        expandEscapedNewlines: expandEscapedNewlines,
+        previewText: previewText,
+        buildSignalReplyText: buildSignalReplyText,
+        signalReplyMenuState: signalReplyMenuState,
+        utf8Length: utf8Length,
         profileConnectionBadge: profileConnectionBadge,
         firstUnreadIndex: firstUnreadIndex,
         SORT_KEYS: SORT_KEYS,

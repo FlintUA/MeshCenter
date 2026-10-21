@@ -3993,6 +3993,10 @@ def extract_hop_start(line):
     m = re.search(r"'hopStart':\s*(\d+)", line)
     return m.group(1) if m else None
 
+def extract_hop_limit(line):
+    m = re.search(r"'hopLimit':\s*(\d+)", line)
+    return m.group(1) if m else None
+
 def extract_relay_node(line):
     m = re.search(r"'relayNode':\s*(\d+)", line)
     return m.group(1) if m else None
@@ -4220,8 +4224,31 @@ def resolve_message_ts(rx_time=None):
     return current
 
 
+def clean_rx_metrics(rx):
+    """The per-message radio metrics worth keeping: {"snr": float, "rssi": int, "hop_start": int,
+    "hop_limit": int}, each only when it is a real finite number. None when nothing usable (so a message
+    without metrics carries no `rx` key at all). Used by "Reply with signal" and Message Info."""
+    if not isinstance(rx, dict):
+        return None
+    out = {}
+    for key, kind in (("snr", float), ("rssi", int), ("hop_start", int), ("hop_limit", int)):
+        value = rx.get(key)
+        if value is None or isinstance(value, bool):
+            continue
+        try:
+            number = kind(value)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if kind is float:
+            if number != number or number in (float("inf"), float("-inf")):
+                continue
+            number = round(number, 2)
+        out[key] = number
+    return out or None
+
+
 def add_message(kind, sender, text, node_id="", chat_id=None, chat_name=None, reply_to=None, packet_id=None,
-                 status=None, client_id=None, reply_id=None, rx_time=None):
+                 status=None, client_id=None, reply_id=None, rx_time=None, rx=None):
     # Store all locally transmitted messages under one canonical direction.
     # Older waypoint notifications used "tx", while the rest of the chat
     # subsystem and UI use "me" for outgoing messages.
@@ -4302,6 +4329,9 @@ def add_message(kind, sender, text, node_id="", chat_id=None, chat_name=None, re
                 msg["packet_id"] = int(packet_id)
             except (TypeError, ValueError):
                 pass
+        rx_clean = clean_rx_metrics(rx)
+        if rx_clean:
+            msg["rx"] = rx_clean
         # reply_id is the protocol fact "this message replies to packet X" -
         # stored independently of whether the original could be resolved
         # locally, so a reply is never silently indistinguishable from a
@@ -5130,6 +5160,7 @@ def build_serial_text_event(line, text):
         rx_rssi=_optional_int(extract_rssi(line)),
         rx_snr=float(snr_text) if snr_text is not None else None,
         hop_start=_optional_int(extract_hop_start(line)),
+        hop_limit=_optional_int(extract_hop_limit(line)),
         relay_node=_optional_int(extract_relay_node(line)),
     )
     context = inbound_events.SerialLineContext(

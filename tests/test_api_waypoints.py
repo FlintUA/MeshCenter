@@ -237,6 +237,12 @@ def test_delete_many_rejects_non_list_payload(waypoint_env):
     assert response.get_json()["error_code"] == "waypoint_ids_not_a_list"
 
 
+def test_delete_many_rejects_non_object_json_body(waypoint_env):
+    response = waypoint_env["client"].post("/api/waypoints/delete", data="[1, 2, 3]", content_type="application/json")
+    assert response.status_code == 400
+    assert response.get_json()["error_code"] == "invalid_json_payload"
+
+
 # ---------------- DELETE /api/waypoints (all) ----------------
 
 def test_delete_all_waypoints(waypoint_env):

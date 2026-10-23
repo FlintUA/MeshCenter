@@ -239,3 +239,20 @@ def test_csi_global_routes_never_touch_the_sensor_while_a_network_camera_is_acti
         r = getattr(client, method)(url, json=body)
         assert r.status_code == 409 and r.get_json()["error_code"] == "not_available_for_network_camera", url
     assert calls == []
+
+
+def test_stream_socket_gets_send_timeouts_so_a_dead_viewer_releases_its_slot(env):
+    """Live test finding: a viewer whose path died (Send-Q 224 KB, rto 120 s) pinned a slot, a thread and the
+    upstream for ~15 minutes. The route now sets SO_SNDTIMEO and TCP_USER_TIMEOUT on the client socket."""
+    import socket as socket_module
+    sock = MagicMock()
+    response = env["client"].get("/api/camera/stream/fmp4", buffered=False, environ_overrides={"gunicorn.socket": sock})
+    assert response.status_code == 200
+    options = {(call.args[0], call.args[1]) for call in sock.setsockopt.call_args_list}
+    assert (socket_module.SOL_SOCKET, socket_module.SO_SNDTIMEO) in options
+    if hasattr(socket_module, "TCP_USER_TIMEOUT"):
+        assert (socket_module.IPPROTO_TCP, socket_module.TCP_USER_TIMEOUT) in options
+        timeout_call = [c for c in sock.setsockopt.call_args_list if c.args[1] == socket_module.TCP_USER_TIMEOUT][0]
+        assert timeout_call.args[2] == 30000
+    response.close()
+    assert env["limiter"].count() == 0

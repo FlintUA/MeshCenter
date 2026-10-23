@@ -1,4 +1,6 @@
 from flask import request, jsonify, Response, send_file
+import socket
+import struct
 from pathlib import Path
 from datetime import datetime
 import base64
@@ -131,6 +133,26 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
         driver = _active_driver()
         return driver if getattr(driver, "source_type", None) == "rtsp" else None
 
+    CLIENT_SEND_TIMEOUT_S = 30
+
+    def _harden_stream_socket():
+        """A viewer whose network path dies (Wi-Fi drop, a phone that went to sleep) leaves the server
+        blocked in send() with data queued, holding a viewer slot, a server thread and the camera
+        upstream until the kernel gives up (about 15 minutes by default). Found in the .104 live test
+        (Send-Q 224 KB, rto 120 s). Give the connection a send timeout and TCP_USER_TIMEOUT so a dead
+        peer is dropped after CLIENT_SEND_TIMEOUT_S and the slot is released."""
+        sock = request.environ.get("gunicorn.socket")
+        if sock is None:
+            return
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDTIMEO, struct.pack("ll", CLIENT_SEND_TIMEOUT_S, 0))
+        except (OSError, struct.error, AttributeError):
+            pass
+        try:
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_USER_TIMEOUT, CLIENT_SEND_TIMEOUT_S * 1000)
+        except (OSError, AttributeError):
+            pass
+
     def _network_camera_guard():
         """The routes below drive the CSI sensor module directly (camera/camera.py globals: settings,
         mode switching, stop, screenshot). With a network camera active they must not touch it: it
@@ -158,6 +180,7 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
         except StreamNotReady as error:
             return jsonify({"ok": False, "error": "Stream not ready", "error_code": "stream_not_ready",
                             "state": error.state, "stream_error": error.error_code}), 503
+        _harden_stream_socket()
         response = Response(stream, mimetype="video/mp4", direct_passthrough=True)
         response.headers["X-Codec"] = stream.mse_codec
         response.headers["Access-Control-Expose-Headers"] = "X-Codec"

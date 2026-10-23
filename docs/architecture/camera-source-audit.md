@@ -1,6 +1,6 @@
 # Camera source audit (CAM2 Phase 0)
 
-Status: Phase 0 deliverable, read-only audit. No production code was changed and no network connection was made to the test camera or to any node. Everything marked **measured** below does not exist yet; everything marked **estimate** is a hypothesis the measurement plan in section 7 is built to confirm or kill. Facts about the code were read from `main` at f2d2722 (v1.12.3).
+Status: Phase 0 deliverable, read-only audit. No production code was changed. After Flint's go, a throwaway harness measured the test camera (read only, one RTSP session at a time, no camera setting touched) from a Windows PC and from .104; results are in section 7.5. Figures elsewhere marked **estimate** that section 7.5 does not cover remain hypotheses. Facts about the code were read from `main` at f2d2722 (v1.12.3).
 
 Companion document: [`docs/legal/camera-dependency-review.md`](../legal/camera-dependency-review.md).
 
@@ -163,6 +163,35 @@ Credential handling for the harness: Flint runs it himself in his Terminal tab w
 
 ST1 showed serial claims are timing sensitive on a Pi Zero. During every .104 run the harness records radio health against the idle baseline. A run that causes a listener exit, a post-claim exit, or a failed DM is a failed run for that path on that host.
 
+### 7.5 Measured results (2026-10-23)
+
+Camera streams (ffprobe): sub 640x360 H.264 High, 15 fps; main 3840x2160 H.264 High level 5.1, 25 fps. Neither probe reports a bitrate. Sources: Windows PC (16 cores, ffmpeg 9.0 Gyan full build), .104 (Pi Zero 2W class, aarch64, 4 cores, 415 MB RAM, Debian ffmpeg 7.1.5, camera RTT 23 ms). 30 s per path on the PC, 300 s on .104 (main remux and snapshot loop 60 s). CPU is percent of one core. Single runs, no repetition: treat as indicative.
+
+| Path | Host | CPU | RSS | Out rate | First frame | Notes |
+|---|---|---|---|---|---|---|
+| (a) MJPEG transcode, sub | PC | 5.9% | 90 MB | 3.7 Mbps | 3.7 s | 402 frames in 30 s |
+| (a) MJPEG transcode, sub | .104 | **50% avg, 61% max** | 59 MB | **4.0 Mbps** | 12.9 s | 4359 frames in 300 s (about 14.4 fps); load1 up to 2.35; 59 C, not throttled |
+| (b) fMP4 remux, sub | PC | 0.3% | 24 MB | 0.1 Mbps | 5.7 s | |
+| (b) fMP4 remux, sub | .104 | **1.2% avg, 3.8% max** | 36 MB | **0.16 Mbps** | 10.6 s | 74 fragments in 300 s (about 4 s GOP) |
+| (b) remux, main 4K | PC | 2.3% | 26 MB | 7.8 Mbps | 3.6 s | |
+| (b) remux, main 4K | .104 | 11.9% avg, 47.8% max | 29 MB | 7.3 Mbps | 8.5 s | 27 fragments in 60 s; spikes likely the Wi-Fi/USB network path, not codec work |
+| (a) transcode, main 4K | PC | **220%** | 1.45 GB | 144 Mbps | 3.2 s | not feasible on any Pi |
+| (c) RTSP single-frame grab, sub | PC | - | - | 31 KB per frame | 3.9 s per grab | |
+| (c) RTSP single-frame grab, main | PC | - | - | 400 KB per frame | 2.1 s per grab | |
+| (c) RTSP single-frame grab, sub | .104 | - | - | - | 6.9 s per grab | 9 grabs in 60 s |
+| stdin URL via ffconcat | PC, .104 | - | - | 0 | none | no data in 20 s on either host |
+
+Reading the numbers against the pre-registered rules (section 7.2):
+
+- **(b) remux, sub, on .104: 1.2% avg CPU, limit was 10%; passes the CPU rule by a wide margin.** The 4K main stream also remuxes without a transcode at 12% average on the Pi, which is the only way main is possible there.
+- **(a) MJPEG transcode, sub, on .104: 50% avg CPU, 61% max, limit was 50%; fails the rule on the average by 0.2 points and fails on max.** It also ran at about 14.4 of 15 fps with a 12.9 s first frame. At 4 Mbps per viewer it also multiplies on Wi-Fi. Result: (a) is allowed as a fallback only on PC/NAS-class hosts, off by default on low-power hosts (the rule's own second branch).
+- The camera's sub GOP is about 4 s (74 fragments in 300 s), so a new MSE viewer waits up to about 4 s unless the server replays the init segment plus the last GOP. First-frame times of 8-13 s on .104 are dominated by ffmpeg/RTSP start-up and probing on that host and must be cut in the driver (shorter `-analyzeduration`/`-probesize`, or a warm upstream) before this is acceptable for UX.
+- **(c)** is slow for a live fallback (about 4 s per grab on the PC, 7 s on .104, because every grab is a new RTSP session). It is fine for a snapshot to the gallery. A camera HTTP snapshot was not measured (it needs the Phase 2 login step).
+- **Radio health on .104:** during the 20 minute run (16:18-16:36) the journal has 217 lines and no listener-exit, error or restart entries; uptime and load are normal afterwards. Caveats: `/api/radio_health` was not polled (it needs login), and no DM was sent, so delivery was not tested. Not yet sufficient to sign off the radio guardrail; the Phase 1 live test repeats it with a DM on Flint-pvt [1].
+- **Not measured:** browser playback of (b) (MSE matrix), glass-to-glass latency, join-time test, h264_v4l2m2m variant.
+
+Provisional decision (unchanged in direction, now backed by numbers for CPU and bandwidth): **primary (b) H.264 remux to fMP4 over MSE; fallback (a) MJPEG transcode on capable hosts only; snapshots via (c) or the camera snapshot.** The browser playback and latency rules in 7.2 are still open and must be checked with a throwaway player page before Phase 1b commits.
+
 ## 8. Minimal-change proposal
 
 1. **One new driver**, `camera/rtsp_driver.py` `RtspCameraDriver(CameraDriver)`, id `ip:<source-uuid>` (stable, user-independent of the host address). Registers into the existing `CameraManager`; no second manager.
@@ -190,7 +219,7 @@ API and UI never return a password, token or full URL with userinfo. Source obje
 
 `ffmpeg` receives the input URL as an argument, so `rtsp://user:pass@host/...` is world-readable in `/proc/<pid>/cmdline` on a default Linux. Candidates, to be tried first in Phase 1 against a fake RTSP server (no camera needed):
 
-1. Feed the URL via stdin using the concat demuxer (`-f concat -safe 0 -protocol_whitelist pipe,file,rtsp,rtp,tcp,udp -i -`, script `file 'rtsp://...'` on stdin). Unknown: whether a live RTSP input behaves correctly under concat (timestamps, EOF/reconnect).
+1. Feed the URL via stdin using the concat demuxer (`-f concat -safe 0 -protocol_whitelist pipe,file,rtsp,rtp,tcp,udp -i -`, script `file 'rtsp://...'` on stdin). **Tested in Phase 0: does not work** (ffmpeg 9.0 on Windows and 7.1.5 on .104 both produced no data in 20 s with the URL fed to the concat demuxer on stdin; an earlier attempt also needed `fd` in the protocol whitelist).
 2. ffmpeg's `-/option file` form (newer ffmpeg) if it can carry the input; unverified for `-i`.
 3. A tiny local credential-injecting forwarder is rejected as too much new code and a new attack surface.
 4. Fallback if neither works: credentials in argv, `hidepid`-style mitigation documented, and the product states honestly that other local OS users can read it. Phase 1's "passwords never visible in ps" definition of done cannot be claimed in that case.
@@ -253,7 +282,7 @@ The phase structure in the task holds. Proposed adjustments and rough sizes (wor
 
 ## 15. Requests to Flint before anything touches the network
 
-1. Approve running the section 7.3 measurements, and choose: you run the harness in your own Terminal tab with a hidden prompt (recommended), or wait for the Phase 1 UI.
+1. Done: measurements ran (section 7.5) using a temporary test account on the camera that Flint will delete. Still open: browser MSE playback check and latency, and one DM test during a .104 run.
 2. Which hosts: .104 and your Windows PC (ffmpeg 9.0 is already installed there), and whether the NAS may be used (the task says not to touch NAS without asking).
 3. Confirm D1-D3 in section 8.
 4. Optional: allow one HTTP login plus `Snap` request (read only) to measure option (c) early, otherwise (c) is measured through RTSP single-frame grabs only.

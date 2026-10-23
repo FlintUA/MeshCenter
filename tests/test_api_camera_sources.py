@@ -235,7 +235,6 @@ def test_driver_skeleton_makes_no_network_calls_and_reports_state(env):
     assert driver.get_status()["state"] == "stopped" and resolver_calls == []
     assert driver.start() is True and driver.get_status()["state"] == "idle"
     assert resolver_calls == ["192.168.2.50"]
-    assert driver.stream_mjpeg() is not None and list(driver.stream_mjpeg()) == []
     assert PASSWORD not in json.dumps([driver.detect(), driver.get_status(), driver.config])
     driver.stop()
     assert driver.get_status()["started"] is False
@@ -249,7 +248,7 @@ def test_driver_revalidates_the_address_on_start(env):
         raise address_policy.AddressPolicyError("not_lan_address", "x")
 
     driver = RtspCameraDriver(source, store, host_validator=now_public)
-    assert driver.start() is False and driver.get_status()["state"] == "error"
+    assert driver.start() is False and driver.get_status()["state"] == "address_blocked"
 
 
 @pytest.mark.parametrize("field", ["sub_path", "main_path", "username", "password", "host", "name"])

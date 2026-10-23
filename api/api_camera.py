@@ -5,7 +5,9 @@ import base64
 import os
 import threading
 
+from camera import mjpeg_fallback
 from camera.camera_manager import build_camera_manager, network_drivers_from_state
+from camera.rtsp_driver import StreamNotReady, ViewerLimitReached
 from meshsrv import error_reporting
 from storage.json_store import safe_read_json, safe_write_json
 
@@ -114,10 +116,66 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
             print("[CAMERA] ❌ Camera not available", flush=True)
             return "Camera not available", 503
 
+        active = manager.active()
+        if getattr(active, "source_type", None) == "rtsp" and mjpeg_fallback.fallback_disabled_reason():
+            # CAM2: the MJPEG path for a network camera is a transcode; refused on low-power hosts
+            return jsonify({"ok": False, "error_code": "mjpeg_fallback_disabled",
+                            "error": "MJPEG fallback is disabled on this low-power host"}), 503
+
         return Response(
             manager.mjpeg_multipart_stream(),
             mimetype='multipart/x-mixed-replace; boundary=frame'
         )
+
+    def _active_ip_driver():
+        driver = _active_driver()
+        return driver if getattr(driver, "source_type", None) == "rtsp" else None
+
+    @app.route("/api/camera/stream/fmp4")
+    def api_camera_stream_fmp4():
+        """H.264 remux (no transcode) of the active network camera as fragmented MP4, for
+        MediaSource / ManagedMediaSource. One upstream ffmpeg per source; at most
+        MAX_VIEWERS_PER_SOURCE / MAX_VIEWERS_TOTAL viewers."""
+        if not power_state["enabled"]:
+            return jsonify({"ok": False, "error": "Camera is turned off", "error_code": "camera_off"}), 409
+        driver = _active_ip_driver()
+        if driver is None:
+            return jsonify({"ok": False, "error": "The active camera is not a network camera", "error_code": "not_an_ip_source"}), 404
+        try:
+            stream = driver.open_fmp4()
+        except ViewerLimitReached:
+            return jsonify({"ok": False, "error": "Too many viewers", "error_code": "viewer_limit"}), 429
+        except StreamNotReady as error:
+            return jsonify({"ok": False, "error": "Stream not ready", "error_code": "stream_not_ready",
+                            "state": error.state, "stream_error": error.error_code}), 503
+        response = Response(stream, mimetype="video/mp4", direct_passthrough=True)
+        response.headers["X-Codec"] = stream.mse_codec
+        response.headers["Access-Control-Expose-Headers"] = "X-Codec"
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Accel-Buffering"] = "no"
+        return response
+
+    @app.route("/api/camera/stream/profile", methods=["POST"])
+    @handle_errors
+    def api_camera_stream_profile():
+        driver = _active_ip_driver()
+        if driver is None:
+            return jsonify({"ok": False, "error": "The active camera is not a network camera", "error_code": "not_an_ip_source"}), 404
+        data = request.get_json(silent=True)
+        profile = data.get("profile") if isinstance(data, dict) else None
+        if profile not in ("sub", "main"):
+            return jsonify({"ok": False, "error": "profile must be sub or main", "error_code": "invalid_field"}), 400
+        driver.set_profile(profile)
+        return jsonify({"ok": True, "status": driver.get_status()})
+
+    @app.route("/api/camera/stream/reconnect", methods=["POST"])
+    @handle_errors
+    def api_camera_stream_reconnect():
+        driver = _active_ip_driver()
+        if driver is None:
+            return jsonify({"ok": False, "error": "The active camera is not a network camera", "error_code": "not_an_ip_source"}), 404
+        driver.reconnect()
+        return jsonify({"ok": True, "status": driver.get_status()})
 
     @app.route("/api/camera/power", methods=["GET"])
     def api_camera_power_get():

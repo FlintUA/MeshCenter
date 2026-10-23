@@ -18,9 +18,19 @@ line must come AFTER the `file` line (it applies to the previous file); without
 it the inner demuxer falls back to UDP, which many networks and Docker bridge
 mode do not pass.
 
-Quoting: the user, password and path are percent-encoded, so the URL can never
-contain a single quote, backslash, space or newline that would break out of the
-`file '...'` line.
+Injection hardening (fail closed, three independent layers):
+1. Every user-supplied part (host, user, password, path) is rejected outright
+   if it contains a control character (CR, LF, NUL, tab, DEL ...), here and in
+   camera/source_store.py. A newline is what would let a value start a new
+   ffconcat directive such as `file /etc/passwd`.
+2. The parts are percent-encoded, so the URL contains no quote, backslash,
+   space or newline; build_concat_script() additionally refuses any URL that
+   is not plain printable ASCII without a quote or backslash (no ffconcat
+   escaping is needed because nothing that needs escaping can get through).
+3. ffmpeg runs with `-protocol_whitelist pipe,fd,rtsp,rtp,tcp,udp` (no file,
+   http, crypto ...): even a directive that somehow reached the script cannot
+   open a local file or an http URL ("Protocol 'file' not on whitelist").
+   The script also pins `option allowed_media_types video` for the stream.
 
 Pure functions, stdlib only, no I/O.
 """
@@ -31,8 +41,10 @@ import re
 from urllib.parse import quote
 
 # Every protocol the concat wrapper may open: the script itself arrives on a pipe.
-PROTOCOL_WHITELIST = "pipe,fd,file,rtsp,rtp,tcp,udp,crypto"
+PROTOCOL_WHITELIST = "pipe,fd,rtsp,rtp,tcp,udp"
 
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+_PRINTABLE_URL = re.compile(r"^[\x21-\x7e]+$")
 _PATH_ALLOWED = re.compile(r"^[A-Za-z0-9._~!$&()*+,;=:@/%?-]{0,256}$")
 _URL_PATH_SAFE = "/:@!$&()*+,;=~%-._"  # '?' and the query part are handled separately; "'" is NOT safe
 
@@ -50,6 +62,9 @@ def valid_stream_path(path: str) -> bool:
 
 def build_rtsp_url(ip_text: str, port: int, path: str, username: str = "", password: str = "") -> str:
     """rtsp://[user[:password]@]host:port/path - IPv6 in brackets, every part percent-encoded."""
+    for part in (ip_text, path, username, password):
+        if not isinstance(part, str) or _CONTROL.search(part):
+            raise ValueError("control characters are not allowed in a stream URL")
     address = ipaddress.ip_address(ip_text.split("%", 1)[0])
     host = ip_text
     if isinstance(address, ipaddress.IPv6Address):
@@ -69,7 +84,7 @@ def build_rtsp_url(ip_text: str, port: int, path: str, username: str = "", passw
 
 def build_concat_script(url: str, transport: str = "tcp", timeout_s: int = 10) -> bytes:
     """The stdin script for ffmpeg (see the module docstring)."""
-    if any(c in url for c in "'\\\r\n\x00") or " " in url:
+    if not _PRINTABLE_URL.match(url) or "'" in url or chr(92) in url or not url.startswith("rtsp://"):
         raise ValueError("url contains a character that cannot be quoted safely")
     if transport not in ("tcp", "udp"):
         raise ValueError("transport must be tcp or udp")
@@ -79,6 +94,7 @@ def build_concat_script(url: str, transport: str = "tcp", timeout_s: int = 10) -
         f"file '{url}'\n"
         f"option rtsp_transport {transport}\n"
         f"option timeout {timeout_us}\n"
+        "option allowed_media_types video\n"
     ).encode("ascii")
 
 

@@ -7,6 +7,7 @@ from camera.address_policy import (
     AddressPolicyError,
     check_address,
     container_gateway_addresses,
+    container_own_networks,
     validate_camera_host,
 )
 
@@ -123,3 +124,64 @@ def test_check_address_direct():
     check_address(ipaddress.ip_address("192.168.0.9"))
     with pytest.raises(AddressPolicyError):
         check_address(ipaddress.ip_address("8.8.4.4"))
+
+
+# -- container mode (D3): the whole Docker network, not only the gateway ----------
+
+def test_own_networks_are_computed_from_interfaces_and_skip_loopback():
+    nets = container_own_networks([
+        ("127.0.0.1", "255.0.0.0"), ("172.18.0.5", "255.255.0.0"),
+        ("fd00:dead::5", "ffff:ffff:ffff:ffff::"), ("bad", "255.0.0.0"), ("10.1.2.3", "garbage"),
+    ])
+    assert [str(n) for n in nets] == ["172.18.0.0/16", "fd00:dead::/64"]
+    assert container_own_networks([]) == ()
+
+
+def test_whole_bridge_subnet_is_refused_not_just_the_gateway():
+    nets = container_own_networks([("172.18.0.5", "255.255.0.0")])
+    gw = frozenset({ipaddress.ip_address("172.18.0.1")})
+    for host in ("172.18.0.1", "172.18.0.2", "172.18.7.200", "172.18.255.254"):
+        with pytest.raises(AddressPolicyError) as info:
+            validate_camera_host(host, own_addresses=NO_OWN, gateway_addresses=gw, blocked_networks=nets)
+        assert info.value.code in ("gateway_address", "container_network")
+    assert validate_camera_host("192.168.2.114", own_addresses=NO_OWN, gateway_addresses=gw, blocked_networks=nets)
+    assert validate_camera_host("172.19.0.9", own_addresses=NO_OWN, gateway_addresses=gw, blocked_networks=nets)
+
+
+def test_name_resolving_into_the_bridge_subnet_is_refused():
+    nets = container_own_networks([("172.17.0.2", "255.255.0.0")])
+    with pytest.raises(AddressPolicyError) as info:
+        validate_camera_host("nas.lan", own_addresses=NO_OWN, gateway_addresses=frozenset(),
+                             blocked_networks=nets, resolver=lambda h: ["172.17.0.1"])
+    assert info.value.code == "container_network"
+
+
+def test_default_validator_applies_container_rules_only_in_a_container(monkeypatch):
+    import camera.address_policy as policy
+
+    monkeypatch.setattr(policy, "container_gateway_addresses", lambda: frozenset({ipaddress.ip_address("172.17.0.1")}))
+    monkeypatch.setattr(policy, "container_own_networks", lambda: (ipaddress.ip_network("172.17.0.0/16"),))
+    monkeypatch.delenv("MESHCENTER_RUNTIME", raising=False)
+    assert validate_camera_host("172.17.0.1", own_addresses=NO_OWN) == ["172.17.0.1"]  # native install: a normal LAN address
+
+    monkeypatch.setenv("MESHCENTER_RUNTIME", "container")
+    for host in ("172.17.0.1", "172.17.0.9"):
+        with pytest.raises(AddressPolicyError):
+            validate_camera_host(host, own_addresses=NO_OWN)
+    assert validate_camera_host("192.168.2.114", own_addresses=NO_OWN)
+
+
+def test_host_network_override_allows_own_subnet_but_never_the_gateway(monkeypatch):
+    import camera.address_policy as policy
+
+    monkeypatch.setattr(policy, "container_gateway_addresses", lambda: frozenset({ipaddress.ip_address("192.168.2.1")}))
+    monkeypatch.setattr(policy, "container_own_networks", lambda: (ipaddress.ip_network("192.168.2.0/24"),))
+    monkeypatch.setenv("MESHCENTER_RUNTIME", "container")
+    with pytest.raises(AddressPolicyError) as info:
+        validate_camera_host("192.168.2.114", own_addresses=NO_OWN)
+    assert info.value.code == "container_network"
+    monkeypatch.setenv("MESHCENTER_CAMERA_ALLOW_OWN_SUBNET", "1")
+    assert validate_camera_host("192.168.2.114", own_addresses=NO_OWN) == ["192.168.2.114"]
+    with pytest.raises(AddressPolicyError) as info:
+        validate_camera_host("192.168.2.1", own_addresses=NO_OWN)
+    assert info.value.code == "gateway_address"

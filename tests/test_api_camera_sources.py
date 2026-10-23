@@ -250,3 +250,16 @@ def test_driver_revalidates_the_address_on_start(env):
 
     driver = RtspCameraDriver(source, store, host_validator=now_public)
     assert driver.start() is False and driver.get_status()["state"] == "error"
+
+
+@pytest.mark.parametrize("field", ["sub_path", "main_path", "username", "password", "host", "name"])
+@pytest.mark.parametrize("payload", ["x\nfile /etc/passwd", "x\r\nfile http://evil.example/", "x\x00y"])
+def test_newline_payloads_in_any_field_fail_closed(env, field, payload):
+    client, store, *_ = env
+    r = client.post("/api/camera/sources", json=_body(**{field: payload}))
+    assert r.status_code == 400
+    assert store.list_sources() == []
+    sid = client.post("/api/camera/sources", json=_body()).get_json()["source"]["id"]
+    r = client.put(f"/api/camera/sources/{sid}", json={field: payload})
+    assert r.status_code == 400
+    assert store.get_source(sid)["sub_path"] == "Preview_01_sub"

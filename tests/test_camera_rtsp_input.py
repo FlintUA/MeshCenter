@@ -49,6 +49,53 @@ def test_concat_script_shape():
     # the option lines must come AFTER the file line (they apply to the previous file)
     assert lines[2] == "option rtsp_transport tcp"
     assert lines[3] == "option timeout 7000000"
+    assert lines[4] == "option allowed_media_types video"
+    assert len(lines) == 5  # exactly one file directive, nothing else can sneak in
+
+
+def test_whitelist_has_no_file_or_http():
+    allowed = set(rtsp_input.PROTOCOL_WHITELIST.split(","))
+    assert allowed == {"pipe", "fd", "rtsp", "rtp", "tcp", "udp"}
+    assert not (allowed & {"file", "http", "https", "tls", "crypto", "ftp", "concat", "subfile", "data"})
+
+
+INJECTIONS = [
+    "x\nfile /etc/passwd",
+    "x\r\nfile /etc/passwd",
+    "x\rfile http://evil.example/x",
+    "x\x00file /etc/passwd",
+    "x\tfile /etc/passwd",
+    "x\x7f",
+    "x\x1b[2J",
+]
+
+
+@pytest.mark.parametrize("payload", INJECTIONS)
+def test_builder_fails_closed_on_control_characters_in_any_part(payload):
+    ok = dict(ip_text="192.168.2.50", port=554, path="x", username="u", password="p")
+    for field in ("path", "username", "password"):
+        with pytest.raises(ValueError):
+            rtsp_input.build_rtsp_url(**{**ok, field: payload})
+    with pytest.raises(ValueError):
+        rtsp_input.build_rtsp_url(**{**ok, "ip_text": "192.168.2.50" + payload})
+
+
+@pytest.mark.parametrize("payload", INJECTIONS)
+def test_script_refuses_a_url_carrying_the_payload(payload):
+    with pytest.raises(ValueError):
+        rtsp_input.build_concat_script("rtsp://u:p@192.168.2.50:554/" + payload)
+
+
+def test_script_refuses_non_rtsp_and_non_ascii_urls():
+    for url in ("file:///etc/passwd", "http://h/x", "/etc/passwd", "rtsp://h/é", "rtsp://h/x y"):
+        with pytest.raises(ValueError):
+            rtsp_input.build_concat_script(url)
+
+
+def test_a_percent_encoded_payload_stays_one_line():
+    url = rtsp_input.build_rtsp_url("192.168.2.50", 554, "a%0Afile%20/etc/passwd", "u", "p%0Aq")
+    script = rtsp_input.build_concat_script(url).decode()
+    assert len(script.splitlines()) == 5 and script.count("file ") == 1
 
 
 @pytest.mark.parametrize("url", ["rtsp://h/a'b", "rtsp://h/a\nb", "rtsp://h/a\\b", "rtsp://h/a b", "rtsp://h/\x00"])
@@ -105,3 +152,31 @@ def test_live_stream_opens_and_argv_has_no_secret(secret):
         assert ("PLAY", True) in server.requests
     finally:
         server.stop()
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs a real ffmpeg binary")
+@pytest.mark.parametrize("directive", [
+    "file '{local}'",          # a local file
+    "file 'file:{local}'",     # the same through the file: protocol
+    "file 'http://127.0.0.1:9/x'",
+])
+def test_whitelist_blocks_a_smuggled_directive_even_if_it_reached_the_script(directive, tmp_path):
+    """Defense in depth: bypass the builders and hand ffmpeg a script that DOES
+    carry an injected directive. With the production argv it must fail closed
+    ('not on whitelist'), never read the file or fetch the URL."""
+    local = os.path.join(os.path.dirname(__file__), "fixtures", "tiny_h264.annexb")
+    script = "ffconcat version 1.0\n" + directive.format(local=local.replace("\\", "/")) + "\n"
+    argv = [shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error",
+            *rtsp_input.ffmpeg_input_args(), "-t", "2", "-f", "null", "-"]
+    result = subprocess.run(argv, input=script.encode(), capture_output=True, timeout=30)
+    assert result.returncode != 0
+    assert b"not on whitelist" in result.stderr or b"Error opening" in result.stderr
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs a real ffmpeg binary")
+def test_second_smuggled_rtsp_host_is_the_only_thing_the_whitelist_cannot_stop():
+    """Documents the boundary: the whitelist cannot tell one rtsp host from
+    another, which is why layers 1 and 2 (no control characters, one file
+    line) are what keep a second host out. The builder output has exactly one."""
+    url = rtsp_input.build_rtsp_url("192.168.2.50", 554, "x", "u", "p")
+    assert rtsp_input.build_concat_script(url).decode().count("rtsp://") == 1

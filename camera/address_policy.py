@@ -11,7 +11,12 @@ in a LAN range: RFC 1918 (10/8, 172.16/12, 192.168/16), IPv4 link-local
 Everything else is refused: loopback, unspecified, multicast, broadcast,
 public and shared (100.64/10) addresses, the cloud metadata addresses, this
 host's own interface addresses, and (in a container) the default gateway,
-which is the Docker host / NAS itself.
+which is the Docker host / NAS itself, and the container's whole own
+network(s): the Docker bridge subnet the container sits on (and any other
+network it is attached to) is where the Docker host and other containers
+live, never where a camera lives. A container started with host networking
+sees the real LAN as "its own network"; there the operator can set
+MESHCENTER_CAMERA_ALLOW_OWN_SUBNET=1 (the gateway stays refused).
 
 Validation returns the validated IP addresses, and callers connect to THAT
 address, not to the name: a second DNS lookup at connect time could return
@@ -24,6 +29,7 @@ loopback and several other ranges that are not LAN addresses.
 from __future__ import annotations
 
 import ipaddress
+import os
 import re
 import socket
 from typing import Callable, Iterable
@@ -88,6 +94,43 @@ def local_addresses() -> frozenset:
     return frozenset(found)
 
 
+ALLOW_OWN_SUBNET_ENV = "MESHCENTER_CAMERA_ALLOW_OWN_SUBNET"
+
+
+def container_own_networks(nics=None) -> tuple:
+    """Container only: the networks this container's interfaces sit on
+    (the Docker bridge subnet and any other attached network).
+
+    ``nics`` is a list of (address, netmask) text pairs; by default psutil's
+    view of the container's interfaces. Loopback is skipped (it is refused
+    separately). Empty when it cannot be read."""
+    if nics is None:
+        nics = []
+        try:
+            import psutil
+
+            for addrs in psutil.net_if_addrs().values():
+                for addr in addrs:
+                    if addr.family in (socket.AF_INET, socket.AF_INET6) and addr.netmask:
+                        nics.append((addr.address, addr.netmask))
+        except Exception:
+            nics = []
+    networks = []
+    for address, netmask in nics:
+        try:
+            ip = ipaddress.ip_address(address.split("%", 1)[0])
+            if ip.is_loopback:
+                continue
+            if isinstance(ip, ipaddress.IPv6Address):
+                prefix = bin(int(ipaddress.IPv6Address(netmask.split("%", 1)[0]))).count("1")
+            else:
+                prefix = bin(int(ipaddress.IPv4Address(netmask))).count("1")
+            networks.append(ipaddress.ip_network(f"{ip}/{prefix}", strict=False))
+        except ValueError:
+            continue
+    return tuple(networks)
+
+
 def container_gateway_addresses(route_table: str | None = None) -> frozenset:
     """Container only: the default gateway (the Docker host / NAS itself).
 
@@ -115,7 +158,7 @@ def _normalize(address):
     return address
 
 
-def check_address(address, *, own_addresses=frozenset(), gateway_addresses=frozenset()) -> None:
+def check_address(address, *, own_addresses=frozenset(), gateway_addresses=frozenset(), blocked_networks=()) -> None:
     """Raise AddressPolicyError unless ``address`` (an ip_address object) is an allowed camera address."""
     address = _normalize(address)
     if address.is_loopback or address.is_unspecified:
@@ -131,6 +174,8 @@ def check_address(address, *, own_addresses=frozenset(), gateway_addresses=froze
         raise AddressPolicyError("own_address", "This address belongs to the MeshCenter host itself.")
     if address in gateway_addresses:
         raise AddressPolicyError("gateway_address", "This address is the container's gateway (the Docker host) and is not allowed.")
+    if any(address.version == net.version and address in net for net in blocked_networks):
+        raise AddressPolicyError("container_network", "This address is on the container's own (Docker) network and is not allowed.")
 
 
 def validate_camera_host(
@@ -139,6 +184,7 @@ def validate_camera_host(
     resolver: Resolver | None = None,
     own_addresses: frozenset | None = None,
     gateway_addresses: frozenset | None = None,
+    blocked_networks: tuple | None = None,
 ) -> list[str]:
     """Validate a user-supplied camera host; return its validated IP address strings.
 
@@ -154,7 +200,21 @@ def validate_camera_host(
         raise AddressPolicyError("invalid_host", "Enter only the host name or IP address, not a URL.")
 
     own = local_addresses() if own_addresses is None else own_addresses
-    gateways = frozenset() if gateway_addresses is None else gateway_addresses
+    in_container = False
+    if gateway_addresses is None or blocked_networks is None:
+        try:
+            from meshsrv import runtime_env
+
+            in_container = runtime_env.is_container()
+        except Exception:
+            in_container = False
+    if gateway_addresses is None:
+        gateways = container_gateway_addresses() if in_container else frozenset()
+    else:
+        gateways = gateway_addresses
+    if blocked_networks is None:
+        allow_own = os.environ.get(ALLOW_OWN_SUBNET_ENV, "").strip().lower() in ("1", "true", "yes", "on")
+        blocked_networks = container_own_networks() if (in_container and not allow_own) else ()
 
     literal = None
     try:
@@ -166,7 +226,7 @@ def validate_camera_host(
         literal = None
 
     if literal is not None:
-        check_address(literal, own_addresses=own, gateway_addresses=gateways)
+        check_address(literal, own_addresses=own, gateway_addresses=gateways, blocked_networks=blocked_networks)
         return [str(literal) + (("%" + host.partition("%")[2]) if "%" in host else "")]
 
     if not _HOSTNAME_RE.match(host) or host.lower() == "localhost" or host.lower().endswith(".localhost"):
@@ -184,6 +244,6 @@ def validate_camera_host(
             address = ipaddress.ip_address(text.split("%", 1)[0])
         except ValueError:
             raise AddressPolicyError("unresolvable", "The host name could not be resolved.")
-        check_address(address, own_addresses=own, gateway_addresses=gateways)
+        check_address(address, own_addresses=own, gateway_addresses=gateways, blocked_networks=blocked_networks)
         result.append(text)
     return result

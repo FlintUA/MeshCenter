@@ -4935,12 +4935,18 @@ video.camera-stream {
 
 .mc-ipcam-row {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
+    gap: 8px 12px;
     padding: 8px 10px;
     border: 1px solid var(--mc-border, #cbd5e1);
     border-radius: 8px;
+}
+
+.mc-ipcam-row-main {
+    flex: 1 1 140px;
+    min-width: 0;
 }
 
 .mc-ipcam-row-name {
@@ -4959,7 +4965,12 @@ video.camera-stream {
 .mc-ipcam-row-actions {
     display: flex;
     gap: 6px;
-    flex-shrink: 0;
+    flex: 0 0 auto;
+}
+
+.mc-ipcam-row-actions .device-action-btn {
+    padding: 4px 10px;
+    min-width: 0;
 }
 
 .mc-ipcam-danger {

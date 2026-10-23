@@ -169,13 +169,13 @@ Auth/CSRF columns mirror `api/api_auth.py`'s own `_enforce_auth()`/`_enforce_csr
 | `/api/updates/preflight` | GET | `api/api_updates.py:64` (`api_updates_preflight`) | required | exempt |
 | `/api/updates/rollback` | POST | `api/api_updates.py:131` (`api_updates_rollback`) | required | required |
 | `/api/updates/status` | GET | `api/api_updates.py:54` (`api_updates_status`) | required | exempt |
-| `/api/waypoints` | DELETE | `api/api_waypoints.py:101` (`api_waypoints_delete_all`) | required | required |
+| `/api/waypoints` | DELETE | `api/api_waypoints.py:103` (`api_waypoints_delete_all`) | required | required |
 | `/api/waypoints` | GET | `api/api_waypoints.py:31` (`api_waypoints`) | required | exempt |
 | `/api/waypoints/<int:waypoint_id>` | DELETE | `api/api_waypoints.py:79` (`api_waypoint_delete`) | required | required |
 | `/api/waypoints/<int:waypoint_id>` | GET | `api/api_waypoints.py:52` (`api_waypoint_detail`) | required | exempt |
 | `/api/waypoints/<int:waypoint_id>/hidden` | POST | `api/api_waypoints.py:66` (`api_waypoint_hidden`) | required | required |
 | `/api/waypoints/delete` | POST | `api/api_waypoints.py:87` (`api_waypoints_delete_many`) | required | required |
-| `/api/waypoints/send` | POST | `api/api_waypoints.py:107` (`api_waypoint_send`) | required | required |
+| `/api/waypoints/send` | POST | `api/api_waypoints.py:109` (`api_waypoint_send`) | required | required |
 | `/api/weather/config` | GET | `api/api_weather.py:127` (`api_weather_config_status`) | required | exempt |
 | `/api/weather/config` | POST | `api/api_weather.py:135` (`api_weather_save_key`) | required | required |
 | `/api/weather/current` | GET | `api/api_weather.py:107` (`api_weather_current`) | required | exempt |

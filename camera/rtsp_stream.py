@@ -50,7 +50,10 @@ MAX_VIEWERS_PER_SOURCE = 4
 MAX_VIEWERS_TOTAL = 6
 IDLE_STOP_S = 60.0
 STABLE_AFTER_S = 20.0
-STALL_AFTER_S = 8.0
+# Seconds without a fragment before the upstream is declared stalled and restarted. A restart costs a cold
+# start (measured 5-13 s on a Pi Zero 2W), so it must not fire on a short Wi-Fi hiccup: at 8 s the .104 live
+# test restarted the stream about once a minute on a lossy link (RTT 200-460 ms, 20% loss).
+STALL_AFTER_S = 15.0
 BACKOFF_STEPS = (2.0, 4.0, 8.0, 16.0, 32.0, 60.0)
 FRAG_DURATION_US = 500_000
 STDOUT_CHUNK = 65536

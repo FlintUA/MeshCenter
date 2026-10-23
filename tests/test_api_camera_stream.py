@@ -207,3 +207,19 @@ def test_stopping_the_driver_ends_viewers_and_the_process(env):
             next(iterator)
     response.close()
     assert env["limiter"].count() == 0
+
+
+def test_a_viewer_with_no_data_is_ended_and_its_slot_released(env, monkeypatch):
+    """A page reload leaves a request nobody is reading; with the camera down nothing is written, so the
+    only way to notice is a no-data timeout. Without it the slot (and a server thread) leaks."""
+    import camera.rtsp_driver as driver_module
+    monkeypatch.setattr(driver_module, "VIEWER_IDLE_S", 0.4)
+    driver = env["driver"]
+    relay = driver.upstream.relay
+    relay.begin(b"INIT")               # an upstream session exists but never produces another fragment
+    assert driver.limiter.acquire(driver.id)
+    stream = driver_module.Fmp4Stream(driver, relay.open_cursor(), "avc1.640033")
+    started = time.monotonic()
+    assert list(stream) == []          # ends by itself, no data ever arrived
+    assert 0.3 <= time.monotonic() - started < 3
+    assert env["limiter"].count() == 0

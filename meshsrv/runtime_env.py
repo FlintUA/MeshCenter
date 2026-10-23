@@ -64,6 +64,8 @@ def capabilities() -> Dict[str, Any]:
         # everywhere (System card via /api/system/info, and the footer) together.
         "has_cpu_temp": not container,
         "hardware_io": not container,
+        # network (RTSP) cameras need no host hardware and work in a container too
+        "network_camera": True,
         "trust_host_clock": trust_host_clock(),
     }
 

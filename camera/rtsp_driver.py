@@ -13,12 +13,18 @@ session.
 """
 from __future__ import annotations
 
+import time
 from typing import Any, Iterator
 
 from camera import address_policy, mjpeg_fallback, rtsp_stream
 from camera.camera_driver import CameraDriver
 
 DEFAULT_READY_WAIT_S = 6.0
+# A viewer that has received no data for this long is ended. A WSGI generator only learns that its
+# client went away when a WRITE fails; while the camera is down nothing is written, so without this
+# an abandoned request (page reload, closed tab) would hold its viewer slot - and a server thread -
+# until the camera came back. The browser player reconnects on its own.
+VIEWER_IDLE_S = 15.0
 
 
 class ViewerLimitReached(Exception):
@@ -41,6 +47,7 @@ class Fmp4Stream:
         self._cursor = cursor
         self._queue: list[bytes] = []
         self._open = True
+        self._last_data = time.monotonic()
         self.mse_codec = mse_codec
 
     def __iter__(self):
@@ -51,11 +58,16 @@ class Fmp4Stream:
         while self._open:
             if self._queue:
                 return self._queue.pop(0)
-            chunks = relay.read(self._cursor, 5.0)
+            chunks = relay.read(self._cursor, min(5.0, VIEWER_IDLE_S))
             if chunks is None:
                 self.close()
                 break
             self._driver.upstream.note_viewer_activity()
+            if chunks:
+                self._last_data = time.monotonic()
+            elif time.monotonic() - self._last_data > VIEWER_IDLE_S:
+                self.close()
+                break
             self._queue.extend(chunks)
         raise StopIteration
 

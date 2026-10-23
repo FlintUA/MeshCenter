@@ -12462,6 +12462,10 @@ async function onCameraSourceSelectChange(driverId) {
             await loadPeripheralDevices(false);
         }
         await loadCameraSourceSelector();
+        if (isCameraTabVisible() && cameraActive) {
+            if (window.MCIpCamera) await window.MCIpCamera.refresh();
+            refreshVideoFeed();
+        }
     } catch (error) {
         console.error('[CAMERA] Camera source switch failed:', error);
         showToast(window.I18N.t('camera.source_switch_failed', { reason: error.message || String(error) }), 'error');
@@ -12556,6 +12560,7 @@ async function loadPeripheralDevices(showFeedback = false) {
                 <h3>${escapeHtml(window.I18N.t('devices.add_device'))}</h3>
                 <p>${escapeHtml(window.I18N.t('devices.add_device_planned'))}</p>
             </section>`;
+        if (window.MCCameraSources) window.MCCameraSources.mount(container);
         if (showFeedback) showToast(window.I18N.t('devices.info_refreshed'), 'success');
     } catch (error) {
         console.error('[DEVICES] Peripheral load failed:', error);
@@ -12761,6 +12766,7 @@ function switchMainTab(tab) {
             if (transitionSequence !== mainTabTransitionSequence || currentMainTab !== 'video') return;
 
             cameraActive = true;
+            if (window.MCIpCamera) await window.MCIpCamera.refresh();
             await reconnectCameraFeed();
 
             if (transitionSequence !== mainTabTransitionSequence || currentMainTab !== 'video') {

@@ -49,7 +49,7 @@ INDEX_HTML = REPO_ROOT / 'templates' / 'index.html'
 I18N_JS = REPO_ROOT / 'static' / 'i18n.js'
 
 # The single canonical cache-busting token for the current frontend release.
-CURRENT_VERSION = '20261023-sig1'
+CURRENT_VERSION = '20261024-cam2b'
 
 # Browser assets changed in the current release. Every entry must be referenced
 # in index.html with CURRENT_VERSION (and, for i18n.js, its CATALOG_VERSION must
@@ -63,6 +63,8 @@ CURRENT_ASSETS = {
     'static/chat-map.js',
     'static/files.js',
     'static/chat-camera.js',
+    'static/camera-ip.js',
+    'static/camera-sources.js',
     'static/style-part1.css',
     'static/style-part4.css',
     'static/runtime-caps.js',

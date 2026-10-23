@@ -48,9 +48,21 @@ TCP slot MeshCenter uses (see "One Meshtastic TCP client at a time").
 ### Disabled in container mode
 
 These need the host and are refused by the server (and hidden in the UI):
-USB/serial radio, Bluetooth, camera (CSI and USB), e-Paper display, I2C / RTC /
+USB/serial radio, Bluetooth, local camera (CSI and USB), e-Paper display, I2C / RTC /
 BME280 setup, hardware-config editing, Wi-Fi/network management, device
 reboot/shutdown, in-app self-update (**update by rebuilding or loading a new image**).
+
+**Network cameras (RTSP) do work in the container.** Add them under Devices >
+Network cameras. The image includes `ffmpeg` for this (a GPL-2.0-or-later
+program started as a separate process, which is one more reason the image must
+not be published before the licence documentation gap is closed). Use TCP (the
+default; UDP rarely works through Docker's bridge network) and an IP address,
+not a name: Docker's resolver may not know your LAN names. The camera must be on
+your LAN, not on the Docker bridge network: addresses of the container's own
+network and of its gateway (the Docker host) are refused. With
+`network_mode: host` your LAN counts as the container's own network; set
+`MESHCENTER_CAMERA_ALLOW_OWN_SUBNET=1` then (the gateway stays refused). Never
+forward a camera's ports to the Internet.
 
 Host-looking numbers: uptime, load and RAM on the System page are the **host's**
 (a container shares them); hostname, OS, model and CPU temperature are hidden

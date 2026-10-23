@@ -179,7 +179,7 @@ Camera streams (ffprobe): sub 640x360 H.264 High, 15 fps; main 3840x2160 H.264 H
 | (c) RTSP single-frame grab, sub | PC | - | - | 31 KB per frame | 3.9 s per grab | |
 | (c) RTSP single-frame grab, main | PC | - | - | 400 KB per frame | 2.1 s per grab | |
 | (c) RTSP single-frame grab, sub | .104 | - | - | - | 6.9 s per grab | 9 grabs in 60 s |
-| stdin URL via ffconcat | PC, .104 | - | - | 0 | none | no data in 20 s on either host |
+| stdin URL via ffconcat (no transport option) | PC, .104 | - | - | 0 | none | no data in 20 s: UDP was used. Rerun in Phase 1a with `option rtsp_transport tcp`: works (see 9.3) |
 
 Reading the numbers against the pre-registered rules (section 7.2):
 
@@ -225,7 +225,7 @@ API and UI never return a password, token or full URL with userinfo. Source obje
 
 `ffmpeg` receives the input URL as an argument, so `rtsp://user:pass@host/...` is world-readable in `/proc/<pid>/cmdline` on a default Linux. Candidates, to be tried first in Phase 1 against a fake RTSP server (no camera needed):
 
-1. Feed the URL via stdin using the concat demuxer (`-f concat -safe 0 -protocol_whitelist pipe,file,rtsp,rtp,tcp,udp -i -`, script `file 'rtsp://...'` on stdin). **Tested in Phase 0: does not work** (ffmpeg 9.0 on Windows and 7.1.5 on .104 both produced no data in 20 s with the URL fed to the concat demuxer on stdin; an earlier attempt also needed `fd` in the protocol whitelist).
+1. Feed the URL via stdin using the concat demuxer (`-f concat -safe 0 -protocol_whitelist pipe,fd,file,rtsp,rtp,tcp,udp,crypto -i pipe:0`, script `file '<url>'` then `option rtsp_transport tcp`). **Resolved in Phase 1a: works.** The Phase 0 runs that recorded 'no data' were wrong: they omitted the `option rtsp_transport tcp` line, so the inner demuxer used UDP. With the option line placed after the `file` line, the stream opens against a real camera with ffmpeg 9.0 (Windows) and 7.1.5 (.104) and the ffmpeg process's argv contains neither password nor host (checked on both; PR #376).
 2. ffmpeg's `-/option file` form (newer ffmpeg) if it can carry the input; unverified for `-i`.
 3. A tiny local credential-injecting forwarder is rejected as too much new code and a new attack surface.
 4. Fallback if neither works: credentials in argv, `hidepid`-style mitigation documented, and the product states honestly that other local OS users can read it. Phase 1's "passwords never visible in ps" definition of done cannot be claimed in that case.

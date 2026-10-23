@@ -87,7 +87,9 @@ def register_waypoint_routes(
     @app.route("/api/waypoints/delete", methods=["POST"])
     @handle_errors
     def api_waypoints_delete_many():
-        data = request.get_json(silent=True) or {}
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({"ok": False, "error": "Invalid JSON payload", "error_code": "invalid_json_payload"}), 400
         raw_ids = data.get("waypoint_ids") or []
         if not isinstance(raw_ids, list):
             return jsonify({"ok": False, "error": "waypoint_ids must be a list", "error_code": "waypoint_ids_not_a_list"}), 400

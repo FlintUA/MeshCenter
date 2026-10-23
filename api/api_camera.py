@@ -5,7 +5,7 @@ import base64
 import os
 import threading
 
-from camera.camera_manager import build_camera_manager
+from camera.camera_manager import build_camera_manager, network_drivers_from_state
 from meshsrv import error_reporting
 from storage.json_store import safe_read_json, safe_write_json
 
@@ -28,7 +28,8 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
         if manager is None:
             devices_data = device_manager.load_or_create()
             manager = build_camera_manager(
-                persisted_active_id=devices_data.get("active_camera_id")
+                persisted_active_id=devices_data.get("active_camera_id"),
+                network_drivers=network_drivers_from_state(camera_manager_state),
             )
             camera_manager_state["manager"] = manager
         return manager

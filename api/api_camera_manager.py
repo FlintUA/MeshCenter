@@ -24,7 +24,8 @@ from __future__ import annotations
 
 from flask import request, jsonify
 
-from camera.camera_manager import build_camera_manager
+from camera.camera_manager import build_camera_manager, network_drivers_from_state
+from meshsrv import runtime_env
 from camera.usb_driver import ffmpeg_and_v4l2ctl_available
 
 
@@ -36,7 +37,8 @@ def register_camera_manager_routes(app, device_manager, handle_errors, camera_ma
         # so the Devices tab can tell the user what to actually do instead
         # of a generic "no cameras found" (see static/chat.js's
         # renderCameraManagerCards()).
-        usb_tooling_missing = not ffmpeg_and_v4l2ctl_available()
+        # Not in a container: USB cameras are not offered there at all, so "requires ffmpeg" would mislead.
+        usb_tooling_missing = (not runtime_env.is_container()) and not ffmpeg_and_v4l2ctl_available()
         if manager is None:
             return {
                 "ok": True, "scanned": False, "active_id": None, "cameras": [],
@@ -77,7 +79,8 @@ def register_camera_manager_routes(app, device_manager, handle_errors, camera_ma
 
         devices_data = device_manager.load_or_create()
         camera_manager_state["manager"] = build_camera_manager(
-            persisted_active_id=devices_data.get("active_camera_id")
+            persisted_active_id=devices_data.get("active_camera_id"),
+            network_drivers=network_drivers_from_state(camera_manager_state),
         )
         return jsonify(_summary())
 
@@ -93,7 +96,8 @@ def register_camera_manager_routes(app, device_manager, handle_errors, camera_ma
         if manager is None:
             devices_data = device_manager.load_or_create()
             manager = build_camera_manager(
-                persisted_active_id=devices_data.get("active_camera_id")
+                persisted_active_id=devices_data.get("active_camera_id"),
+                network_drivers=network_drivers_from_state(camera_manager_state),
             )
             camera_manager_state["manager"] = manager
 

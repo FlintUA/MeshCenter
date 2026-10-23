@@ -223,3 +223,19 @@ def test_a_viewer_with_no_data_is_ended_and_its_slot_released(env, monkeypatch):
     assert list(stream) == []          # ends by itself, no data ever arrived
     assert 0.3 <= time.monotonic() - started < 3
     assert env["limiter"].count() == 0
+
+
+def test_csi_global_routes_never_touch_the_sensor_while_a_network_camera_is_active(env, monkeypatch):
+    """Live test finding: opening the Camera tab POSTs /api/camera/switch_mode, which started Picamera2
+    (CPU/RAM on a Pi) although only an IP stream was being shown."""
+    calls = []
+    for name in ("switch_camera_mode", "start_camera", "stop_camera", "update_camera_settings", "capture_screenshot", "set_video_mode", "api_switch_mode"):
+        monkeypatch.setattr(camera_module, name, lambda *a, _n=name, **k: calls.append(_n) or ({"ok": True}, 200))
+    client = env["client"]
+    ok = client.post("/api/camera/switch_mode", json={"mode": "video"})
+    assert ok.status_code == 200 and ok.get_json()["ok"] is True and ok.get_json()["not_applicable"] is True
+    for method, url, body in [("post", "/api/camera/settings", {"video": {}}), ("post", "/api/camera/stop", {}),
+                              ("post", "/api/camera/mode/photo", {}), ("post", "/api/camera/screenshot", {})]:
+        r = getattr(client, method)(url, json=body)
+        assert r.status_code == 409 and r.get_json()["error_code"] == "not_available_for_network_camera", url
+    assert calls == []

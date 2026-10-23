@@ -131,6 +131,16 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
         driver = _active_driver()
         return driver if getattr(driver, "source_type", None) == "rtsp" else None
 
+    def _network_camera_guard():
+        """The routes below drive the CSI sensor module directly (camera/camera.py globals: settings,
+        mode switching, stop, screenshot). With a network camera active they must not touch it: it
+        would start Picamera2 and its CPU/RAM cost on a Pi that is only showing an IP stream (found
+        in the live test: opening the Camera tab switched the CSI sensor on). None = go ahead."""
+        if _active_ip_driver() is not None:
+            return jsonify({"ok": False, "error": "Not available for a network camera",
+                            "error_code": "not_available_for_network_camera"}), 409
+        return None
+
     @app.route("/api/camera/stream/fmp4")
     def api_camera_stream_fmp4():
         """H.264 remux (no transcode) of the active network camera as fragmented MP4, for
@@ -246,6 +256,9 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
     @handle_errors
     def api_camera_update_settings():
         """Обновить настройки камеры"""
+        blocked = _network_camera_guard()
+        if blocked:
+            return blocked
         if not power_state["enabled"]:
             return jsonify({
                 "ok": False,
@@ -260,6 +273,9 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
     @handle_errors
     def api_camera_stop():
         """Полностью остановить камеру"""
+        blocked = _network_camera_guard()
+        if blocked:
+            return blocked
         camera.stop_camera()
         return jsonify({
             "ok": True,
@@ -271,6 +287,10 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
     @handle_errors
     def api_camera_switch_mode():
         """Переключение режима камеры"""
+        if _active_ip_driver() is not None:
+            # opening the Camera tab always asks for the video mode: for a network camera that is a no-op
+            return jsonify({"ok": True, "mode": (request.get_json(silent=True) or {}).get("mode", "video"),
+                            "not_applicable": True})
         if not power_state["enabled"]:
             return jsonify({
                 "ok": False,
@@ -284,6 +304,9 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
     @app.route("/api/camera/mode/<mode>", methods=["POST"])
     def api_camera_set_mode(mode):
         """Переключить предустановленный режим"""
+        blocked = _network_camera_guard()
+        if blocked:
+            return blocked
         result, status = camera.set_video_mode(mode)
         return jsonify(result), status
 
@@ -291,6 +314,9 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
     @handle_errors
     def api_camera_screenshot():
         """Создать скриншот"""
+        blocked = _network_camera_guard()
+        if blocked:
+            return blocked
         if not power_state["enabled"]:
             return jsonify({
                 "ok": False,

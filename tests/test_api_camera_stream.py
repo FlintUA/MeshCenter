@@ -256,3 +256,18 @@ def test_stream_socket_gets_send_timeouts_so_a_dead_viewer_releases_its_slot(env
         assert timeout_call.args[2] == 30000
     response.close()
     assert env["limiter"].count() == 0
+
+
+def test_a_stream_ends_after_its_max_age_so_the_next_request_is_authorised_again(env, monkeypatch):
+    """Logout cannot reach an open response (signed-cookie login, no server session): bound its lifetime."""
+    import camera.rtsp_driver as driver_module
+    assert driver_module.STREAM_MAX_AGE_S == 600.0
+    monkeypatch.setattr(driver_module, "STREAM_MAX_AGE_S", 0.5)
+    stream = env["driver"].open_fmp4()
+    started = time.monotonic()
+    received = 0
+    for chunk in stream:
+        received += len(chunk)
+        assert time.monotonic() - started < 10
+    assert received > 0 and 0.4 < time.monotonic() - started < 5
+    assert env["limiter"].count() == 0

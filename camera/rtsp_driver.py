@@ -25,6 +25,12 @@ DEFAULT_READY_WAIT_S = 6.0
 # an abandoned request (page reload, closed tab) would hold its viewer slot - and a server thread -
 # until the camera came back. The browser player reconnects on its own.
 VIEWER_IDLE_S = 15.0
+# A stream request is authorised once, when it starts. MeshCenter's login is a signed cookie with no
+# server-side session, so a logout (or a password change) cannot reach a response that is already
+# open. Ending every stream after this long forces the player to reconnect, and that request is
+# authorised again: a logged-out client keeps its stream for at most this long. The reconnect joins
+# the warm upstream (about a second of interruption).
+STREAM_MAX_AGE_S = 600.0
 
 
 class ViewerLimitReached(Exception):
@@ -48,6 +54,7 @@ class Fmp4Stream:
         self._queue: list[bytes] = []
         self._open = True
         self._last_data = time.monotonic()
+        self._opened_at = time.monotonic()
         self.mse_codec = mse_codec
 
     def __iter__(self):
@@ -56,6 +63,9 @@ class Fmp4Stream:
     def __next__(self) -> bytes:
         relay = self._driver.upstream.relay
         while self._open:
+            if time.monotonic() - self._opened_at > STREAM_MAX_AGE_S:
+                self.close()
+                break
             if self._queue:
                 return self._queue.pop(0)
             chunks = relay.read(self._cursor, min(5.0, VIEWER_IDLE_S))

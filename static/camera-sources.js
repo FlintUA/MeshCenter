@@ -36,6 +36,7 @@
         too_many_sources: 'ipcamera.err_too_many_sources',
         missing_field: 'ipcamera.err_missing_field',
         invalid_field: 'ipcamera.err_invalid_field',
+        path_is_url: 'ipcamera.err_path_is_url',
         rate_limited: 'ipcamera.err_rate_limited',
         storage_write_failed: 'ipcamera.err_storage',
     };
@@ -179,8 +180,8 @@
                     ${field('ipcamPassword', 'ipcamera.field_password', `<input id="ipcamPassword" name="password" type="password" maxlength="128" autocomplete="new-password" value="" placeholder="${esc(v.password_set ? t('ipcamera.password_is_set') : '')}">`, t(editing && v.password_set ? 'ipcamera.password_keep_hint' : 'ipcamera.password_storage_note'))}
                     ${editing && v.password_set ? `<label class="mc-ipcam-check"><input id="ipcamClearPassword" type="checkbox"> ${esc(t('ipcamera.clear_password'))}</label>` : ''}
                     <div class="mc-ipcam-two">
-                        ${field('ipcamSubPath', 'ipcamera.field_sub_path', `<input id="ipcamSubPath" name="sub_path" type="text" maxlength="256" value="${esc(v.sub_path)}">`)}
-                        ${field('ipcamMainPath', 'ipcamera.field_main_path', `<input id="ipcamMainPath" name="main_path" type="text" maxlength="256" value="${esc(v.main_path)}">`)}
+                        ${field('ipcamSubPath', 'ipcamera.field_sub_path', `<input id="ipcamSubPath" name="sub_path" type="text" maxlength="256" value="${esc(v.sub_path)}" placeholder="Preview_01_sub">`, t('ipcamera.path_help'))}
+                        ${field('ipcamMainPath', 'ipcamera.field_main_path', `<input id="ipcamMainPath" name="main_path" type="text" maxlength="256" value="${esc(v.main_path)}" placeholder="Preview_01_main">`)}
                     </div>
                     <div class="mc-ipcam-two">
                         ${field('ipcamProfile', 'ipcamera.field_profile', `<select id="ipcamProfile" name="preferred_profile">${option('sub', v.preferred_profile, 'ipcamera.profile_sub')}${option('main', v.preferred_profile, 'ipcamera.profile_main')}</select>`)}

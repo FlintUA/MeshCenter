@@ -1787,6 +1787,8 @@
     "err_unresolvable": "Dieser Hostname konnte nicht aufgelöst werden.",
     "err_duplicate_name": "Eine Kamera mit diesem Namen existiert bereits.",
     "err_too_many_sources": "Die maximale Anzahl an Netzwerkkameras ist erreicht.",
+    "err_path_is_url": "Gib nur den Teil nach dem Port ein (zum Beispiel Preview_01_sub), nicht die komplette rtsp://-Adresse.",
+    "path_help": "Nur der Teil nach dem Port, zum Beispiel Preview_01_sub.",
     "err_missing_field": "Dieses Feld ist erforderlich.",
     "err_invalid_field": "Dieser Wert ist ungültig.",
     "err_rate_limited": "Zu viele Änderungen. Versuche es in einer Minute erneut.",

@@ -1787,6 +1787,8 @@
     "err_unresolvable": "This host name could not be resolved.",
     "err_duplicate_name": "A camera with this name already exists.",
     "err_too_many_sources": "The maximum number of network cameras is reached.",
+    "err_path_is_url": "Enter only the part after the port (for example Preview_01_sub), not the full rtsp:// address.",
+    "path_help": "Only the part after the port, for example Preview_01_sub.",
     "err_missing_field": "This field is required.",
     "err_invalid_field": "This value is not valid.",
     "err_rate_limited": "Too many changes. Try again in a minute.",

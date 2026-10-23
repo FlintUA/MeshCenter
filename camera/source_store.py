@@ -178,6 +178,9 @@ class CameraSourceStore:
         paths = {}
         for key in ("main_path", "sub_path"):
             value = _text(pick(key), key, max_len=256)
+            if value and ("://" in value or value.lower().startswith("rtsp:")):
+                # a pasted full address: say so instead of a generic "not valid"
+                raise SourceValidationError("path_is_url", f"{key} must be only the part after the port, not the full rtsp:// address.", key)
             if value and not rtsp_input.valid_stream_path(value):
                 raise SourceValidationError("invalid_field", f"{key} contains characters that are not allowed.", key)
             paths[key] = value

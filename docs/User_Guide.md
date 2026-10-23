@@ -697,6 +697,8 @@ Two modes under the Timer card: a stopwatch (counts up) or a countdown (fixed du
 
 Persistent data is stored in `data/`. The most important items are `config.py`, the optional `weather_secrets.py` and the complete `data/` directory.
 
+**A backup of `data/` contains secrets:** the login hash and session key (`auth.json`, `secret_key.txt`), MCAttach keys and, for saved network cameras, the camera passwords in `camera_secrets.json` (a plain owner-only file, not encrypted). Store backups where only you can read them and never share them as-is.
+
 Create a consistent backup:
 
 ```bash

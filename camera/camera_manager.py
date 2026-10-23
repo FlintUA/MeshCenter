@@ -23,6 +23,7 @@ camtest at once, not incrementally).
 
 from __future__ import annotations
 
+import threading
 from typing import Any, Iterator
 
 from camera.camera_driver import CameraDriver
@@ -34,6 +35,7 @@ class CameraManager:
     def __init__(self, drivers: dict[str, CameraDriver], active_id: str | None = None):
         self._drivers = drivers
         self._active_id = active_id if active_id in drivers else next(iter(drivers), None)
+        self._lock = threading.RLock()
 
     @property
     def active_id(self) -> str | None:
@@ -80,6 +82,10 @@ class CameraManager:
         matching how a failed switch_camera_mode() already leaves CSI
         stopped rather than silently reverting to the old one.
         """
+        with self._lock:
+            return self._set_active_locked(driver_id)
+
+    def _set_active_locked(self, driver_id: str) -> bool:
         if driver_id not in self._drivers:
             return False
         if driver_id == self._active_id:
@@ -95,6 +101,31 @@ class CameraManager:
 
         self._active_id = driver_id
         return self._drivers[driver_id].start()
+
+    def replace_network_drivers(self, new_drivers: list[CameraDriver]) -> None:
+        """Bring the registered network (RTSP) drivers in line with the saved
+        sources after an add/edit/delete, without touching CSI/USB drivers.
+
+        Removed sources are stopped and dropped; edited ones are stopped and
+        replaced (and restarted if they were active); new ones are added. If
+        the active source disappears the active id falls back to the first
+        remaining driver (not started - the next stream request starts it)."""
+        with self._lock:
+            new_by_id = {d.id: d for d in new_drivers}
+            was_active = self._active_id
+            restart_active = False
+            for driver_id, driver in list(self._drivers.items()):
+                if getattr(driver, "source_type", None) != "rtsp":
+                    continue
+                if driver_id == was_active:
+                    restart_active = driver_id in new_by_id
+                driver.stop()
+                del self._drivers[driver_id]
+            self._drivers.update(new_by_id)
+            if self._active_id not in self._drivers:
+                self._active_id = next(iter(self._drivers), None)
+            elif restart_active:
+                self._drivers[self._active_id].start()
 
     def get_status(self) -> dict[str, Any]:
         driver = self.active()
@@ -141,7 +172,25 @@ class CameraManager:
         return driver.list_resolutions()
 
 
-def build_camera_manager(persisted_active_id: str | None = None) -> CameraManager:
+def network_drivers_from_state(state: dict) -> list[CameraDriver]:
+    """Network (RTSP) drivers for the saved sources, from the factory server.py
+    stores in the shared camera_manager_state dict. Empty when none is
+    registered (tests, or a build without network sources). Reads the source
+    file only - no network I/O."""
+    factory = state.get("network_drivers_factory") if isinstance(state, dict) else None
+    if factory is None:
+        return []
+    try:
+        return list(factory())
+    except Exception as error:  # a broken source file must never take the camera tab down
+        print(f"[CAMERA MANAGER] Could not load network sources: {type(error).__name__}", flush=True)
+        return []
+
+
+def build_camera_manager(
+    persisted_active_id: str | None = None,
+    network_drivers: list[CameraDriver] | None = None,
+) -> CameraManager:
     """Discover available camera drivers and wrap them in a CameraManager.
 
     CSI is registered unconditionally (its detect() reports whether a
@@ -240,6 +289,11 @@ def build_camera_manager(persisted_active_id: str | None = None) -> CameraManage
             )
             continue
         driver = UsbCameraDriver(found["dev_path"], card_name=found.get("card"))
+        drivers[driver.id] = driver
+
+    # Saved network sources are configuration, not hardware: registered
+    # whether or not any local camera exists and in a container too (CAM2).
+    for driver in network_drivers or []:
         drivers[driver.id] = driver
 
     return CameraManager(drivers, active_id=persisted_active_id)

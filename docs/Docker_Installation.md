@@ -451,8 +451,11 @@ settings, the login hash and the session key) and survives
 once from a template and **never overwritten**; edit it for advanced settings.
 Weather API keys entered in the UI are saved in `config/weather_secrets.py`.
 
-`data/` contains secrets (`secret_key.txt`, `auth.json`, MCAttach keys): do not
-share it as a public folder.
+`data/` contains secrets (`secret_key.txt`, `auth.json`, MCAttach keys, and
+`camera_secrets.json` with the passwords of saved network cameras): do not
+share it as a public folder, and treat every backup or copy of `data/` as
+secret too. `camera_secrets.json` is a plain, owner-only (0600) file, not
+encrypted.
 
 ## Day to day
 

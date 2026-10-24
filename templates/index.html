@@ -6,6 +6,8 @@
     <meta name="app-version" content="{{ app_version }}">
     <meta name="csrf-token" content="{{ csrf_token }}">
     <meta name="runtime-capabilities" content="{{ runtime_capabilities }}">
+    <!-- csrf.js must stay the FIRST script, in <head>, without defer/async: it wraps window.fetch, so no API request can run before the wrapper exists (tests/test_csrf_script_order.py) -->
+    <script src="{{ url_for('static', filename='csrf.js') }}?v=20261026-csrf1"></script>
     <title>MeshCenter</title>
     <!-- MeshCenter build: stage2c7-4-unified-popovers-20260725 -->
     <link rel="stylesheet" href="{{ url_for('static', filename='style-part1.css') }}?v=20261026-csrf1">
@@ -2442,7 +2444,6 @@
     // weather.js is untouched until those call I18N.t()/plural() directly.
     window.I18N.init("{{ ui_language }}").then(() => window.I18N.applyStaticDom());
 </script>
-<script src="{{ url_for('static', filename='csrf.js') }}?v=20261026-csrf1"></script>
 <script src="{{ url_for('static', filename='app-dialog.js') }}?v=20261026-csrf1"></script>
 <script src="{{ url_for('static', filename='chat-emoji.js') }}?v=20260821-domain-split"></script>
 <script src="{{ url_for('static', filename='chat-photo.js') }}?v=20260821-domain-split"></script>

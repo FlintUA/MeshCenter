@@ -1798,7 +1798,8 @@
     "err_invalid_field": "Dieser Wert ist ungültig.",
     "err_rate_limited": "Zu viele Änderungen. Versuche es in einer Minute erneut.",
     "err_storage": "Speichern fehlgeschlagen. Der Schreibzugriff ist fehlgeschlagen.",
-    "err_generic": "Die Kamera konnte nicht gespeichert werden."
+    "err_generic": "Die Kamera konnte nicht gespeichert werden.",
+    "err_generic_code": "Die Kamera konnte nicht gespeichert werden (Code: {code}, HTTP {status})."
   },
   "camdiag": {
     "title": "Kamera-Diagnose",

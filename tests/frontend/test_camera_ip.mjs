@@ -157,7 +157,9 @@ assert.match(catalog.ipcamera.error_h265, /Switch the stream to H\.264 in the ca
     assert.ok(w.MCCameraSources.openForm && w.MCCameraSources.errorText);
     // errorText never echoes server text, only a catalog key
     assert.equal(w.MCCameraSources.errorText({ error_code: 'not_lan_address', error: 'secret topsecret-pw' }), 'ipcamera.err_not_lan_address');
-    assert.equal(w.MCCameraSources.errorText({ error_code: 'something_new' }), 'ipcamera.err_generic');
+    assert.equal(w.MCCameraSources.errorText({ error_code: 'something_new' }, 500), 'ipcamera.err_generic_code:{"code":"something_new","status":500}');
+    assert.equal(w.MCCameraSources.errorText({}, 403), 'ipcamera.err_generic_code:{"code":"-","status":403}');
+    assert.equal(w.MCCameraSources.errorText({ error_code: 'csrf_invalid' }, 403), 'errors.csrf_invalid');
     assert.equal(w.MCCameraSources.errorText(null), 'ipcamera.err_generic');
     for (const key of Object.values(w.MCCameraSources._errorKeys)) {
         const [ns, name] = key.split('.');

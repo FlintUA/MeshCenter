@@ -5211,6 +5211,16 @@ video.camera-stream {
 /* the picture box follows the picture's own aspect ratio (--camera-aspect / --camera-ratio, set when the first
    frame is known): no black bars above and below. Its height is capped so a wide card cannot push the controls
    off the screen; the width shrinks with the cap to keep the ratio. */
+/* the picture runs edge to edge in the card (full size), so its corners are square on a desktop (on a phone the picture is inset and keeps its rounding): rounded corners against the
+   card's straight side edges looked wrong, and an inset frame would cost picture size */
+@media (min-width: 769px) {
+    .video-view .video-frame-wrap,
+    .video-view .video-frame-wrap .camera-stream,
+    .video-view .video-frame-wrap .camera-freeze-frame {
+        border-radius: 0 !important;
+    }
+}
+
 .video-view .video-frame-wrap {
     flex: 0 0 auto !important;
     width: min(100%, calc(62vh * var(--camera-ratio, 1.7778))) !important;

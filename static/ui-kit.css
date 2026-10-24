@@ -5214,6 +5214,13 @@ video.camera-stream {
 /* the picture runs edge to edge in the card (full size), so its corners are square on a desktop (on a phone the picture is inset and keeps its rounding): rounded corners against the
    card's straight side edges looked wrong, and an inset frame would cost picture size */
 @media (min-width: 769px) {
+    /* the "connecting" card fills the picture box too: no inset border or rounding while the camera (re)connects */
+    .video-view .camera-loading-placeholder {
+        inset: 0;
+        border: 0;
+        border-radius: 0;
+    }
+
     .video-view .video-frame-wrap,
     .video-view .video-frame-wrap .camera-stream,
     .video-view .video-frame-wrap .camera-freeze-frame {

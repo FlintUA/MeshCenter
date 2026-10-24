@@ -1755,6 +1755,7 @@
     "field_profile": "Бажаний потік",
     "profile_sub": "Субпотік (рекомендовано)",
     "profile_main": "Основний потік",
+    "profile_main_hint": "Основному потоку потрібен швидкий канал. По Wi-Fi використовуйте субпотік.",
     "profile_label": "Потік",
     "field_transport": "Транспорт",
     "transport_tcp": "TCP (рекомендовано)",

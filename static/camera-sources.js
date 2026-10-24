@@ -149,12 +149,13 @@
         overlay.remove();
     }
 
-    function field(id, labelKey, inner, hint) {
+    function field(id, labelKey, inner, hint, extraHintId) {
         return `
             <div class="mc-ipcam-field">
                 <label for="${id}">${esc(t(labelKey))}</label>
                 ${inner}
                 ${hint ? `<div class="mc-ipcam-hint">${esc(hint)}</div>` : ''}
+                ${extraHintId ? `<div class="mc-ipcam-hint mc-ipcam-hint-warn" id="${extraHintId}" hidden>${esc(t('ipcamera.profile_main_hint'))}</div>` : ''}
                 <div class="mc-ipcam-error" id="${id}Error" role="alert"></div>
             </div>`;
     }
@@ -184,7 +185,7 @@
                         ${field('ipcamMainPath', 'ipcamera.field_main_path', `<input id="ipcamMainPath" name="main_path" type="text" maxlength="256" value="${esc(v.main_path)}" placeholder="Preview_01_main">`)}
                     </div>
                     <div class="mc-ipcam-two">
-                        ${field('ipcamProfile', 'ipcamera.field_profile', `<select id="ipcamProfile" name="preferred_profile">${option('sub', v.preferred_profile, 'ipcamera.profile_sub')}${option('main', v.preferred_profile, 'ipcamera.profile_main')}</select>`)}
+                        ${field('ipcamProfile', 'ipcamera.field_profile', `<select id="ipcamProfile" name="preferred_profile">${option('sub', v.preferred_profile, 'ipcamera.profile_sub')}${option('main', v.preferred_profile, 'ipcamera.profile_main')}</select>`, null, 'ipcamProfileHint')}
                         ${field('ipcamTransport', 'ipcamera.field_transport', `<select id="ipcamTransport" name="transport">${option('tcp', v.transport, 'ipcamera.transport_tcp')}${option('udp', v.transport, 'ipcamera.transport_udp')}</select>`, t('ipcamera.transport_hint'))}
                     </div>
                     ${field('ipcamTimeout', 'ipcamera.field_timeout', `<input id="ipcamTimeout" name="connect_timeout_s" type="number" min="2" max="60" value="${esc(v.connect_timeout_s)}">`)}
@@ -195,6 +196,11 @@
                 </form>
             </div>`;
 
+        const profileSelect = overlay.querySelector('#ipcamProfile');
+        const profileHint = overlay.querySelector('#ipcamProfileHint');
+        const syncProfileHint = () => { profileHint.hidden = profileSelect.value !== 'main'; };
+        profileSelect.addEventListener('change', syncProfileHint);
+        syncProfileHint();
         overlay.querySelector('[data-ipcam-form="cancel"]').addEventListener('click', closeForm);
         overlay.addEventListener('click', (event) => { if (event.target === overlay) closeForm(); });
         overlay._onKeydown = (event) => {

@@ -1755,6 +1755,7 @@
     "field_profile": "Bevorzugter Stream",
     "profile_sub": "Sub-Stream (empfohlen)",
     "profile_main": "Haupt-Stream",
+    "profile_main_hint": "Der Haupt-Stream braucht eine schnelle Verbindung. Nutze den Sub-Stream im WLAN.",
     "profile_label": "Stream",
     "field_transport": "Transport",
     "transport_tcp": "TCP (empfohlen)",

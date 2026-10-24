@@ -5003,6 +5003,10 @@ video.camera-stream {
     font: inherit;
 }
 
+.mc-ipcam-hint-warn {
+    color: #b26a00;
+}
+
 .mc-ipcam-two {
     display: grid;
     grid-template-columns: 1fr 1fr;

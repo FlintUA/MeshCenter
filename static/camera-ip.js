@@ -287,6 +287,11 @@
         if (gen !== generation) return false;
 
         const buffer = mediaSource.addSourceBuffer('video/mp4; codecs="' + codec + '"');
+        // "sequence": the browser lays the segments end to end and ignores the stream's own timestamps.
+        // The server ends every stream after 10 min (so a logged-out client cannot keep one) and every
+        // new stream starts its timeline at 0; in the default "segments" mode that would jump the
+        // timeline back and stall. In sequence mode the next stream simply continues the buffer.
+        try { buffer.mode = 'sequence'; } catch (error) { /* an older engine keeps "segments" */ }
         const queue = [];
         let appending = false;
         let playing = false;
@@ -327,22 +332,50 @@
         video.play().catch(() => { /* autoplay needs muted; the element is muted */ });
 
         mode = 'mse';
-        const reader = response.body.getReader();
         // The read loop runs for the whole viewing session: do not await it (start() must return).
+        // When the server ends a stream (its 10 minute lifetime) while we are playing, the next stream is
+        // opened on the SAME MediaSource and SourceBuffer, so nothing is torn down: no overlay, no black
+        // frame. Only a failure of that quick reopen falls back to the full reconnect.
         (async () => {
-            try {
-                for (;;) {
-                    const { value, done } = await reader.read();
-                    if (done || gen !== generation) break;
-                    queue.push(value);
-                    pump();
+            let current = response;
+            for (;;) {
+                const reader = current.body.getReader();
+                try {
+                    for (;;) {
+                        const { value, done } = await reader.read();
+                        if (done || gen !== generation) break;
+                        queue.push(value);
+                        pump();
+                    }
+                } catch (error) {
+                    if (gen !== generation) return;
                 }
-            } catch (error) {
                 if (gen !== generation) return;
+                if (!playing) return void scheduleRetry(gen, attempt + 1);
+                const next = await reopenStream(gen, codec);
+                if (!next) return void scheduleRetry(gen, 0);
+                current = next;
             }
-            if (gen === generation) scheduleRetry(gen, playing ? 0 : attempt + 1);
         })();
         return true;
+    }
+
+    // Open the next stream for the same player. null = could not (the caller does a full reconnect).
+    async function reopenStream(gen, codec) {
+        for (let tries = 0; tries < 3 && gen === generation; tries += 1) {
+            try {
+                abortController = new AbortController();
+                const response = await fetch(STREAM_URL, { cache: 'no-store', signal: abortController.signal });
+                if (gen !== generation) return null;
+                if (response.ok && (response.headers.get('X-Codec') || '') === codec) return response;
+                try { abortController.abort(); } catch (error) { /* ignore */ }
+                if (response.status === 401 || response.status === 403 || response.status === 429) return null;
+            } catch (error) {
+                if (gen !== generation) return null;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 300 * (tries + 1)));
+        }
+        return null;
     }
 
     function trimBuffer(buffer, video, keepSeconds) {
@@ -398,7 +431,10 @@
             });
             const data = await response.json();
             if (!response.ok || !data.ok) throw new Error(data.error || 'failed');
-            if (typeof showToast === 'function') showToast(t('ipcamera.profile_switched'), 'success');
+            if (typeof showToast === 'function') {
+                showToast(t('ipcamera.profile_switched'), 'success');
+                if (profile === 'main') showToast(t('ipcamera.profile_main_hint'), 'info', { duration: 10000 });
+            }
         } catch (error) {
             if (typeof showToast === 'function') showToast(t('ipcamera.profile_switch_failed'), 'error', { duration: 10000 });
         }
@@ -424,6 +460,6 @@
     window.MCIpCamera = {
         handles, start, stop, refresh, reconnect, changeProfile,
         // exported for tests
-        _helpers: { progressText, mseSupports, liveEdgeTarget, stateMessageKey, isTerminal, infoLine, mseConstructor, TARGET_LEAD_S },
+        _helpers: { reopenStream, progressText, mseSupports, liveEdgeTarget, stateMessageKey, isTerminal, infoLine, mseConstructor, TARGET_LEAD_S },
     };
 })();

@@ -5078,3 +5078,152 @@ video.camera-stream {
         align-items: stretch;
     }
 }
+
+/* ============================================================
+   MOB1: one screen at a time on a narrow viewport (<= 768 px)
+   Everything here is inside the media query, so a wide viewport is untouched.
+   static/mobile-layout.js sets <body data-mobile-pane="workspace|base|nodes">.
+   ============================================================ */
+@media (max-width: 768px) {
+    /* the three columns become three pages; the workspace is the default one */
+    .main-layout {
+        flex-direction: column;
+    }
+
+    .main-layout > .base-sidebar,
+    .main-layout > .sidebar {
+        display: none !important;
+    }
+
+    body[data-mobile-pane="base"] .main-layout > .chat-area,
+    body[data-mobile-pane="nodes"] .main-layout > .chat-area {
+        display: none !important;
+    }
+
+    /* an open page fills the screen, whatever the desktop "hide panel" state says */
+    body[data-mobile-pane="base"] .main-layout > .base-sidebar,
+    body[data-mobile-pane="nodes"] .main-layout > .sidebar {
+        display: flex !important;
+        flex: 1 1 auto !important;
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+        opacity: 1 !important;
+        pointer-events: auto !important;
+        border: 0 !important;
+    }
+
+    .main-layout > .chat-area {
+        width: 100%;
+        min-width: 0;
+        max-width: 100%;
+    }
+
+    /* tabs: one scrolling row with real touch targets */
+    .main-content-tabs {
+        overflow-x: auto;
+        overflow-y: hidden;
+        flex-wrap: nowrap;
+        scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
+        scroll-snap-type: x proximity;
+    }
+
+    .main-content-tabs::-webkit-scrollbar {
+        display: none;
+    }
+
+    .main-content-tab {
+        flex: 0 0 auto;
+        min-width: 44px;
+        min-height: 44px;
+        padding-left: 14px;
+        padding-right: 14px;
+        white-space: nowrap;
+        scroll-snap-align: center;
+    }
+
+    /* the dock buttons are the way to the Base and Nodes pages: make them targets */
+    .dock-panel-btn {
+        min-width: 44px;
+        min-height: 44px;
+    }
+
+    .dock-panel-btn.mobile-pane-active {
+        box-shadow: inset 0 0 0 2px currentColor;
+    }
+
+    /* camera card header: title on top, the pickers and the power button wrap below it
+       (a column that wraps would start a second, clipped column, so no wrap on the header itself) */
+    .video-header.mc-workspace-header {
+        flex-direction: column;
+        flex-wrap: nowrap;
+        align-items: stretch;
+        height: auto;
+        min-height: 0;
+        flex-shrink: 0;
+    }
+
+    .video-header-actions {
+        flex-wrap: wrap;
+        min-width: 0;
+        max-width: 100%;
+    }
+
+    .video-header-actions {
+        width: 100%;
+        gap: 8px;
+    }
+
+    .video-header-actions .camera-source-select {
+        flex: 1 1 140px;
+        min-width: 0;
+        max-width: 100%;
+        min-height: 44px;
+    }
+
+    .camera-power-btn {
+        min-height: 44px;
+    }
+
+    /* the visible height on a phone excludes the browser toolbars (100vh does not) */
+    .app-container {
+        height: 100dvh;
+        max-height: 100dvh;
+    }
+
+    /* status dock: one row of real buttons; the CPU/RAM/uptime block moves to the System page */
+    .main-layout {
+        padding-bottom: 52px;
+    }
+
+    .status-dock {
+        width: 100%;
+        max-width: 100%;
+        height: 52px;
+        display: flex;
+        gap: 8px;
+        padding: 0 8px;
+        overflow: hidden;
+    }
+
+    .status-dock .dock-right {
+        display: none;
+    }
+
+    .status-dock .dock-left {
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow-x: auto;
+        scrollbar-width: none;
+    }
+
+    .status-dock .dock-left::-webkit-scrollbar {
+        display: none;
+    }
+
+    .status-dock .dock-center {
+        flex: 0 0 auto;
+        min-width: 0;
+    }
+}

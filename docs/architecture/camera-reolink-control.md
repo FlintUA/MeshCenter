@@ -1,0 +1,109 @@
+# Camera control over the camera's own web API (CAM2 Phase 2)
+
+Status: implemented and tested against a mock server; the real-camera behaviour is confirmed in the live
+test (section 9). The RTSP preview (Phase 1) never depends on anything in this document.
+
+## 1. What it is for
+
+A saved network camera can optionally get a `control` section (type `reolink`). With it MeshCenter can:
+
+* make **snapshots** with the camera's own JPEG encoder (used as the live view for browsers without
+  MediaSource, for example an iPhone before iOS 17.1, and later for Media snapshots in Phase 3);
+* **read** the lens zoom and focus position and the valid zoom range;
+* move the lens **zoom** (device units, range checked, read back). Focus is read only.
+
+It never changes a codec, a stream, the network or a user of the camera. The only write is zoom.
+
+## 2. Where it lives
+
+| Piece | File |
+| --- | --- |
+| HTTP(S) client, login, token, TLS pinning, abilities, zoom, snapshot | `camera/reolink_client.py` |
+| Clients per source, snapshot sharing, viewer leases | `camera/reolink_control.py` |
+| Routes | `api/api_camera_control.py` |
+| `control` section of a saved source | `camera/source_store.py` (`default_control()`, `set_control_state()`) |
+| Player (snapshot mode) | `static/camera-ip.js` |
+| Source form, "Check control", certificate dialog | `static/camera-sources.js` |
+| Mock camera for tests | `tests/fixtures/fake_reolink_server.py` |
+
+Nothing in `camera/rtsp_stream.py` imports the client; a failing control API cannot touch the stream
+(tests: `test_a_failing_control_api_leaves_the_rtsp_preview_running`).
+
+## 3. Protocol used (from the publicly documented JSON API; no vendor SDK or code)
+
+All commands are `POST /cgi-bin/api.cgi` with a JSON **array** of command objects (a single object is
+refused by the camera).
+
+| Step | Request | Answer |
+| --- | --- | --- |
+| Login | `?cmd=Login`, `[{"cmd":"Login","action":0,"param":{"User":{"Version":"0","userName":..,"password":..}}}]` | `value.Token.name` (the token) and `value.Token.leaseTime` (seconds) |
+| Any command | `?token=<token>` | `code` 0 or `error.rspCode` / `error.detail` |
+| Abilities | `GetAbility`, action 0, `param.User.userName` | `value.Ability` (entries with `permit`) |
+| Zoom/focus read | `GetZoomFocus`, action 1, `param.channel` | `value.ZoomFocus.{zoom,focus}.pos` and the ranges |
+| Zoom move | `StartZoomFocus`, action 0, `param.ZoomFocus.{channel,pos,op:"ZoomPos"}` | accepted; the lens takes a moment |
+| Snapshot | `GET ?cmd=Snap&channel=N&rs=<random>&token=<token>` | `image/jpeg` (a refusal is a small JSON answer) |
+| Logout | `Logout` | best effort |
+
+Error classification: `rspCode -6` or "login first" = token expired (re-login ONCE, then fail);
+`rspCode -26` ("ability error") or a permission word = the account lacks the right (`permission_denied`,
+with `right` = `snapshot` / `lens_control` / `live_view`); a failed `Login` = `login_failed`
+(`too_many_sessions` when the camera says so).
+
+Zoom positions are **device units** (the camera reports the range, for example 0 to 32), never percent
+or an x-factor; a position outside the reported range is refused before anything is sent.
+
+## 4. Credentials and tokens
+
+* The control API uses the source's own user name and the password in `data/camera_secrets.json` (no
+  second secret store). The password is sent once, in the body of the login request.
+* The token goes in the query string (the camera requires it). It is never logged, never in an
+  exception message and never returned to the browser; errors are machine codes plus generic texts.
+  The snapshot route returns the JPEG only.
+* A client is rebuilt when the source is edited (it is keyed on `updated_at`); the stored `pinned_sha256`
+  and the probe result (`capabilities`) are written only by the server, never from user input, and are
+  cleared when host, port, scheme, channel or type change (they belong to one device at one address).
+
+## 5. TLS
+
+* Verification is on by default. Verification is never switched off globally.
+* A camera with a self-signed certificate is reached only with a per-source SHA-256 **fingerprint pin**
+  the user confirmed: "Check control" shows the fingerprint, the user confirms, the server re-reads the
+  certificate and stores the pin only when it equals what the user saw. The handshake is compared with
+  the pin BEFORE any request byte (so before the password) is sent. A changed fingerprint fails closed and
+  shows the new one for a fresh decision.
+* Plain HTTP only with `allow_http` set on that source (the form shows a warning).
+* The address policy applies on every connection and the connection goes to the validated IP; redirects
+  are never followed.
+
+## 6. Limits
+
+* One command in flight per camera (a lock); zoom needs 0.5 s between commands (`rate_limited`); the
+  probe and trust routes allow 6 requests a minute, zoom reads 60.
+* A zoom move is read back (up to 6 s) and the answer says whether the lens arrived (`settled`).
+
+## 7. Snapshot fallback (browsers without MediaSource)
+
+* `GET /api/camera/snapshot` (login cookie, `Cache-Control: no-store`) for the active network camera.
+* At most one picture per second per camera is fetched and shared by all fallback viewers (1 s cache,
+  one fetch at a time); a failure is remembered for 3 s so polling viewers do not queue behind connect
+  timeouts. Nothing is fetched while nobody asks; a hidden tab pauses its polling.
+* Viewers are leases in the SAME limiter as stream viewers (4 per camera, 6 in total, 429
+  `viewer_limit`); a client that stays silent for 15 s frees its slot, and a lease is dropped after 10
+  minutes (the viewer is counted and authorised again), like a stream's lifetime.
+* No ffmpeg and no transcode: the camera makes the JPEG. A generic RTSP camera without this API keeps
+  the "browser cannot play the stream" message.
+
+## 8. Permissions
+
+A view-only account may not be allowed lens control. The probe reports each missing right
+(`denied: [{command, right}]`), the zoom route answers 403 `permission_denied` with the `right`, and the
+UI says "This account has no permission for lens control".
+
+## 9. What is confirmed only live (the mock cannot prove it)
+
+The field names above follow the public documentation and community-verified usage. On the real camera
+(RLC-811A, after Flint's go) confirm: the login answer shape, which `GetAbility` entries exist, that
+`GetZoomFocus` with action 1 returns the ranges, how long the lens takes to settle, the permission error
+code of a limited account, and whether `Snap` needs only the token. Zoom moves only with a separate go,
+with read-back, and the lens is returned to its original position (positions before and after go into
+the report). Focus: read only until verified.

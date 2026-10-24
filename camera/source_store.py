@@ -36,6 +36,17 @@ KIND_RTSP = "rtsp"
 PROFILES = ("sub", "main")
 TRANSPORTS = ("tcp", "udp")
 UNSET = object()  # "leave the password as it is"
+CONTROL_TYPES = ("none", "reolink")
+CONTROL_SCHEMES = ("https", "http")
+CONTROL_INPUT_FIELDS = ("type", "scheme", "port", "channel", "allow_http")
+
+
+def default_control() -> dict:
+    """Camera-side control (CAM2 Phase 2). type "none" = RTSP only, the default and the state of every
+    source saved before Phase 2. `pinned_sha256` and `capabilities` are written only by the server
+    (set_control_state): the pin after the user confirmed a fingerprint, the capabilities after a probe."""
+    return {"type": "none", "scheme": "https", "port": 443, "channel": 0, "allow_http": False,
+            "pinned_sha256": "", "capabilities": {}}
 
 _CTRL = re.compile(r"[\x00-\x1f\x7f]")
 
@@ -126,6 +137,7 @@ class CameraSourceStore:
     @staticmethod
     def _public(source: dict, secrets: dict[str, dict]) -> dict:
         out = {k: copy.deepcopy(v) for k, v in source.items()}
+        out["control"] = {**default_control(), **(out.get("control") if isinstance(out.get("control"), dict) else {})}
         out["password_set"] = bool((secrets.get(source["id"]) or {}).get("password"))
         return out
 
@@ -199,11 +211,50 @@ class CameraSourceStore:
         if isinstance(timeout, bool) or not isinstance(timeout, int) or not 2 <= timeout <= 60:
             raise SourceValidationError("invalid_field", "connect_timeout_s must be 2-60 seconds.", "connect_timeout_s")
 
+        control = self._clean_control(pick("control", None), existing, host)
+
         return {
             "name": name, "kind": KIND_RTSP, "host": host, "port": port, "username": username,
             "main_path": paths["main_path"], "sub_path": paths["sub_path"],
             "preferred_profile": profile, "transport": transport, "connect_timeout_s": timeout,
+            "control": control,
         }
+
+    @staticmethod
+    def _clean_control(value: Any, existing: dict | None, host: str) -> dict:
+        old = {**default_control(), **((existing or {}).get("control") or {})}
+        if value is None:
+            value = {}
+        if not isinstance(value, dict):
+            raise SourceValidationError("invalid_field", "control must be an object.", "control")
+        if value is not old:  # the stored copy (returned unchanged by pick()) is already clean
+            unknown = sorted(set(value) - set(CONTROL_INPUT_FIELDS) - {"pinned_sha256", "capabilities"})
+            if unknown:
+                raise SourceValidationError("unknown_field", "Unknown control field: " + unknown[0], "control")
+        merged = {**old, **{k: v for k, v in value.items() if k in CONTROL_INPUT_FIELDS}}
+        if merged["type"] not in CONTROL_TYPES:
+            raise SourceValidationError("invalid_field", "control type must be 'none' or 'reolink'.", "control")
+        if merged["scheme"] not in CONTROL_SCHEMES:
+            raise SourceValidationError("invalid_field", "control scheme must be 'https' or 'http'.", "control")
+        port = merged["port"]
+        if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+            raise SourceValidationError("invalid_field", "control port must be a number from 1 to 65535.", "control_port")
+        channel = merged["channel"]
+        if isinstance(channel, bool) or not isinstance(channel, int) or not 0 <= channel <= 31:
+            raise SourceValidationError("invalid_field", "control channel must be 0-31.", "control_channel")
+        if not isinstance(merged["allow_http"], bool):
+            raise SourceValidationError("invalid_field", "allow_http must be true or false.", "control")
+        if merged["type"] != "none" and merged["scheme"] == "http" and not merged["allow_http"]:
+            raise SourceValidationError("http_not_allowed", "Plain HTTP needs an explicit opt-in (allow_http).", "control")
+        clean = {k: merged[k] for k in CONTROL_INPUT_FIELDS}
+        clean["pinned_sha256"] = old["pinned_sha256"]
+        clean["capabilities"] = old["capabilities"]
+        # a pin and a probe result belong to one device and one address: any change of where we talk to clears them
+        moved = existing is not None and (existing.get("host") != host or old["port"] != port or old["scheme"] != merged["scheme"]
+                                          or old["channel"] != channel or old["type"] != merged["type"])
+        if moved:
+            clean["pinned_sha256"], clean["capabilities"] = "", {}
+        return clean
 
     @staticmethod
     def _clean_password(value: Any) -> str:
@@ -249,6 +300,24 @@ class CameraSourceStore:
                     new_secrets.pop(source_id, None)
             self._commit(new_sources, new_secrets, old_sources, old_secrets)
             return self._public(updated, new_secrets)
+
+    def set_control_state(self, source_id: str, *, pinned_sha256: Any = UNSET, capabilities: Any = UNSET) -> dict:
+        """Server-side writes of the control pin and the probe result (never from user input directly)."""
+        with self._lock:
+            old_sources, old_secrets = self._load()
+            index = next((i for i, s in enumerate(old_sources) if s["id"] == source_id), None)
+            if index is None:
+                raise SourceNotFound(source_id)
+            control = {**default_control(), **(old_sources[index].get("control") or {})}
+            if pinned_sha256 is not UNSET:
+                control["pinned_sha256"] = pinned_sha256
+            if capabilities is not UNSET:
+                control["capabilities"] = capabilities
+            updated = {**old_sources[index], "control": control}  # updated_at is for user edits: the control client is keyed on it
+            new_sources = list(old_sources)
+            new_sources[index] = updated
+            self._commit(new_sources, old_secrets, old_sources, old_secrets)
+            return self._public(updated, old_secrets)
 
     def delete(self, source_id: str) -> None:
         with self._lock:

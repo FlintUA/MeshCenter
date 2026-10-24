@@ -102,6 +102,8 @@ if runtime_env.is_container():
 from api.api_camera import register_camera_routes
 from api.api_camera_manager import register_camera_manager_routes
 from api.api_camera_sources import register_camera_source_routes
+from api.api_camera_control import register_camera_control_routes
+from camera.reolink_control import ReolinkControlManager, SnapshotLeases
 from api.api_chat import register_chat_routes
 from api.api_settings import register_settings_routes, normalize_settings, SUPPORTED_LANGUAGES
 from api.api_meshtastic import register_meshtastic_routes
@@ -486,6 +488,8 @@ camera_manager_state = {"manager": None}
 # the installation's LAN, not tied to a radio profile), secrets in a separate
 # 0600 file. The factory is read by every build_camera_manager() call site.
 camera_source_store = CameraSourceStore(DATA_DIR)
+reolink_control = ReolinkControlManager(camera_source_store)
+snapshot_leases = SnapshotLeases()
 camera_manager_state["network_drivers_factory"] = lambda: rtsp_drivers_from_store(camera_source_store)
 
 RADIO_IDENTITY_RESULT = {
@@ -1089,6 +1093,7 @@ camera_power_enabled_at_startup = register_camera_routes(
 # instance.
 register_camera_manager_routes(app, device_manager, handle_errors, camera_manager_state)
 register_camera_source_routes(app, camera_source_store, camera_manager_state, device_manager, handle_errors)
+register_camera_control_routes(app, camera_source_store, camera_manager_state, reolink_control, snapshot_leases, handle_errors)
 register_system_routes(app, get_cpu_temperature=lambda: read_cpu_temperature(), get_app_version=lambda: APP_VERSION)
 register_cpu_history_routes(app, CPU_HISTORY_FILE)
 register_updates_routes(app, resolve_version=lambda: APP_VERSION, project_dir=PROJECT_DIR, handle_errors=handle_errors, log_event=log_system_event)

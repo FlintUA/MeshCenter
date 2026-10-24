@@ -5198,6 +5198,16 @@ video.camera-stream {
     padding-bottom: 8px;
 }
 
+/* local camera controls wrap inside the card at any workspace width (three fixed columns were clipped when both
+   side panels are open and the card is only about 424 px wide) */
+.video-view .camera-basic-controls-grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+}
+
+.video-view .camera-settings-row {
+    flex-wrap: wrap;
+}
+
 /* the picture box follows the picture's own aspect ratio (--camera-aspect / --camera-ratio, set when the first
    frame is known): no black bars above and below. Its height is capped so a wide card cannot push the controls
    off the screen; the width shrinks with the cap to keep the ratio. */

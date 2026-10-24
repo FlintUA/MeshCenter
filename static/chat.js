@@ -12484,6 +12484,8 @@ async function onCameraSourceSelectChange(driverId) {
         await loadCameraSourceSelector();
         if (isCameraTabVisible() && cameraActive) {
             if (window.MCIpCamera) await window.MCIpCamera.refresh();
+            // a local camera: the status line still shows the previous (network) camera's numbers until its own are read
+            if (typeof loadVideoSettings === 'function' && !(window.MCIpCamera && window.MCIpCamera.handles())) await loadVideoSettings();
             refreshVideoFeed();
         }
     } catch (error) {

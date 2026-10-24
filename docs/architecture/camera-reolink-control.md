@@ -118,6 +118,24 @@ is why the fallback asks for the sub picture. The abilities list is long: the cl
 `permit` values and decides capabilities from what the real reads deliver (snapshot, zoom with range,
 focus position), not from ability names alone.
 
+### Snapshot mode on a phone and the cost on .104 (Step A, same day)
+
+* iPhone SE, Safari 15.8.8 (no MediaSource): the Camera tab shows the picture refreshing about once a second with the
+  "Snapshot mode" label, no drops over several minutes (Flint's observation).
+* Server side: one new camera connection per picture. Before the cache fix the camera was asked only every 2.1 s
+  (median gap) because the age of the cached picture counted from the END of its fetch (0.5 to 1 s), so the next
+  poll one second later hit the cache and re-sent the same picture. With the age counted from the START of the
+  fetch the median gap is 1.11 s (min 0.99 s). Commit `54268c5`.
+* ffmpeg: 0 processes in snapshot mode (the RTSP upstream is not started).
+* Python CPU for one picture (TLS handshake, request, 18 KB answer): about 16 ms measured on .104 (20 pictures,
+  a new connection each time), so about 1% of one core at one picture per second.
+* gunicorn CPU, 30 s windows on .104 (Pi Zero 2W class, 4 cores): 51.7% of one core with the phone in snapshot
+  mode, 69.4% and 57.4% with no camera viewer at all (phone on Messages, a PC browser tab open). The process
+  carries that load without the camera (many worker threads at 5 to 10% each), so the snapshot mode is not
+  measurable against it; the high baseline is a separate observation about this node (10 minutes after a
+  restart, two browsers open), not caused by this feature. Host: 7.5 to 21.5% of all 4 cores, 50 to 54 C, no
+  throttling, no `[LISTENER EXITS]` in the journal.
+
 ## 10. Still to confirm
 
 * The error code and text a **view-only** account gets for `StartZoomFocus` (expected `-26` "ability error",

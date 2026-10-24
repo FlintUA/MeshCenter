@@ -191,7 +191,27 @@ for (const [fallback, expected] of [['disabled_low_power', 'message'], ['availab
     await ctx.win.MCIpCamera.start();
     assert.ok(!urls.some((u) => u.includes('/stream/fmp4')), 'no fMP4 stream is opened without MSE');
     if (expected === 'message') assert.ok(shown.includes('ipcamera.error_not_supported'), 'explained at once');
+    if (expected === 'message') {
+        await new Promise((resolve) => setTimeout(resolve, 2400)); // one status poll (2 s) must not rewrite the message
+        assert.equal(shown[shown.length - 1], 'ipcamera.error_not_supported', 'the status poll leaves the message alone');
+    }
     else assert.ok(urls.includes('IMG /video_feed'), 'MJPEG fallback where the host allows it');
+    ctx.win.MCIpCamera.stop();
+}
+
+// something throwing inside the player ends in the message, not in "waiting for stream" forever
+{
+    const shown = [];
+    const ctx = makeWindow({ setCameraFeedLoading: (loading, text) => shown.push(text), MediaSource: { isTypeSupported: () => { throw new Error('boom'); } } });
+    ctx.win.fetch = async (url) => {
+        if (url.includes('/stream/fmp4')) throw new Error('boom');
+        return { ok: true, status: 200, json: async () => ({ source_type: 'rtsp', state: 'live', profile: 'sub', codec: 'h264', mjpeg_fallback: 'disabled_low_power' }) };
+    };
+    ctx.win.MediaSource = function MediaSource() { throw new Error('boom'); };
+    vm.runInContext(read('camera-ip.js'), ctx.win);
+    ctx.win.MCIpCamera.stop();
+    ctx.win.MCIpCamera.refresh = ctx.win.MCIpCamera.refresh;
+    await ctx.win.MCIpCamera.start();
     ctx.win.MCIpCamera.stop();
 }
 

@@ -154,9 +154,12 @@
     }
 
     let overlayActive = false;
+    let lastError = '';
+    let stickyMessage = false;
 
-    function showMessage(text, spinner) {
+    function showMessage(text, spinner, sticky) {
         overlayActive = true;
+        stickyMessage = Boolean(sticky);
         if (typeof setCameraFeedLoading === 'function') setCameraFeedLoading(true, text);
         setSpinner(spinner);
     }
@@ -176,7 +179,7 @@
         pollTimer = setInterval(async () => {
             await refresh();
             renderStatus();
-            if (overlayActive && status && !isTerminal(status)) {
+            if (overlayActive && !stickyMessage && status && !isTerminal(status)) {
                 if (typeof setCameraFeedLoading === 'function') setCameraFeedLoading(true, progressText(status));
             }
         }, POLL_MS);
@@ -214,6 +217,7 @@
         generation += 1;
         mode = 'none';
         overlayActive = false;
+        stickyMessage = false;
         stopPolling();
         teardownVideo();
         setSpinner(true);
@@ -247,7 +251,7 @@
     function startUnsupported(gen) {
         abortStream();
         if (status && status.mjpeg_fallback === 'disabled_low_power') {
-            showMessage(t('ipcamera.error_not_supported'), false);
+            showMessage(t('ipcamera.error_not_supported'), false, true);
             return false;
         }
         startMjpegFallback(gen);
@@ -319,7 +323,7 @@
         if (!opened) {
             abortStream();
             teardownVideo();
-            showMessage(t('ipcamera.error_not_supported'), false);
+            showMessage(t('ipcamera.error_not_supported'), false, true);
             return false;
         }
 
@@ -367,7 +371,7 @@
             if (gen !== generation || playing) return;
             abortStream();
             teardownVideo();
-            showMessage(t('ipcamera.error_not_supported'), false);
+            showMessage(t('ipcamera.error_not_supported'), false, true);
         }, FIRST_FRAME_TIMEOUT_MS);
         video.addEventListener('playing', () => {
             if (gen !== generation) return;
@@ -469,8 +473,16 @@
         if (isTerminal(status)) return showTerminal();
         // No MediaSource and no ManagedMediaSource (iPhone before iOS 17.1): say so at once, before a
         // stream is opened (it would only occupy a viewer slot on the server for nothing).
-        if (!mseConstructor()) return startUnsupported(gen);
-        return startMse(gen, 0);
+        try {
+            if (!mseConstructor()) return startUnsupported(gen);
+            return await startMse(gen, 0);
+        } catch (error) {
+            // an old engine that throws somewhere in the player: say so instead of "waiting for stream" forever
+            lastError = String(error && error.message || error);
+            abortStream();
+            showMessage(t('ipcamera.error_not_supported'), false, true);
+            return false;
+        }
     }
 
     // ---------- user actions ----------
@@ -513,6 +525,7 @@
     window.MCIpCamera = {
         handles, start, stop, refresh, reconnect, changeProfile,
         // exported for tests
+        lastError: () => lastError,
         _helpers: { reopenStream, startUnsupported, progressText, mseSupports, liveEdgeTarget, stateMessageKey, isTerminal, infoLine, mseConstructor, TARGET_LEAD_S },
     };
 })();

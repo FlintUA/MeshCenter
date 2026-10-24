@@ -172,4 +172,14 @@ const rtspStatus = { source_type: 'rtsp', state: 'live', profile: 'sub', codec: 
     assert.match(text, /RESULT: PASS/);
 }
 
+// page errors are listed (base file name only), and an address inside one is removed
+{
+    const ctx = makeWindow({ fetchStatus: rtspStatus });
+    const D = load(ctx.win);
+    D._recordError('onerror', 'x is not a function http://192.168.2.104:5000/static/a.js', 'http://192.168.2.104:5000/static/camera-ip.js?v=1', 12, 3);
+    const text = await D.run(ctx.win);
+    assert.match(text, /error onerror: x is not a function .* @camera-ip\.js:12:3/);
+    assert.ok(!text.includes('192.168') && !text.includes('http'), 'no address in the error lines');
+}
+
 console.log('test_camera_diag.mjs: ok');

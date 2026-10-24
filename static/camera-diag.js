@@ -220,6 +220,24 @@
         }
     }
 
+    // Errors the page threw (window.onerror / unhandled rejections) once ?camdiag=1 is on, plus the player's own
+    // caught error. File names are cut to the base name, line and column; the sanitizer removes anything address-like.
+    const pageErrors = [];
+    function recordError(kind, message, file, line, col) {
+        const base = String(file || '').split('?')[0].split('/').pop();
+        pageErrors.push(kind + ': ' + String(message) + (base ? ' @' + base + ':' + (line || 0) + ':' + (col || 0) : ''));
+        if (pageErrors.length > 20) pageErrors.shift();
+    }
+    function errorLines(win) {
+        const lines = pageErrors.map((e) => 'error ' + e);
+        try {
+            const player = win.MCIpCamera && win.MCIpCamera.lastError && win.MCIpCamera.lastError();
+            if (player) lines.push('player caught: ' + player);
+        } catch (error) { /* ignore */ }
+        if (!lines.length) lines.push('errors: none recorded since the page opened');
+        return lines;
+    }
+
     async function run(win, options) {
         win = win || window;
         timeoutScale = (options && options.timeoutScale) || 1;
@@ -238,6 +256,7 @@
         }
         const codec = status && status.mse_codec;
         capabilityLines(win, codec).forEach((line) => lines.push(line));
+        errorLines(win).forEach((line) => lines.push(line));
 
         if (!status || status.source_type !== 'rtsp') {
             lines.push('no network camera is active: the playback attempts are skipped');
@@ -317,6 +336,11 @@
         let enabled = false;
         try { enabled = new URLSearchParams(window.location.search).get('camdiag') === '1'; } catch (error) { enabled = false; }
         if (!enabled) return;
+        window.addEventListener('error', (e) => recordError('onerror', e && e.message, e && e.filename, e && e.lineno, e && e.colno));
+        window.addEventListener('unhandledrejection', (e) => {
+            const r = e && e.reason;
+            recordError('unhandledrejection', (r && r.message) || r);
+        });
         const start = () => {
             if (window.I18N && typeof window.I18N.t === 'function') mountPanel();
             else setTimeout(start, 200);
@@ -325,6 +349,6 @@
         else start();
     }
 
-    window.MCCameraDiag = { run, sanitize, capabilityLines, boxTypes, EXTRA_CODECS };
+    window.MCCameraDiag = { run, sanitize, capabilityLines, boxTypes, EXTRA_CODECS, _recordError: recordError };
     init();
 })();

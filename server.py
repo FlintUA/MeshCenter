@@ -104,6 +104,7 @@ from api.api_camera_manager import register_camera_manager_routes
 from api.api_camera_sources import register_camera_source_routes
 from api.api_camera_control import register_camera_control_routes
 from camera.reolink_control import ReolinkControlManager, SnapshotLeases
+from camera.ip_snapshot import IpSnapshotService
 from api.api_chat import register_chat_routes
 from api.api_settings import register_settings_routes, normalize_settings, SUPPORTED_LANGUAGES
 from api.api_meshtastic import register_meshtastic_routes
@@ -1085,7 +1086,8 @@ def handle_errors(f):
 # __main__ block to decide whether to build camera_manager_state["manager"]
 # at startup at all (see that block's own comment).
 camera_power_enabled_at_startup = register_camera_routes(
-    app, camera, camera_manager_state, device_manager, handle_errors
+    app, camera, camera_manager_state, device_manager, handle_errors,
+    ip_snapshot=IpSnapshotService(camera_source_store, reolink_control, camera).take,
 )
 # Shares camera_manager_state with register_camera_routes() above (see
 # that variable's own comment) - both /video_feed and the Devices tab's

@@ -38,7 +38,8 @@ TRANSPORTS = ("tcp", "udp")
 UNSET = object()  # "leave the password as it is"
 CONTROL_TYPES = ("none", "reolink")
 CONTROL_SCHEMES = ("https", "http")
-CONTROL_INPUT_FIELDS = ("type", "scheme", "port", "channel", "allow_http")
+CONTROL_INPUT_FIELDS = ("type", "scheme", "port", "channel", "allow_http", "snapshot_quality")
+SNAPSHOT_QUALITIES = ("full", "small")
 
 
 def default_control() -> dict:
@@ -46,7 +47,7 @@ def default_control() -> dict:
     source saved before Phase 2. `pinned_sha256` and `capabilities` are written only by the server
     (set_control_state): the pin after the user confirmed a fingerprint, the capabilities after a probe."""
     return {"type": "none", "scheme": "https", "port": 443, "channel": 0, "allow_http": False,
-            "pinned_sha256": "", "capabilities": {}}
+            "snapshot_quality": "full", "pinned_sha256": "", "capabilities": {}}
 
 _CTRL = re.compile(r"[\x00-\x1f\x7f]")
 
@@ -242,6 +243,8 @@ class CameraSourceStore:
         channel = merged["channel"]
         if isinstance(channel, bool) or not isinstance(channel, int) or not 0 <= channel <= 31:
             raise SourceValidationError("invalid_field", "control channel must be 0-31.", "control_channel")
+        if merged["snapshot_quality"] not in SNAPSHOT_QUALITIES:
+            raise SourceValidationError("invalid_field", "snapshot_quality must be 'full' or 'small'.", "control_snapshot_quality")
         if not isinstance(merged["allow_http"], bool):
             raise SourceValidationError("invalid_field", "allow_http must be true or false.", "control")
         if merged["type"] != "none" and merged["scheme"] == "http" and not merged["allow_http"]:

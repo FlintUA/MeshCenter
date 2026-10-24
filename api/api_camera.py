@@ -8,13 +8,14 @@ import os
 import threading
 
 from camera import mjpeg_fallback
+from camera.ip_snapshot import SnapshotError
 from camera.camera_manager import build_camera_manager, network_drivers_from_state
 from camera.rtsp_driver import StreamNotReady, ViewerLimitReached
 from meshsrv import error_reporting
 from storage.json_store import safe_read_json, safe_write_json
 
 
-def register_camera_routes(app, camera, camera_manager_state, device_manager, handle_errors):
+def register_camera_routes(app, camera, camera_manager_state, device_manager, handle_errors, ip_snapshot=None):
     power_lock = threading.RLock()
 
     def _active_driver():
@@ -337,6 +338,16 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
     @handle_errors
     def api_camera_screenshot():
         """Создать скриншот"""
+        ip_driver = _active_ip_driver()
+        if ip_driver is not None and ip_snapshot is not None:
+            # CAM2 Phase 3a: a network camera's picture (its own snapshot API, or one frame from the running
+            # stream): never the CSI sensor, never a second camera session
+            if not power_state["enabled"]:
+                return jsonify({"ok": False, "error": "Camera is turned off", "error_code": "camera_off"}), 409
+            try:
+                return jsonify(ip_snapshot(ip_driver))
+            except SnapshotError as error:
+                return jsonify(error.to_body()), error.status
         blocked = _network_camera_guard()
         if blocked:
             return blocked

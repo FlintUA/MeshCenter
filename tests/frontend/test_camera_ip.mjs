@@ -22,6 +22,7 @@ function makeWindow(extra = {}) {
         readyState: 'complete',
         addEventListener() {},
         getElementById: (id) => elements[id] || null,
+        querySelector: () => null,
         createElement: () => ({ style: {}, classList: { add() {}, remove() {}, toggle() {} }, appendChild() {}, addEventListener() {} }),
     };
     const win = {

@@ -160,6 +160,9 @@
     function showMessage(text, spinner, sticky) {
         overlayActive = true;
         stickyMessage = Boolean(sticky);
+        // the static second line says "Waiting for the first video frame": wrong next to a final message
+        const sub = document.querySelector('#cameraLoadingPlaceholder .camera-loading-text');
+        if (sub) sub.style.display = sticky ? 'none' : '';
         if (typeof setCameraFeedLoading === 'function') setCameraFeedLoading(true, text);
         setSpinner(spinner);
     }
@@ -218,6 +221,8 @@
         mode = 'none';
         overlayActive = false;
         stickyMessage = false;
+        const subLine = document.querySelector('#cameraLoadingPlaceholder .camera-loading-text');
+        if (subLine) subLine.style.display = '';
         stopPolling();
         teardownVideo();
         setSpinner(true);

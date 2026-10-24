@@ -41,9 +41,14 @@
         storage_write_failed: 'ipcamera.err_storage',
     };
 
-    function errorText(body) {
-        const key = body && ERROR_KEYS[body.error_code];
-        return t(key || 'ipcamera.err_generic');
+    // The code the server sent (or the HTTP status when there is none) so a failure is never just "could not be saved".
+    function errorText(body, status) {
+        const code = body && body.error_code;
+        const key = code && ERROR_KEYS[code];
+        if (key) return t(key);
+        if (code === 'csrf_invalid') return t('errors.csrf_invalid');
+        if (code || status) return t('ipcamera.err_generic_code', { code: code || '-', status: status || '-' });
+        return t('ipcamera.err_generic');
     }
 
     async function request(method, url, payload) {
@@ -52,6 +57,10 @@
         const response = await fetch(url, options);
         let body = null;
         try { body = await response.json(); } catch (error) { body = null; }
+        if (!(response.ok && body && body.ok)) {
+            // path and codes only: never the body (it may echo a field) or the password
+            console.warn('[CAMERA SOURCES] request failed', method, url, 'HTTP', response.status, 'error_code', body && body.error_code);
+        }
         return { ok: response.ok && body && body.ok, status: response.status, body: body || {} };
     }
 
@@ -143,7 +152,7 @@
             showToast(t('ipcamera.deleted'), 'success');
             await afterChange();
         } else {
-            showToast(errorText(result.body), 'error', { duration: 10000 });
+            showToast(errorText(result.body, result.status), 'error', { duration: 10000 });
         }
     }
 
@@ -274,7 +283,7 @@
             return;
         }
         const fieldId = FIELD_IDS[result.body.field];
-        const text = errorText(result.body);
+        const text = errorText(result.body, result.status);
         const target = fieldId && overlay.querySelector('#' + fieldId + 'Error');
         if (target) {
             target.textContent = text;
@@ -284,5 +293,5 @@
         }
     }
 
-    window.MCCameraSources = { mount, render, openForm, errorText, _errorKeys: ERROR_KEYS };
+    window.MCCameraSources = { mount, render, openForm, errorText, _errorKeys: ERROR_KEYS, _request: request };
 })();

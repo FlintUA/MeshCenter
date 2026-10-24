@@ -1798,5 +1798,13 @@
     "err_rate_limited": "Too many changes. Try again in a minute.",
     "err_storage": "Could not save. The storage write failed.",
     "err_generic": "The camera could not be saved."
+  },
+  "camdiag": {
+    "title": "Camera diagnostics",
+    "hint": "Technical details for support. The text contains no addresses, URLs or passwords.",
+    "run": "Run diagnostics",
+    "copy": "Copy text",
+    "copied": "Copied",
+    "running": "Running, this takes up to a minute..."
   }
 }

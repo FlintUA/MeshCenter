@@ -1798,5 +1798,13 @@
     "err_rate_limited": "Zu viele Änderungen. Versuche es in einer Minute erneut.",
     "err_storage": "Speichern fehlgeschlagen. Der Schreibzugriff ist fehlgeschlagen.",
     "err_generic": "Die Kamera konnte nicht gespeichert werden."
+  },
+  "camdiag": {
+    "title": "Kamera-Diagnose",
+    "hint": "Technische Details für den Support. Der Text enthält keine Adressen, URLs oder Passwörter.",
+    "run": "Diagnose starten",
+    "copy": "Text kopieren",
+    "copied": "Kopiert",
+    "running": "Läuft, das dauert bis zu einer Minute..."
   }
 }

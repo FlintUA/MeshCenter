@@ -221,6 +221,24 @@ def test_the_cache_expires_after_a_second(env):
     assert env["fake"].snaps == 2
 
 
+def test_a_slow_fetch_does_not_make_the_next_poll_reuse_the_old_picture(env):
+    """The picture's age counts from the START of its fetch (a fetch takes 0.5-1 s on a weak link)."""
+    now = [1000.0]
+    env["control"]._clock = lambda: now[0]
+    real = env["control"]._client(env["control"]._source(env["id"]))
+
+    class Slow:
+        def snapshot(self, sub=True):
+            now[0] += 0.6  # the fetch takes 0.6 s
+            return real.snapshot(sub)
+
+    env["control"]._client = lambda source: Slow()
+    _snap(env)
+    now[0] += 0.4  # the player asks again 1.0 s after it started the first request
+    _snap(env)
+    assert env["fake"].snaps == 2  # a new picture, not the cached one
+
+
 def test_no_background_polling_without_a_viewer(env):
     time.sleep(0.3)
     assert env["fake"].snaps == 0 and env["fake"].logins == 0

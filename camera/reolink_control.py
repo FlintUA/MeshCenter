@@ -207,10 +207,14 @@ class ReolinkControlManager:
                 return entry["data"]
             if entry["error"] is not None and now - entry["error_at"] < FAILURE_MEMORY_S:
                 raise entry["error"]
+            started = now
             try:
                 data = client.snapshot()
             except rc.ReolinkError as error:
                 entry["error"], entry["error_at"] = error, self._clock()
                 raise
-            entry["data"], entry["at"], entry["error"] = data, self._clock(), None
+            # The picture's age counts from when its fetch STARTED: a fetch takes 0.5 to 1 s on a weak link, and
+            # counting from its end made the next poll (about a second after the previous one) hit the cache and
+            # show the SAME picture again (measured on .104: a new camera fetch only every 2.1 s).
+            entry["data"], entry["at"], entry["error"] = data, started, None
             return data

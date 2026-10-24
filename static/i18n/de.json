@@ -1782,6 +1782,7 @@
     "no_ffmpeg_native": "ffmpeg ist auf diesem Gerät nicht installiert. Installiere es (sudo apt install ffmpeg), um Netzwerkkameras anzuzeigen.",
     "error_viewer_limit": "Zu viele Personen sehen diese Kamera gerade an.",
     "error_no_mse_low_power": "Dieser Browser kann den Kamera-Stream nicht direkt abspielen, und der Fallback ist auf diesem leistungsschwachen Gerät abgeschaltet.",
+    "error_not_supported": "Dieser Browser kann den Kamera-Stream noch nicht abspielen (nötig sind iOS 17.1 oder neuer oder ein aktueller Chrome, Firefox oder Edge).",
     "error_mjpeg_failed": "Das Kamerabild konnte nicht geladen werden.",
     "err_not_lan_address": "Es sind nur Adressen im lokalen Netzwerk erlaubt.",
     "err_loopback": "Diese Adresse zeigt auf dieses Gerät selbst und ist nicht erlaubt.",
@@ -1798,5 +1799,13 @@
     "err_rate_limited": "Zu viele Änderungen. Versuche es in einer Minute erneut.",
     "err_storage": "Speichern fehlgeschlagen. Der Schreibzugriff ist fehlgeschlagen.",
     "err_generic": "Die Kamera konnte nicht gespeichert werden."
+  },
+  "camdiag": {
+    "title": "Kamera-Diagnose",
+    "hint": "Technische Details für den Support. Der Text enthält keine Adressen, URLs oder Passwörter.",
+    "run": "Diagnose starten",
+    "copy": "Text kopieren",
+    "copied": "Kopiert",
+    "running": "Läuft, das dauert bis zu einer Minute..."
   }
 }

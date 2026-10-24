@@ -5033,6 +5033,41 @@ video.camera-stream {
     margin-top: 12px;
 }
 
+/* ?camdiag=1 panel (CAM2-M) */
+.mc-camdiag {
+    margin: 8px 0 12px;
+    padding: 12px;
+    border: 1px solid var(--mc-border, #cbd5e1);
+    border-radius: 8px;
+}
+
+.mc-camdiag h3 {
+    margin: 0 0 4px;
+}
+
+.mc-camdiag-hint {
+    margin: 0 0 8px;
+    color: var(--mc-text-secondary, #6b7280);
+    font-size: 0.85em;
+}
+
+.mc-camdiag-actions {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.mc-camdiag textarea {
+    width: 100%;
+    box-sizing: border-box;
+    font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace;
+    background: var(--mc-surface, #fff);
+    color: var(--mc-text-primary, #111827);
+    border: 1px solid var(--mc-border, #cbd5e1);
+    border-radius: 6px;
+    padding: 8px;
+}
+
 @media (max-width: 480px) {
     .mc-ipcam-two {
         grid-template-columns: 1fr;

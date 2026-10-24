@@ -1782,6 +1782,7 @@
     "no_ffmpeg_native": "ffmpeg is not installed on this device. Install it (sudo apt install ffmpeg) to show network cameras.",
     "error_viewer_limit": "Too many people are watching this camera right now.",
     "error_no_mse_low_power": "This browser cannot play the camera stream directly, and the fallback is turned off on this low-power device.",
+    "error_not_supported": "This browser cannot play the camera stream yet (it needs iOS 17.1 or newer, or a current Chrome, Firefox or Edge).",
     "error_mjpeg_failed": "The camera picture could not be loaded.",
     "err_not_lan_address": "Only addresses on your local network are allowed.",
     "err_loopback": "This address points at this device itself and is not allowed.",
@@ -1798,5 +1799,13 @@
     "err_rate_limited": "Too many changes. Try again in a minute.",
     "err_storage": "Could not save. The storage write failed.",
     "err_generic": "The camera could not be saved."
+  },
+  "camdiag": {
+    "title": "Camera diagnostics",
+    "hint": "Technical details for support. The text contains no addresses, URLs or passwords.",
+    "run": "Run diagnostics",
+    "copy": "Copy text",
+    "copied": "Copied",
+    "running": "Running, this takes up to a minute..."
   }
 }

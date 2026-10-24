@@ -5208,6 +5208,58 @@ video.camera-stream {
     flex-wrap: wrap;
 }
 
+/* A wide card (side panels hidden): Mode becomes two columns - the facts compact on the left, Take picture with its
+   quality and hint on the right - instead of a tall single column with an empty right half. Sized by the card
+   (container query), not the window, since the card is 424 px wide with both side panels open. */
+.ip-camera-controls {
+    container-type: inline-size;
+}
+
+@container (min-width: 640px) {
+    #ipPanelMode {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(220px, 300px);
+        column-gap: 24px;
+        align-items: start;
+    }
+
+    #ipPanelMode .ip-info-grid {
+        grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+        gap: 0 20px;
+        margin-bottom: 0;
+    }
+
+    #ipPanelMode .ip-info-grid > .ip-info-row:first-child {
+        grid-column: 1 / -1;
+    }
+
+    #ipPanelMode .ip-info-row {
+        grid-template-columns: max-content minmax(0, 1fr);
+        min-height: 28px;
+        column-gap: 12px;
+    }
+
+    #ipPanelMode .ip-info-label {
+        white-space: nowrap;
+    }
+
+    #ipPanelMode .ip-section {
+        padding: 0 0 0 20px;
+        border-top: 0;
+        border-left: 1px solid var(--mc-border-soft, #e5e8ec);
+    }
+
+    #ipPanelMode .ip-snapshot-row {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    #ipPanelMode .ip-image-note {
+        grid-column: 1 / -1;
+        margin-top: 6px;
+    }
+}
+
 /* the picture box follows the picture's own aspect ratio (--camera-aspect / --camera-ratio, set when the first
    frame is known): no black bars above and below. Its height is capped so a wide card cannot push the controls
    off the screen; the width shrinks with the cap to keep the ratio. */

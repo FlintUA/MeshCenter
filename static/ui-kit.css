@@ -5079,6 +5079,11 @@ video.camera-stream {
     }
 }
 
+.camera-power-btn-icon {
+    display: block;
+    flex: 0 0 auto;
+}
+
 /* ============================================================
    MOB1: one screen at a time on a narrow viewport (<= 768 px)
    Everything here is inside the media query, so a wide viewport is untouched.
@@ -5225,5 +5230,57 @@ video.camera-stream {
     .status-dock .dock-center {
         flex: 0 0 auto;
         min-width: 0;
+    }
+
+    /* the live picture box follows the picture's aspect ratio (set from the video/image size), no black bars */
+    .video-frame-wrap {
+        flex: 0 0 auto !important;
+        width: auto !important;
+        height: auto !important;
+        margin: 8px 12px !important;
+        padding: 0 !important;
+        aspect-ratio: var(--camera-aspect, 16 / 9);
+    }
+
+    /* Files: header stacks (title block, then the actions wrapping), the transfer list and the details go one under the other */
+    .files-header.mc-workspace-header {
+        flex-direction: column;
+        flex-wrap: nowrap;
+        align-items: stretch;
+        height: auto;
+        min-height: 0;
+        flex: 0 0 auto;
+    }
+
+    /* Transfers and Details one under the other (the desktop grid wants a 320 px second column) */
+    .files-layout {
+        grid-template-columns: minmax(0, 1fr);
+        grid-auto-rows: minmax(240px, auto);
+        overflow-y: auto;
+    }
+
+    .files-filter-row {
+        flex-wrap: wrap;
+    }
+
+    .files-filter-row .files-search {
+        flex: 1 1 140px;
+        min-width: 0;
+    }
+
+    .files-detail {
+        border-left: 0;
+        border-top: 1px solid var(--mc-border, #d8e1ec);
+    }
+
+    .files-header .workspace-page-actions {
+        flex-wrap: wrap;
+        width: 100%;
+        gap: 8px;
+    }
+
+    .files-header .workspace-page-actions .mc-refresh-btn {
+        flex: 1 1 auto;
+        min-height: 44px;
     }
 }

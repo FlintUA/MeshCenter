@@ -28,13 +28,36 @@
         return current === target ? 'workspace' : target;
     }
 
+    function label(key, fallback) {
+        var i18n = window.I18N;
+        return i18n && typeof i18n.tOrFallback === 'function' ? i18n.tOrFallback(key, {}, fallback) : fallback;
+    }
+
+    // On a phone the button opens a page (or goes back); on desktop it hides/shows a column.
+    function buttonLabel(id, active) {
+        var which = BUTTON_PANES[id];
+        if (isMobile()) {
+            return active
+                ? label('workspace.mobile_back', 'Back to the workspace')
+                : label('workspace.mobile_open_' + which, which === 'base' ? 'Open Base page' : 'Open Nodes page');
+        }
+        var button = document.getElementById(id);
+        var hidden = Boolean(button && button.classList.contains('panel-is-hidden'));
+        var name = which === 'base' ? 'Base' : 'Nodes';
+        return label('workspace.panel_' + (hidden ? 'show' : 'hide') + '_' + which, (hidden ? 'Show ' : 'Hide ') + name + ' panel');
+    }
+
     function syncButtons() {
         Object.keys(BUTTON_PANES).forEach(function (id) {
             var button = document.getElementById(id);
             if (!button) return;
             var active = isMobile() && pane === BUTTON_PANES[id];
             button.classList.toggle('mobile-pane-active', active);
-            if (isMobile()) button.setAttribute('aria-pressed', String(active));
+            var text = buttonLabel(id, active);
+            // only when different: syncButtons also runs from the observer below
+            if (button.title !== text) button.title = text;
+            if (button.getAttribute('aria-label') !== text) button.setAttribute('aria-label', text);
+            if (isMobile() && button.getAttribute('aria-pressed') !== String(active)) button.setAttribute('aria-pressed', String(active));
         });
     }
 
@@ -79,6 +102,20 @@
         }
     }, true);
 
+    // Choosing a channel or a node (both end in openChat) on the Base/Nodes page returns to the workspace,
+    // where the conversation is. Wrapped once, here, so chat.js stays untouched.
+    function wrapOpenChat() {
+        if (typeof window.openChat !== 'function' || window.openChat.mobileWrapped) return;
+        var original = window.openChat;
+        var wrapped = function () {
+            var result = original.apply(this, arguments);
+            if (isMobile() && pane !== 'workspace') setPane('workspace');
+            return result;
+        };
+        wrapped.mobileWrapped = true;
+        window.openChat = wrapped;
+    }
+
     if (mq) {
         var onChange = function () { apply(); };
         if (typeof mq.addEventListener === 'function') mq.addEventListener('change', onChange);
@@ -93,11 +130,21 @@
             new MutationObserver(function () { if (isMobile()) revealActiveTab(); })
                 .observe(tabs, { attributes: true, attributeFilter: ['class'], subtree: true });
         }
+        // Workspace.apply() / applyPanelState() write the desktop title and aria-pressed onto the buttons,
+        // at start and whenever the language changes: put the phone ones back
+        if (typeof MutationObserver === 'function') {
+            var watcher = new MutationObserver(function () { if (isMobile()) syncButtons(); });
+            Object.keys(BUTTON_PANES).forEach(function (id) {
+                var button = document.getElementById(id);
+                if (button) watcher.observe(button, { attributes: true, attributeFilter: ['title', 'aria-label', 'aria-pressed'] });
+            });
+        }
         // Workspace.apply() (desktop button state) runs after load: set ours again once it has
         window.addEventListener('load', function () { apply(); revealActiveTab(); });
+        wrapOpenChat();
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
     else init();
 
-    window.MCMobileLayout = { nextPane: nextPane, isMobile: isMobile, setPane: setPane, getPane: function () { return pane; }, QUERY: QUERY };
+    window.MCMobileLayout = { nextPane: nextPane, isMobile: isMobile, setPane: setPane, getPane: function () { return pane; }, QUERY: QUERY, _wrapOpenChat: wrapOpenChat };
 })();

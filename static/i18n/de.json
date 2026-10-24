@@ -1722,7 +1722,14 @@
     "theme_mode_light": "Hell",
     "theme_mode_dark": "Dunkel",
     "theme_mode_fixed_light": "Immer hell",
-    "theme_mode_fixed_dark": "Immer dunkel"
+    "theme_mode_fixed_dark": "Immer dunkel",
+    "panel_hide_base": "Base-Bereich ausblenden",
+    "panel_show_base": "Base-Bereich einblenden",
+    "panel_hide_nodes": "Nodes-Bereich ausblenden",
+    "panel_show_nodes": "Nodes-Bereich einblenden",
+    "mobile_open_base": "Base-Seite öffnen",
+    "mobile_open_nodes": "Nodes-Seite öffnen",
+    "mobile_back": "Zurück zum Arbeitsbereich"
   },
   "ipcamera": {
     "title": "Netzwerkkameras",
@@ -1799,7 +1806,9 @@
     "err_rate_limited": "Zu viele Änderungen. Versuche es in einer Minute erneut.",
     "err_storage": "Speichern fehlgeschlagen. Der Schreibzugriff ist fehlgeschlagen.",
     "err_generic": "Die Kamera konnte nicht gespeichert werden.",
-    "err_generic_code": "Die Kamera konnte nicht gespeichert werden (Code: {code}, HTTP {status})."
+    "err_generic_code": "Die Kamera konnte nicht gespeichert werden (Code: {code}, HTTP {status}).",
+    "profile_sub_short": "Sub (empfohlen)",
+    "profile_main_short": "Haupt"
   },
   "camdiag": {
     "title": "Kamera-Diagnose",

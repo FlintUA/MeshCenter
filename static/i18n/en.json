@@ -1722,7 +1722,14 @@
     "theme_mode_light": "Light",
     "theme_mode_dark": "Dark",
     "theme_mode_fixed_light": "Fixed Light",
-    "theme_mode_fixed_dark": "Fixed Dark"
+    "theme_mode_fixed_dark": "Fixed Dark",
+    "panel_hide_base": "Hide Base panel",
+    "panel_show_base": "Show Base panel",
+    "panel_hide_nodes": "Hide Nodes panel",
+    "panel_show_nodes": "Show Nodes panel",
+    "mobile_open_base": "Open Base page",
+    "mobile_open_nodes": "Open Nodes page",
+    "mobile_back": "Back to the workspace"
   },
   "ipcamera": {
     "title": "Network cameras",
@@ -1799,7 +1806,9 @@
     "err_rate_limited": "Too many changes. Try again in a minute.",
     "err_storage": "Could not save. The storage write failed.",
     "err_generic": "The camera could not be saved.",
-    "err_generic_code": "The camera could not be saved (code: {code}, HTTP {status})."
+    "err_generic_code": "The camera could not be saved (code: {code}, HTTP {status}).",
+    "profile_sub_short": "Sub (recommended)",
+    "profile_main_short": "Main"
   },
   "camdiag": {
     "title": "Camera diagnostics",

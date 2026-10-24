@@ -7,14 +7,14 @@
     <meta name="csrf-token" content="{{ csrf_token }}">
     <meta name="runtime-capabilities" content="{{ runtime_capabilities }}">
     <!-- csrf.js must stay the FIRST script, in <head>, without defer/async: it wraps window.fetch, so no API request can run before the wrapper exists (tests/test_csrf_script_order.py) -->
-    <script src="{{ url_for('static', filename='csrf.js') }}?v=20261026-mob1b"></script>
+    <script src="{{ url_for('static', filename='csrf.js') }}?v=20261026-mob1d"></script>
     <title>MeshCenter</title>
     <!-- MeshCenter build: stage2c7-4-unified-popovers-20260725 -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part1.css') }}?v=20261026-mob1b">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part2.css') }}?v=20261026-mob1b">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part3.css') }}?v=20261026-mob1b">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part4.css') }}?v=20261026-mob1b">
-    <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=20261026-mob1b">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part1.css') }}?v=20261026-mob1d">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part2.css') }}?v=20261026-mob1d">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part3.css') }}?v=20261026-mob1d">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part4.css') }}?v=20261026-mob1d">
+    <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=20261026-mob1d">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 </head>
@@ -377,7 +377,7 @@
                                     onclick="toggleCameraPower()"
                                     title="Turn camera off"
                                     data-i18n-title="camera.turn_camera_off">
-                                <span class="camera-power-btn-icon">⏻</span>
+                                <svg class="camera-power-btn-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M12 3v8.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M7.2 6.9a7.5 7.5 0 1 0 9.6 0" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
                                 <span id="cameraPowerBtnText" data-i18n="camera.turn_off">Turn Off</span>
                             </button>
                         </div>
@@ -1980,6 +1980,8 @@
                         type="button"
                         title="Hide Base panel"
                         aria-label="Hide Base panel"
+                        data-i18n-title="workspace.panel_hide_base"
+                        data-i18n-aria-label="workspace.panel_hide_base"
                         aria-pressed="false">
                     <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
                         <rect x="3.5" y="4" width="17" height="16" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/>
@@ -1993,6 +1995,8 @@
                         type="button"
                         title="Hide Nodes panel"
                         aria-label="Hide Nodes panel"
+                        data-i18n-title="workspace.panel_hide_nodes"
+                        data-i18n-aria-label="workspace.panel_hide_nodes"
                         aria-pressed="false">
                     <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
                         <rect x="3.5" y="4" width="17" height="16" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/>
@@ -2433,8 +2437,8 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="/static/chart.umd.min.js"></script>
-<script src="/static/i18n.js?v=20261026-mob1b"></script>
-<script src="/static/runtime-caps.js?v=20261026-mob1b"></script>
+<script src="/static/i18n.js?v=20261026-mob1d"></script>
+<script src="/static/runtime-caps.js?v=20261026-mob1d"></script>
 <script>
     // Server already resolved "auto" (stored ui.language, or an
     // Accept-Language guess) to a concrete locale for <html lang> above -
@@ -2444,22 +2448,22 @@
     // weather.js is untouched until those call I18N.t()/plural() directly.
     window.I18N.init("{{ ui_language }}").then(() => window.I18N.applyStaticDom());
 </script>
-<script src="{{ url_for('static', filename='app-dialog.js') }}?v=20261026-mob1b"></script>
+<script src="{{ url_for('static', filename='app-dialog.js') }}?v=20261026-mob1d"></script>
 <script src="{{ url_for('static', filename='chat-emoji.js') }}?v=20260821-domain-split"></script>
 <script src="{{ url_for('static', filename='chat-photo.js') }}?v=20260821-domain-split"></script>
-<script src="{{ url_for('static', filename='chat-telemetry.js') }}?v=20261026-mob1b"></script>
-<script src="{{ url_for('static', filename='chat-camera.js') }}?v=20261026-mob1b"></script>
-<script src="{{ url_for('static', filename='camera-ip.js') }}?v=20261026-mob1b"></script>
-<script src="{{ url_for('static', filename='camera-sources.js') }}?v=20261026-mob1b"></script>
-<script src="{{ url_for('static', filename='camera-diag.js') }}?v=20261026-mob1b"></script>
-<script src="{{ url_for('static', filename='chat-map.js') }}?v=20261026-mob1b"></script>
-<script src="{{ url_for('static', filename='chat-updates-security.js') }}?v=20261026-mob1b"></script>
-<script src="{{ url_for('static', filename='targets.js') }}?v=20261026-mob1b"></script>
-<script src="/static/files.js?v=20261026-mob1b"></script>
-<script src="{{ url_for('static', filename='chat-views.js') }}?v=20261026-mob1b"></script>
-<script src="/static/chat.js?v=20261026-mob1b"></script>
-<script src="/static/mobile-layout.js?v=20261026-mob1b"></script>
-<script src="/static/media.js?v=20261026-mob1b"></script>
+<script src="{{ url_for('static', filename='chat-telemetry.js') }}?v=20261026-mob1d"></script>
+<script src="{{ url_for('static', filename='chat-camera.js') }}?v=20261026-mob1d"></script>
+<script src="{{ url_for('static', filename='camera-ip.js') }}?v=20261026-mob1d"></script>
+<script src="{{ url_for('static', filename='camera-sources.js') }}?v=20261026-mob1d"></script>
+<script src="{{ url_for('static', filename='camera-diag.js') }}?v=20261026-mob1d"></script>
+<script src="{{ url_for('static', filename='chat-map.js') }}?v=20261026-mob1d"></script>
+<script src="{{ url_for('static', filename='chat-updates-security.js') }}?v=20261026-mob1d"></script>
+<script src="{{ url_for('static', filename='targets.js') }}?v=20261026-mob1d"></script>
+<script src="/static/files.js?v=20261026-mob1d"></script>
+<script src="{{ url_for('static', filename='chat-views.js') }}?v=20261026-mob1d"></script>
+<script src="/static/chat.js?v=20261026-mob1d"></script>
+<script src="/static/mobile-layout.js?v=20261026-mob1d"></script>
+<script src="/static/media.js?v=20261026-mob1d"></script>
 <script src="/static/weather.js?v=20260815-weather-provider"></script>
 
 <div class="modal-overlay" id="wifiConnectModal" style="display:none;" onclick="closeWifiConnectModal()">

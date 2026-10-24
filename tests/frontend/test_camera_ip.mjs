@@ -218,4 +218,25 @@ for (const [fallback, expected] of [['disabled_low_power', 'message'], ['availab
     ctx.win.MCIpCamera.stop();
 }
 
+// the stream picker uses the short labels on a phone, the full ones otherwise; the box follows the picture's aspect ratio
+for (const narrow of [true, false]) {
+    const ctx = makeWindow({ matchMedia: () => ({ matches: narrow, addEventListener() {} }) });
+    const options = [{ value: 'sub', textContent: '' }, { value: 'main', textContent: '' }];
+    ctx.elements.ipCameraProfile = { options, style: {}, addEventListener() {} };
+    const props = {};
+    ctx.elements.videoView = { classList: { toggle() {} }, style: { setProperty: (k, v) => { props[k] = v; }, removeProperty: (k) => { delete props[k]; } } };
+    vm.runInContext(read('camera-ip.js'), ctx.win);
+    ctx.win.MCIpCamera._helpers.labelProfiles();
+    assert.equal(options[0].textContent, narrow ? 'ipcamera.profile_sub_short' : 'ipcamera.profile_sub');
+    assert.equal(options[1].textContent, narrow ? 'ipcamera.profile_main_short' : 'ipcamera.profile_main');
+    ctx.win.MCIpCamera._helpers.setAspect(640, 360);
+    assert.equal(props['--camera-aspect'], '640 / 360');
+    ctx.win.MCIpCamera._helpers.setAspect(0, 0);
+    assert.equal(props['--camera-aspect'], undefined, 'no stream: back to the CSS default');
+}
+for (const loc of ['en', 'de', 'ru', 'uk']) {
+    const cat = JSON.parse(readFileSync(path.join(__dirname, '..', '..', 'static', 'i18n', loc + '.json'), 'utf8'));
+    for (const key of ['profile_sub_short', 'profile_main_short']) assert.ok(cat.ipcamera[key], loc + ' ' + key);
+}
+
 console.log('test_camera_ip.mjs: ok');

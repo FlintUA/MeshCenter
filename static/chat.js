@@ -10256,9 +10256,13 @@ function applyPanelState(panel, button, isHidden, panelName) {
     panel.classList.toggle('panel-hidden', isHidden);
     button.classList.toggle('panel-is-hidden', isHidden);
     button.setAttribute('aria-pressed', String(isHidden));
-    const action = isHidden ? 'Show' : 'Hide';
-    button.title = `${action} ${panelName} panel`;
-    button.setAttribute('aria-label', `${action} ${panelName} panel`);
+    const label = window.I18N.tOrFallback(
+        `workspace.panel_${isHidden ? 'show' : 'hide'}_${panelName === 'Base' ? 'base' : 'nodes'}`,
+        {},
+        `${isHidden ? 'Show' : 'Hide'} ${panelName} panel`
+    );
+    button.title = label;
+    button.setAttribute('aria-label', label);
     panel.classList.remove('hidden');
 }
 

@@ -262,12 +262,13 @@
             lines.push('no network camera is active: the playback attempts are skipped');
             return sanitize(lines.join('\n'));
         }
-        if (!codec) {
-            lines.push('the server has no codec yet (state ' + status.state + '): open the Camera tab, wait for "Live", then run again');
-            return sanitize(lines.join('\n'));
-        }
+        // no MSE at all is the answer on its own: say it before asking for a codec
         if (!win.MediaSource && !win.ManagedMediaSource) {
             lines.push('RESULT: this browser has neither MediaSource nor ManagedMediaSource: the player cannot work here (capability check fails)');
+            return sanitize(lines.join('\n'));
+        }
+        if (!codec) {
+            lines.push('the server has no codec yet (state ' + status.state + '): open the Camera tab, wait for "Live", then run again');
             return sanitize(lines.join('\n'));
         }
 
@@ -341,9 +342,17 @@
             const r = e && e.reason;
             recordError('unhandledrejection', (r && r.message) || r);
         });
+        // mounting as soon as I18N.t exists printed [[camdiag.title]] when the catalog arrived later (slow Wi-Fi)
+        let waited = 0;
         const start = () => {
-            if (window.I18N && typeof window.I18N.t === 'function') mountPanel();
-            else setTimeout(start, 200);
+            const hasI18n = window.I18N && typeof window.I18N.t === 'function';
+            const ready = hasI18n && window.I18N.t('camdiag.title').indexOf('[[') !== 0;
+            if (ready || (hasI18n && waited >= 15000)) {
+                mountPanel();
+                return;
+            }
+            waited += 200;
+            setTimeout(start, 200);
         };
         if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
         else start();

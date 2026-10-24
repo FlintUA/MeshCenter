@@ -182,4 +182,10 @@ const rtspStatus = { source_type: 'rtsp', state: 'live', profile: 'sub', codec: 
     assert.ok(!text.includes('192.168') && !text.includes('http'), 'no address in the error lines');
 }
 
+// no MSE at all is reported even while the server has no codec yet (it used to ask for "Live" first)
+{
+    const ctx = makeWindow({ fetchStatus: { ...rtspStatus, mse_codec: null, state: 'stopped' } });
+    assert.match(await load(ctx.win).run(ctx.win), /neither MediaSource nor ManagedMediaSource/);
+}
+
 console.log('test_camera_diag.mjs: ok');

@@ -25,6 +25,7 @@ function makeEnv(initialMobile) {
         b.closest = () => b;
         b.classList = { toggle: (n, on) => (on ? b.classes.add(n) : b.classes.delete(n)), contains: (n) => b.classes.has(n) };
         b.setAttribute = (k, v) => { b.attrs[k] = v; };
+        b.getAttribute = (k) => (k in b.attrs ? b.attrs[k] : null);
         return b;
     };
     const base = mkButton('toggleBaseSidebarBtn');
@@ -47,7 +48,7 @@ function makeEnv(initialMobile) {
         listeners.click(event);
         return event;
     };
-    return { api: ctx.window.MCMobileLayout, attrs, base, nodes, tab, click, mq, mqListeners, scrolled };
+    return { window: ctx.window, api: ctx.window.MCMobileLayout, attrs, base, nodes, tab, click, mq, mqListeners, scrolled };
 }
 
 // the pane rule
@@ -97,6 +98,51 @@ function makeEnv(initialMobile) {
     env.mq.matches = true;
     env.mqListeners.forEach((fn) => fn());
     assert.equal(env.attrs['data-mobile-pane'], 'nodes', 'the pane that was open comes back');
+}
+
+// choosing a channel or node (openChat) on the Base/Nodes page returns to the workspace; on desktop nothing changes
+{
+    const env = makeEnv(true);
+    let opened = 0;
+    env.window.openChat = function () { opened += 1; return 'done'; };
+    env.api._wrapOpenChat();
+    env.click(env.nodes);
+    assert.equal(env.attrs['data-mobile-pane'], 'nodes');
+    assert.equal(env.window.openChat('abc', 'Name', 'dm'), 'done', 'the original result is passed through');
+    assert.equal(opened, 1);
+    assert.equal(env.attrs['data-mobile-pane'], 'workspace');
+    const wide = makeEnv(false);
+    wide.window.openChat = function () { return 1; };
+    wide.api._wrapOpenChat();
+    wide.window.openChat();
+    assert.equal(wide.attrs['data-mobile-pane'], undefined);
+}
+
+// the dock button titles are translated (open / back on a phone, hide / show on desktop)
+{
+    const env = makeEnv(true);
+    env.window.I18N = { tOrFallback: (key) => 'T:' + key };
+    env.click(env.base);
+    assert.equal(env.base.title, 'T:workspace.mobile_back');
+    assert.equal(env.nodes.title, 'T:workspace.mobile_open_nodes');
+    const wide = makeEnv(false);
+    wide.window.I18N = { tOrFallback: (key) => 'T:' + key };
+    wide.api.setPane('workspace');
+    assert.equal(wide.base.title, 'T:workspace.panel_hide_base');
+}
+
+// syncing is idempotent: it writes a button attribute only when the value changed (a MutationObserver
+// calls it, and an unconditional setAttribute would re-trigger the observer forever and hang the page)
+{
+    const env = makeEnv(true);
+    env.window.I18N = { tOrFallback: (key) => 'T:' + key };
+    env.api.setPane('base');
+    let writes = 0;
+    const originalSet = env.base.setAttribute;
+    env.base.setAttribute = (k, v) => { writes += 1; originalSet(k, v); };
+    env.api.setPane('base');
+    env.api.setPane('base');
+    assert.equal(writes, 0, 'no attribute writes when nothing changed');
 }
 
 // the module never touches the persisted desktop workspace state

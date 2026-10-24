@@ -747,7 +747,8 @@
     "bme280_ready": "Ready",
     "bme280_incomplete": "Incomplete",
     "bme280_detected": "Detected",
-    "bme280_readable": "Readable"
+    "bme280_readable": "Readable",
+    "local_cameras_not_in_docker": "Local CSI/USB cameras are not available in Docker."
   },
   "node_manager": {
     "title": "Node Manager",
@@ -1785,7 +1786,7 @@
     "error_address_blocked": "This camera address is not allowed. Only addresses on your local network can be used.",
     "error_ffmpeg_missing": "ffmpeg is not installed on this device, so network cameras cannot be shown.",
     "error_ffmpeg_missing_container": "ffmpeg is not available in this Docker image yet, so network cameras cannot be shown.",
-    "no_ffmpeg_container": "ffmpeg is not available in this Docker image yet. You can save cameras, but they cannot be shown until it is.",
+    "no_ffmpeg_container": "ffmpeg is not available in this Docker image yet, so live video cannot be shown. A camera with Reolink control shows snapshots (about 1 frame/s) instead; other cameras cannot be shown until ffmpeg is there.",
     "no_ffmpeg_native": "ffmpeg is not installed on this device. Install it (sudo apt install ffmpeg) to show network cameras.",
     "error_viewer_limit": "Too many people are watching this camera right now.",
     "error_no_mse_low_power": "This browser cannot play the camera stream directly, and the fallback is turned off on this low-power device.",
@@ -1852,7 +1853,8 @@
     "control_err_not_supported": "Camera control is not turned on for this camera.",
     "control_err_rate_limited": "Too many checks. Try again in a minute.",
     "control_err_generic": "Camera control failed (code {code}).",
-    "control_feature_zoom_range": "zoom (range {min} to {max})"
+    "control_feature_zoom_range": "zoom (range {min} to {max})",
+    "snapshot_mode_label_ffmpeg": "Live video needs ffmpeg, showing snapshots (about 1 frame/s)"
   },
   "camdiag": {
     "title": "Camera diagnostics",

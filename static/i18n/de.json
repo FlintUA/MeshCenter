@@ -747,7 +747,8 @@
     "bme280_ready": "Bereit",
     "bme280_incomplete": "Unvollständig",
     "bme280_detected": "Erkannt",
-    "bme280_readable": "Lesbar"
+    "bme280_readable": "Lesbar",
+    "local_cameras_not_in_docker": "Lokale CSI-/USB-Kameras sind in Docker nicht verfügbar."
   },
   "node_manager": {
     "title": "Knoten-Manager",
@@ -1785,7 +1786,7 @@
     "error_address_blocked": "Diese Kameraadresse ist nicht erlaubt. Nur Adressen im lokalen Netzwerk können verwendet werden.",
     "error_ffmpeg_missing": "ffmpeg ist auf diesem Gerät nicht installiert, daher können Netzwerkkameras nicht angezeigt werden.",
     "error_ffmpeg_missing_container": "ffmpeg ist in diesem Docker-Image noch nicht enthalten, daher können Netzwerkkameras nicht angezeigt werden.",
-    "no_ffmpeg_container": "ffmpeg ist in diesem Docker-Image noch nicht enthalten. Kameras lassen sich speichern, aber erst anzeigen, wenn es verfügbar ist.",
+    "no_ffmpeg_container": "ffmpeg ist in diesem Docker-Image noch nicht verfügbar, daher kann kein Live-Video gezeigt werden. Eine Kamera mit Reolink-Steuerung zeigt stattdessen Schnappschüsse (etwa 1 Bild/s); andere Kameras können erst gezeigt werden, wenn ffmpeg vorhanden ist.",
     "no_ffmpeg_native": "ffmpeg ist auf diesem Gerät nicht installiert. Installiere es (sudo apt install ffmpeg), um Netzwerkkameras anzuzeigen.",
     "error_viewer_limit": "Zu viele Personen sehen diese Kamera gerade an.",
     "error_no_mse_low_power": "Dieser Browser kann den Kamera-Stream nicht direkt abspielen, und der Fallback ist auf diesem leistungsschwachen Gerät abgeschaltet.",
@@ -1852,7 +1853,8 @@
     "control_err_not_supported": "Die Kamera-Steuerung ist für diese Kamera nicht eingeschaltet.",
     "control_err_rate_limited": "Zu viele Prüfungen. In einer Minute erneut versuchen.",
     "control_err_generic": "Die Kamera-Steuerung ist fehlgeschlagen (Code {code}).",
-    "control_feature_zoom_range": "Zoom (Bereich {min} bis {max})"
+    "control_feature_zoom_range": "Zoom (Bereich {min} bis {max})",
+    "snapshot_mode_label_ffmpeg": "Live-Video braucht ffmpeg, es werden Schnappschüsse gezeigt (etwa 1 Bild/s)"
   },
   "camdiag": {
     "title": "Kamera-Diagnose",

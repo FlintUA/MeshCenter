@@ -1,0 +1,6 @@
+#!/bin/sh
+# MeshCenter repository guard (see scripts/check_no_large_files.py): refuse archives and files over 5 MB.
+# Switch on once per clone:  git config core.hooksPath scripts/git-hooks
+root="$(git rev-parse --show-toplevel)"
+if python3 -c '' >/dev/null 2>&1; then py=python3; elif python -c '' >/dev/null 2>&1; then py=python; else py=py; fi  # python3 can be a Windows Store stub
+exec "$py" "$root/scripts/check_no_large_files.py" --staged

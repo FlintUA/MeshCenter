@@ -5035,11 +5035,9 @@ video.camera-stream {
     min-height: 0;
 }
 
+/* the footer is the standard dialog footer (.mc-dialog-actions: equal, full-size buttons, stacked on a phone) */
 .mc-ipcam-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    margin-top: 12px;
+    margin-top: 14px;
 }
 
 /* ?camdiag=1 panel (CAM2-M) */
@@ -5161,6 +5159,12 @@ video.camera-stream {
     min-height: 72px;
     flex-wrap: wrap;
     row-gap: 8px;
+}
+
+.camera-ip-mode .video-header-actions {
+    flex-wrap: wrap;
+    min-width: 0;
+    max-width: 100%;
 }
 
 .ip-camera-tabs {

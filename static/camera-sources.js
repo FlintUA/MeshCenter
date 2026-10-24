@@ -289,18 +289,20 @@
         const overlay = document.createElement('div');
         overlay.id = 'ipCameraFormModal';
         overlay.className = 'modal-overlay mc-ipcam-overlay';
+        // keep password managers away from the camera's own user name and name (they attach to every text field next to a password)
+        const noMgr = 'autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other"';
         const option = (value, selected, key) => `<option value="${value}"${value === selected ? ' selected' : ''}>${esc(t(key))}</option>`;
         overlay.innerHTML = `
             <div class="modal-content mc-ipcam-modal" role="dialog" aria-modal="true" aria-labelledby="ipCameraFormTitle">
                 <h3 id="ipCameraFormTitle">${esc(t(editing ? 'ipcamera.form_title_edit' : 'ipcamera.form_title_add'))}</h3>
                 <form id="ipCameraForm" autocomplete="off" novalidate>
-                    ${field('ipcamName', 'ipcamera.field_name', `<input id="ipcamName" name="name" type="text" maxlength="60" value="${esc(v.name)}" required>`)}
-                    ${field('ipcamHost', 'ipcamera.field_host', `<input id="ipcamHost" name="host" type="text" inputmode="url" maxlength="253" value="${esc(v.host)}" required>`, t('ipcamera.host_help'))}
+                    ${field('ipcamName', 'ipcamera.field_name', `<input id="ipcamName" name="ipcam_label" type="text" maxlength="60" ${noMgr} value="${esc(v.name)}" required>`)}
+                    ${field('ipcamHost', 'ipcamera.field_host', `<input id="ipcamHost" name="ipcam_address" type="text" inputmode="url" maxlength="253" ${noMgr} value="${esc(v.host)}" required>`, t('ipcamera.host_help'))}
                     <div class="mc-ipcam-two">
                         ${field('ipcamPort', 'ipcamera.field_port', `<input id="ipcamPort" name="port" type="number" min="1" max="65535" value="${esc(v.port)}">`)}
-                        ${field('ipcamUser', 'ipcamera.field_username', `<input id="ipcamUser" name="username" type="text" maxlength="64" autocomplete="off" value="${esc(v.username)}">`)}
+                        ${field('ipcamUser', 'ipcamera.field_username', `<input id="ipcamUser" name="ipcam_login" type="text" maxlength="64" ${noMgr} value="${esc(v.username)}">`)}
                     </div>
-                    ${field('ipcamPassword', 'ipcamera.field_password', `<input id="ipcamPassword" name="password" type="password" maxlength="128" autocomplete="new-password" value="" placeholder="${esc(v.password_set ? t('ipcamera.password_is_set') : '')}">`, t(editing && v.password_set ? 'ipcamera.password_keep_hint' : 'ipcamera.password_storage_note'))}
+                    ${field('ipcamPassword', 'ipcamera.field_password', `<input id="ipcamPassword" name="ipcam_secret" type="password" maxlength="128" autocomplete="new-password" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" value="" placeholder="${esc(v.password_set ? t('ipcamera.password_is_set') : '')}">`, t(editing && v.password_set ? 'ipcamera.password_keep_hint' : 'ipcamera.password_storage_note'))}
                     ${editing && v.password_set ? `<label class="mc-ipcam-check"><input id="ipcamClearPassword" type="checkbox"> ${esc(t('ipcamera.clear_password'))}</label>` : ''}
                     <div class="mc-ipcam-two">
                         ${field('ipcamSubPath', 'ipcamera.field_sub_path', `<input id="ipcamSubPath" name="sub_path" type="text" maxlength="256" value="${esc(v.sub_path)}" placeholder="Preview_01_sub">`, t('ipcamera.path_help'))}
@@ -327,9 +329,9 @@
                             </div>
                         </div>
                     </fieldset>
-                    <div class="mc-ipcam-actions">
-                        <button type="button" class="device-action-btn device-action-secondary" data-ipcam-form="cancel">${esc(t('ipcamera.cancel'))}</button>
-                        <button type="submit" class="device-action-btn device-action-primary is-primary" data-ipcam-form="save">${esc(t('ipcamera.save'))}</button>
+                    <div class="mc-dialog-actions mc-ipcam-actions">
+                        <button type="button" class="device-action-btn device-action-secondary" data-dialog-action="cancel" data-ipcam-form="cancel">${esc(t('ipcamera.cancel'))}</button>
+                        <button type="submit" class="device-action-btn device-action-primary is-primary" data-dialog-action="confirm" data-ipcam-form="save">${esc(t('ipcamera.save'))}</button>
                     </div>
                 </form>
             </div>`;

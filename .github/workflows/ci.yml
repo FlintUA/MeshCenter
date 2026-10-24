@@ -127,6 +127,9 @@ jobs:
       - name: No em/en dashes in the project's own texts (DASH1)
         run: python scripts/check_no_long_dashes.py
 
+      - name: Repository guard - no archives, no file over 5 MB
+        run: python scripts/check_no_large_files.py
+
       - name: Run pytest
         run: python -m pytest
 

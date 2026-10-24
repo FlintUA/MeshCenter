@@ -277,6 +277,7 @@
         const helpers = window.MCIpCamera && window.MCIpCamera._helpers;
         let text = '-';
         if (helpers) text = helpers.isTerminal(status) ? t('ipcamera.state_error') : t(helpers.stateMessageKey(status));
+        if (status.ffmpeg_available === false && status.snapshot_fallback) text = t('ipcamera.snapshot_status'); // pictures, no live video
         setText('ipInfoState', text);
         const quality = byId('ipSnapshotQuality');
         if (quality) {

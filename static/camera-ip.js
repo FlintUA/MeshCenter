@@ -319,7 +319,7 @@
 
     // ---------- snapshot mode ----------
 
-    function snapshotLabel(on) {
+    function snapshotLabel(on, reason) {
         let label = el('cameraSnapshotLabel');
         if (!on) {
             if (label && label.remove) label.remove();
@@ -333,7 +333,7 @@
             label.className = 'camera-snapshot-label';
             wrap.appendChild(label);
         }
-        label.textContent = t('ipcamera.snapshot_mode_label');
+        label.textContent = t(reason === 'ffmpeg' ? 'ipcamera.snapshot_mode_label_ffmpeg' : 'ipcamera.snapshot_mode_label');
     }
 
     function stopSnapshots() {
@@ -346,12 +346,12 @@
         snapshotLabel(false);
     }
 
-    function startSnapshotMode(gen) {
+    function startSnapshotMode(gen, reason) {
         const img = el('videoFeed');
         if (!img) return false;
         mode = 'snapshot';
         setMjpegLayout(true);
-        snapshotLabel(true);
+        snapshotLabel(true, reason);
         let failures = 0;
         const next = (delay) => { if (gen === generation) snapshotTimer = setTimeout(tick, delay); };
         const tick = async () => {
@@ -600,6 +600,8 @@
         if (!handles()) return false;
         showMessage(t('ipcamera.state_connecting'), true);
         startPolling();
+        // No ffmpeg (Docker image) but the camera makes pictures itself: show those instead of an error
+        if (status.ffmpeg_available === false && status.snapshot_fallback) return startSnapshotMode(gen, 'ffmpeg');
         if (isTerminal(status)) return showTerminal();
         // No MediaSource and no ManagedMediaSource (iPhone before iOS 17.1): say so at once, before a
         // stream is opened (it would only occupy a viewer slot on the server for nothing).

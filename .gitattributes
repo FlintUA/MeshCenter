@@ -2,3 +2,4 @@
 *.sh text eol=lf
 Dockerfile text eol=lf
 deploy/docker/config.container.py text eol=lf
+scripts/git-hooks/* text eol=lf

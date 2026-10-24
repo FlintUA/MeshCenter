@@ -145,6 +145,8 @@ class RtspCameraDriver(CameraDriver):
             "container": runtime_env.is_container(),
             # camera-side control (Phase 2): what a probe found, no network I/O here
             "source_id": self.id,
+            # without ffmpeg there is no live video; a camera with Reolink control shows snapshots instead (CAM2 UX2)
+            "ffmpeg_available": bool(rtsp_stream.ffmpeg_cmd()),
             "control_type": control["type"],
             "snapshot_quality": control["snapshot_quality"],
             "snapshot_fallback": control["type"] == "reolink" and bool(control["capabilities"].get("snapshot")),

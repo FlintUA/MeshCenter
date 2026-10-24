@@ -23,6 +23,10 @@
     const TARGET_LEAD_S = 3;
     const MAX_BUFFERED_S = 20;
     const RETRY_MS = [1000, 2000, 4000, 8000, 15000];
+    const SOURCEOPEN_TIMEOUT_MS = 6000;
+    const FIRST_FRAME_TIMEOUT_MS = 10000;
+    const MAX_QUEUED_CHUNKS = 120;
+
     const POLL_MS = 2000;
     const TERMINAL = ['auth_failed', 'stream_not_found', 'unsupported_codec', 'address_blocked', 'ffmpeg_missing'];
 
@@ -239,6 +243,30 @@
         img.src = '/video_feed?t=' + Date.now();
     }
 
+    // The browser cannot play the fragmented MP4 stream. MJPEG is the only way left, and only where the host allows it.
+    function startUnsupported(gen) {
+        abortStream();
+        if (status && status.mjpeg_fallback === 'disabled_low_power') {
+            showMessage(t('ipcamera.error_not_supported'), false);
+            return false;
+        }
+        startMjpegFallback(gen);
+        return true;
+    }
+
+    function abortStream() {
+        if (abortController) {
+            try { abortController.abort(); } catch (error) { /* already aborted */ }
+        }
+    }
+
+    function waitFor(target, name, ms) {
+        return new Promise((resolve) => {
+            const timer = setTimeout(() => resolve(false), ms);
+            target.addEventListener(name, () => { clearTimeout(timer); resolve(true); }, { once: true });
+        });
+    }
+
     async function startMse(gen, attempt) {
         const video = el('videoFeedIp');
         if (!video) return false;
@@ -281,11 +309,19 @@
             source.type = 'video/mp4';
             source.src = objectUrl;
             video.appendChild(source);
+            // a <source> child added to an idle element does not start loading on every Safari: load() does
+            try { video.load(); } catch (error) { /* ignore */ }
         } else {
             video.src = objectUrl;
         }
-        await new Promise((resolve) => mediaSource.addEventListener('sourceopen', resolve, { once: true }));
+        const opened = await waitFor(mediaSource, 'sourceopen', SOURCEOPEN_TIMEOUT_MS);
         if (gen !== generation) return false;
+        if (!opened) {
+            abortStream();
+            teardownVideo();
+            showMessage(t('ipcamera.error_not_supported'), false);
+            return false;
+        }
 
         const buffer = mediaSource.addSourceBuffer('video/mp4; codecs="' + codec + '"');
         // "sequence": the browser lays the segments end to end and ignores the stream's own timestamps.
@@ -296,8 +332,9 @@
         const queue = [];
         let appending = false;
         let playing = false;
+        let streamingAllowed = true;
         const pump = () => {
-            if (appending || !queue.length || buffer.updating || gen !== generation) return;
+            if (appending || !queue.length || buffer.updating || gen !== generation || !streamingAllowed) return;
             appending = true;
             try {
                 buffer.appendBuffer(queue.shift());
@@ -322,8 +359,19 @@
             }
             pump();
         });
+        // ManagedMediaSource asks the page to stop and resume feeding it (battery, network policy)
+        mediaSource.addEventListener('startstreaming', () => { streamingAllowed = true; pump(); });
+        mediaSource.addEventListener('endstreaming', () => { streamingAllowed = false; });
+        // nothing playing 10 s after the stream opened: stop waiting and say why instead of spinning
+        const firstFrameTimer = setTimeout(() => {
+            if (gen !== generation || playing) return;
+            abortStream();
+            teardownVideo();
+            showMessage(t('ipcamera.error_not_supported'), false);
+        }, FIRST_FRAME_TIMEOUT_MS);
         video.addEventListener('playing', () => {
             if (gen !== generation) return;
+            clearTimeout(firstFrameTimer);
             playing = true;
             overlayActive = false;
             video.classList.remove('camera-stream-hidden');
@@ -346,6 +394,7 @@
                         const { value, done } = await reader.read();
                         if (done || gen !== generation) break;
                         queue.push(value);
+                        if (queue.length > MAX_QUEUED_CHUNKS) queue.splice(0, queue.length - MAX_QUEUED_CHUNKS);
                         pump();
                     }
                 } catch (error) {
@@ -418,6 +467,9 @@
         showMessage(t('ipcamera.state_connecting'), true);
         startPolling();
         if (isTerminal(status)) return showTerminal();
+        // No MediaSource and no ManagedMediaSource (iPhone before iOS 17.1): say so at once, before a
+        // stream is opened (it would only occupy a viewer slot on the server for nothing).
+        if (!mseConstructor()) return startUnsupported(gen);
         return startMse(gen, 0);
     }
 
@@ -461,6 +513,6 @@
     window.MCIpCamera = {
         handles, start, stop, refresh, reconnect, changeProfile,
         // exported for tests
-        _helpers: { reopenStream, progressText, mseSupports, liveEdgeTarget, stateMessageKey, isTerminal, infoLine, mseConstructor, TARGET_LEAD_S },
+        _helpers: { reopenStream, startUnsupported, progressText, mseSupports, liveEdgeTarget, stateMessageKey, isTerminal, infoLine, mseConstructor, TARGET_LEAD_S },
     };
 })();

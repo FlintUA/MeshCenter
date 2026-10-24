@@ -174,4 +174,25 @@ assert.match(catalog.ipcamera.error_h265, /Switch the stream to H\.264 in the ca
     assert.match(src, /appConfirm\(\{[\s\S]*danger: true/, 'delete goes through the UI1 dialog, danger style');
 }
 
+// iPhone before iOS 17.1 (no MediaSource, no ManagedMediaSource): the message comes at once and no stream is opened
+for (const [fallback, expected] of [['disabled_low_power', 'message'], ['available', 'mjpeg']]) {
+    const shown = [];
+    const urls = [];
+    const ctx = makeWindow({
+        setCameraFeedLoading: (loading, text) => shown.push(text),
+    });
+    ctx.win.fetch = async (url) => {
+        urls.push(url);
+        return { ok: true, status: 200, json: async () => ({ source_type: 'rtsp', state: 'live', profile: 'sub', codec: 'h264', mjpeg_fallback: fallback }) };
+    };
+    const img = { classList: { add() {}, remove() {}, toggle() {} }, set src(v) { urls.push('IMG ' + v.split('?')[0]); } };
+    ctx.elements.videoFeed = img;
+    vm.runInContext(read('camera-ip.js'), ctx.win);
+    await ctx.win.MCIpCamera.start();
+    assert.ok(!urls.some((u) => u.includes('/stream/fmp4')), 'no fMP4 stream is opened without MSE');
+    if (expected === 'message') assert.ok(shown.includes('ipcamera.error_not_supported'), 'explained at once');
+    else assert.ok(urls.includes('IMG /video_feed'), 'MJPEG fallback where the host allows it');
+    ctx.win.MCIpCamera.stop();
+}
+
 console.log('test_camera_ip.mjs: ok');

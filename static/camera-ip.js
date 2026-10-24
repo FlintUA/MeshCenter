@@ -116,6 +116,9 @@
         } catch (error) {
             status = null;
         }
+        // The active camera is no longer a network camera (switched to CSI/USB): end this player. Left running, its
+        // stream / snapshot loop and retries kept hiding and replacing the local camera's picture ("connecting" forever).
+        if (!handles() && (mode !== 'none' || pollTimer || abortController || snapshotTimer || retryTimer)) stop();
         applyModeClass();
         return status;
     }

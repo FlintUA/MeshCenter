@@ -290,6 +290,21 @@ async function snapshotSession({ snapshotStatus = 200, snapshotBody = {}, capabi
     await new Promise((resolve) => setTimeout(resolve, 1200));
     assert.equal(run.snapshots(), 2, 'stop() ends the polling');
 }
+// switching from a network camera to a local one ends the player: no more pictures, no overlay left behind
+{
+    const run = await snapshotSession();
+    assert.equal(run.snapshots(), 1);
+    run.ctx.win.fetch = async (url) => {
+        run.urls.push(url);
+        return { ok: true, status: 200, json: async () => ({ source_type: 'usb' }) };
+    };
+    await run.ctx.win.MCIpCamera.refresh();
+    const before = run.snapshots();
+    await new Promise((resolve) => setTimeout(resolve, 1300));
+    assert.equal(run.snapshots(), before, 'the snapshot loop of the network camera is stopped');
+    assert.ok(!run.urls.slice(-3).some((u) => u.includes('/stream/fmp4')), 'no stream is reopened');
+    assert.equal(run.ctx.win.MCIpCamera.handles(), false);
+}
 {
     const run = await snapshotSession({ capability: false });
     assert.equal(run.snapshots(), 0, 'without the camera capability the message stays and nothing is polled');

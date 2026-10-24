@@ -348,3 +348,25 @@ def test_no_password_or_token_reaches_a_response_or_the_log(env, caplog, capsys)
     for secret in (ADMIN_PW, "wrong-password-for-test", token or "no-token"):
         assert secret not in everything
     assert "token=" not in everything and "cgi-bin" not in everything
+
+
+# ---------------------------------------------------------------- snapshot quality setting (Phase 3b)
+
+def test_the_snapshot_quality_is_a_setting_that_does_not_touch_the_stream(env):
+    upstream_before = env["driver"].upstream
+    response = env["client"].put(f"/api/camera/sources/{env['id']}/control/settings", json={"snapshot_quality": "small"})
+    assert response.status_code == 200 and response.get_json()["control"]["snapshot_quality"] == "small"
+    assert env["store"].get_source(env["id"])["control"]["snapshot_quality"] == "small"
+    assert env["driver"].upstream is upstream_before  # nothing was replaced: the source was not edited, so no re-sync
+    env["driver"]._control_cache = (-1e9, {})
+    status = env["client"].get("/api/camera/status").get_json()
+    assert status["snapshot_quality"] == "small" and status["source_id"] == env["id"]
+
+
+def test_the_quality_setting_rejects_anything_else(env):
+    path = f"/api/camera/sources/{env['id']}/control/settings"
+    for body in ({"snapshot_quality": "huge"}, {"snapshot_quality": 3}, {}, {"snapshot_quality": "full", "port": 1}, None):
+        response = env["client"].put(path, json=body)
+        assert response.status_code == 400, body
+    assert env["store"].get_source(env["id"])["control"]["snapshot_quality"] == "full"
+    assert env["client"].put("/api/camera/sources/ip:nope/control/settings", json={"snapshot_quality": "full"}).status_code == 404

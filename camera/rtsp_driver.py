@@ -144,7 +144,9 @@ class RtspCameraDriver(CameraDriver):
             "mjpeg_fallback": "disabled_low_power" if reason else "available",
             "container": runtime_env.is_container(),
             # camera-side control (Phase 2): what a probe found, no network I/O here
+            "source_id": self.id,
             "control_type": control["type"],
+            "snapshot_quality": control["snapshot_quality"],
             "snapshot_fallback": control["type"] == "reolink" and bool(control["capabilities"].get("snapshot")),
             "zoom_control": control["type"] == "reolink" and bool(control["capabilities"].get("zoom")),
             **up,
@@ -161,7 +163,8 @@ class RtspCameraDriver(CameraDriver):
             control = self._store.get_source(self.id).get("control") or {}
         except Exception:
             control = {}
-        summary = {"type": control.get("type") or "none", "capabilities": control.get("capabilities") or {}}
+        summary = {"type": control.get("type") or "none", "capabilities": control.get("capabilities") or {},
+                   "snapshot_quality": control.get("snapshot_quality") or "full"}
         self._control_cache = (time.monotonic(), summary)
         return summary
 

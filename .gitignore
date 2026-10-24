@@ -58,3 +58,7 @@ Thumbs.db
 deploy/docker/data/
 deploy/docker/config/
 deploy/docker/.env
+
+# built image archives (never commit: an image contains GPLv3 code, see docs/Docker_Installation.md)
+dist-nas/
+*.tar

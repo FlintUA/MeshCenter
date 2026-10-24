@@ -4926,6 +4926,11 @@ video.camera-stream {
     font: inherit;
 }
 
+/* the network cameras card spans the whole Devices grid: squeezed into one narrow column its rows and buttons did not fit */
+.peripheral-card.mc-ipcam-card {
+    grid-column: 1 / -1;
+}
+
 .mc-ipcam-card .mc-ipcam-list {
     display: flex;
     flex-direction: column;
@@ -4964,8 +4969,11 @@ video.camera-stream {
 
 .mc-ipcam-row-actions {
     display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     gap: 6px;
-    flex: 0 0 auto;
+    flex: 1 1 280px;
+    min-width: 0;
 }
 
 .mc-ipcam-row-actions .device-action-btn {
@@ -5009,7 +5017,8 @@ video.camera-stream {
 
 .mc-ipcam-two {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    /* two columns only when each has room for a full option text ("Sub stream (recommended)"), else one */
+    grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
     gap: 10px;
 }
 
@@ -5076,6 +5085,17 @@ video.camera-stream {
     .mc-ipcam-row {
         flex-direction: column;
         align-items: stretch;
+    }
+
+    /* a column: the flex bases of the text and the actions would be heights here, and the buttons share the width */
+    .mc-ipcam-row-main,
+    .mc-ipcam-row-actions {
+        flex: 0 0 auto;
+    }
+
+    .mc-ipcam-row-actions .device-action-btn {
+        flex: 1 1 auto;
+        min-height: 44px;
     }
 }
 

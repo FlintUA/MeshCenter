@@ -18,6 +18,10 @@
     const STREAM_URL = '/api/camera/stream/fmp4';
     const PROFILE_URL = '/api/camera/stream/profile';
     const RECONNECT_URL = '/api/camera/stream/reconnect';
+    const SNAPSHOT_URL = '/api/camera/snapshot';
+    // Snapshot mode (browsers without MediaSource, camera with an API snapshot): the server fetches at most
+    // one picture per second per camera and shares it, so asking faster would only get the cached picture.
+    const SNAPSHOT_INTERVAL_MS = 1000;
     // Playback buffer target. The camera delivers frames unevenly (measured 13-14.5 fps for a
     // nominal 15), so a 1.5 s lead stalled constantly while 3 s played smoothly.
     const TARGET_LEAD_S = 3;
@@ -36,7 +40,9 @@
     let pollTimer = null;
     let retryTimer = null;
     let objectUrl = null;
-    let mode = 'none'; // 'mse' | 'mjpeg' | 'none'
+    let mode = 'none'; // 'mse' | 'mjpeg' | 'snapshot' | 'none'
+    let snapshotTimer = null;
+    let snapshotUrl = null;
 
     function t(key, params) {
         return window.I18N.t(key, params);
@@ -163,11 +169,12 @@
         if (label) {
             // the status bar is one short line; the full explanation of a failure is the overlay text
             let text = isTerminal(st) ? t('ipcamera.state_error') : t(stateMessageKey(st));
+            if (mode === 'snapshot') text = t('ipcamera.snapshot_status'); // the RTSP upstream is idle on purpose
             if (st.state === 'reconnecting' && st.reconnect_in_s != null) {
                 text = t('ipcamera.state_reconnecting_in', { seconds: Math.ceil(st.reconnect_in_s) });
             }
             label.textContent = text;
-            label.style.color = st.state === 'live' ? '#4caf50' : (isTerminal(st) ? '#f44336' : '#ff9800');
+            label.style.color = (st.state === 'live' || mode === 'snapshot') ? '#4caf50' : (isTerminal(st) ? '#f44336' : '#ff9800');
         }
         if (reconnectBtn) reconnectBtn.style.display = isTerminal(st) || st.state === 'reconnecting' ? '' : 'none';
     }
@@ -244,6 +251,7 @@
     function stop() {
         generation += 1;
         mode = 'none';
+        stopSnapshots();
         setAspect(0, 0);
         overlayActive = false;
         stickyMessage = false;
@@ -285,6 +293,8 @@
     // The browser cannot play the fragmented MP4 stream. MJPEG is the only way left, and only where the host allows it.
     function startUnsupported(gen) {
         abortStream();
+        // the camera makes the pictures itself (its API): no ffmpeg, no transcode, works on a Pi
+        if (status && status.snapshot_fallback) return startSnapshotMode(gen);
         if (status && status.mjpeg_fallback === 'disabled_low_power') {
             showMessage(t('ipcamera.error_not_supported'), false, true);
             return false;
@@ -304,6 +314,85 @@
             const timer = setTimeout(() => resolve(false), ms);
             target.addEventListener(name, () => { clearTimeout(timer); resolve(true); }, { once: true });
         });
+    }
+
+    // ---------- snapshot mode ----------
+
+    function snapshotLabel(on) {
+        let label = el('cameraSnapshotLabel');
+        if (!on) {
+            if (label && label.remove) label.remove();
+            return;
+        }
+        const wrap = document.querySelector('.video-frame-wrap');
+        if (!wrap) return;
+        if (!label) {
+            label = document.createElement('div');
+            label.id = 'cameraSnapshotLabel';
+            label.className = 'camera-snapshot-label';
+            wrap.appendChild(label);
+        }
+        label.textContent = t('ipcamera.snapshot_mode_label');
+    }
+
+    function stopSnapshots() {
+        if (snapshotTimer) clearTimeout(snapshotTimer);
+        snapshotTimer = null;
+        if (snapshotUrl) {
+            try { URL.revokeObjectURL(snapshotUrl); } catch (error) { /* ignore */ }
+            snapshotUrl = null;
+        }
+        snapshotLabel(false);
+    }
+
+    function startSnapshotMode(gen) {
+        const img = el('videoFeed');
+        if (!img) return false;
+        mode = 'snapshot';
+        setMjpegLayout(true);
+        snapshotLabel(true);
+        let failures = 0;
+        const next = (delay) => { if (gen === generation) snapshotTimer = setTimeout(tick, delay); };
+        const tick = async () => {
+            if (gen !== generation) return;
+            if (typeof document.hidden === 'boolean' && document.hidden) return next(SNAPSHOT_INTERVAL_MS); // a hidden tab asks for nothing
+            const began = Date.now();
+            let delay = SNAPSHOT_INTERVAL_MS;
+            try {
+                const response = await fetch(SNAPSHOT_URL, { cache: 'no-store' });
+                if (gen !== generation) return;
+                if (response.ok) {
+                    const blob = await response.blob();
+                    if (gen !== generation) return;
+                    const url = URL.createObjectURL(blob);
+                    const previous = snapshotUrl;
+                    snapshotUrl = url;
+                    img.onload = () => {
+                        if (gen !== generation) return;
+                        setAspect(img.naturalWidth, img.naturalHeight);
+                        overlayActive = false;
+                        if (typeof showCameraFeed === 'function') showCameraFeed();
+                    };
+                    img.src = url;
+                    if (previous) URL.revokeObjectURL(previous);
+                    failures = 0;
+                } else {
+                    let body = null;
+                    try { body = await response.json(); } catch (error) { body = null; }
+                    if (response.status === 429) return void showMessage(t('ipcamera.error_viewer_limit'), false, true);
+                    if (body && body.error_code === 'snapshot_not_supported') return void showMessage(t('ipcamera.error_not_supported'), false, true);
+                    failures += 1;
+                    delay = Math.min(8000, 1500 * failures);
+                    if (failures >= 3) showMessage(t('ipcamera.snapshot_unavailable'), false);
+                }
+            } catch (error) {
+                failures += 1;
+                delay = Math.min(8000, 1500 * failures);
+            }
+            next(Math.max(0, delay - (Date.now() - began)));
+        };
+        tick();
+        return true;
     }
 
     async function startMse(gen, attempt) {
@@ -330,6 +419,7 @@
         const codec = response.headers.get('X-Codec') || '';
         if (!mseSupports(codec)) {
             try { abortController.abort(); } catch (error) { /* ignore */ }
+            if (status && status.snapshot_fallback) return startSnapshotMode(gen);
             const reason = status && status.mjpeg_fallback;
             if (reason === 'disabled_low_power') {
                 showMessage(t('ipcamera.error_no_mse_low_power'), false);
@@ -570,6 +660,6 @@
         handles, start, stop, refresh, reconnect, changeProfile,
         // exported for tests
         lastError: () => lastError,
-        _helpers: { reopenStream, startUnsupported, labelProfiles, setAspect, progressText, mseSupports, liveEdgeTarget, stateMessageKey, isTerminal, infoLine, mseConstructor, TARGET_LEAD_S },
+        _helpers: { reopenStream, startUnsupported, startSnapshotMode, labelProfiles, setAspect, SNAPSHOT_INTERVAL_MS, progressText, mseSupports, liveEdgeTarget, stateMessageKey, isTerminal, infoLine, mseConstructor, TARGET_LEAD_S },
     };
 })();

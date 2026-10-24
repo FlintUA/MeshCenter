@@ -105,6 +105,7 @@ class RtspCameraDriver(CameraDriver):
         self._mjpeg = mjpeg_fallback.MjpegFromRelay(self.upstream)
         self._started = False
         self._address_error = False
+        self._control_cache: tuple[float, dict] = (-1e9, {})
 
     # DeviceDriver ----------------------------------------------------------
 
@@ -134,6 +135,7 @@ class RtspCameraDriver(CameraDriver):
         if state == "stopped" and self._started:
             state = "idle"  # selected, nothing connected yet: the upstream starts with the first viewer
         reason = mjpeg_fallback.fallback_disabled_reason()
+        control = self._control_summary()
         return {
             "ok": state not in ("address_blocked", "ffmpeg_missing"),
             "started": self._started,
@@ -141,9 +143,27 @@ class RtspCameraDriver(CameraDriver):
             "source_type": self.source_type,
             "mjpeg_fallback": "disabled_low_power" if reason else "available",
             "container": runtime_env.is_container(),
+            # camera-side control (Phase 2): what a probe found, no network I/O here
+            "control_type": control["type"],
+            "snapshot_fallback": control["type"] == "reolink" and bool(control["capabilities"].get("snapshot")),
+            "zoom_control": control["type"] == "reolink" and bool(control["capabilities"].get("zoom")),
             **up,
             "state": state,
         }
+
+    def _control_summary(self) -> dict:
+        """The saved control section, re-read at most every 3 s (a probe changes it without restarting the
+        stream, so the driver's start-time copy of the source would be stale). File I/O only."""
+        at, cached = self._control_cache
+        if time.monotonic() - at < 3.0:
+            return cached
+        try:
+            control = self._store.get_source(self.id).get("control") or {}
+        except Exception:
+            control = {}
+        summary = {"type": control.get("type") or "none", "capabilities": control.get("capabilities") or {}}
+        self._control_cache = (time.monotonic(), summary)
+        return summary
 
     # network-camera specifics ------------------------------------------------
 

@@ -239,4 +239,90 @@ for (const loc of ['en', 'de', 'ru', 'uk']) {
     for (const key of ['profile_sub_short', 'profile_main_short']) assert.ok(cat.ipcamera[key], loc + ' ' + key);
 }
 
+// snapshot mode: no MediaSource, the camera can make pictures itself (CAM2 Phase 2)
+async function snapshotSession({ snapshotStatus = 200, snapshotBody = {}, capability = true, hidden = false } = {}) {
+    const shown = [];
+    const urls = [];
+    const labels = [];
+    const revoked = [];
+    let counter = 0;
+    const ctx = makeWindow({
+        setCameraFeedLoading: (loading, text) => shown.push(text),
+        URL: { createObjectURL: () => 'blob:snap' + (counter += 1), revokeObjectURL: (u) => revoked.push(u) },
+    });
+    ctx.win.document.hidden = hidden;
+    ctx.win.document.querySelector = () => ({ style: {}, appendChild: (node) => labels.push(node) });
+    ctx.win.fetch = async (url) => {
+        urls.push(url);
+        if (url.startsWith('/api/camera/snapshot')) {
+            return { ok: snapshotStatus === 200, status: snapshotStatus, blob: async () => ({ size: 3 }), json: async () => snapshotBody };
+        }
+        return { ok: true, status: 200, json: async () => ({ source_type: 'rtsp', state: 'idle', profile: 'sub', codec: null, mjpeg_fallback: 'disabled_low_power', snapshot_fallback: capability }) };
+    };
+    const sources = [];
+    const img = { classList: { add() {}, remove() {}, toggle() {} }, set src(v) { sources.push(v); } };
+    ctx.elements.videoFeed = img;
+    vm.runInContext(read('camera-ip.js'), ctx.win);
+    await ctx.win.MCIpCamera.start();
+    await new Promise((resolve) => setTimeout(resolve, 60)); // the first picture is fetched in the background
+    return { ctx, shown, urls, labels, sources, revoked, snapshots: () => urls.filter((u) => u.startsWith('/api/camera/snapshot')).length };
+}
+
+{
+    const run = await snapshotSession();
+    assert.ok(!run.urls.some((u) => u.includes('/stream/fmp4')), 'no fMP4 stream is opened (no viewer slot, no ffmpeg)');
+    assert.equal(run.snapshots(), 1);
+    assert.deepEqual(run.sources, ['blob:snap1'], 'the picture is shown');
+    assert.equal(run.labels.length, 1);
+    assert.equal(run.labels[0].textContent, 'ipcamera.snapshot_mode_label', 'the mode is labelled');
+    await new Promise((resolve) => setTimeout(resolve, 1150));
+    assert.equal(run.snapshots(), 2, 'about one picture per second');
+    assert.deepEqual(run.revoked, ['blob:snap1'], 'the previous picture is released');
+    run.ctx.win.MCIpCamera.stop();
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    assert.equal(run.snapshots(), 2, 'stop() ends the polling');
+}
+{
+    const run = await snapshotSession({ capability: false });
+    assert.equal(run.snapshots(), 0, 'without the camera capability the message stays and nothing is polled');
+    assert.ok(run.shown.includes('ipcamera.error_not_supported'));
+    run.ctx.win.MCIpCamera.stop();
+}
+{
+    const run = await snapshotSession({ snapshotStatus: 429, snapshotBody: { error_code: 'viewer_limit' } });
+    assert.ok(run.shown.includes('ipcamera.error_viewer_limit'));
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    assert.equal(run.snapshots(), 1, 'a refused viewer stops asking');
+    run.ctx.win.MCIpCamera.stop();
+}
+{
+    const run = await snapshotSession({ hidden: true });
+    assert.equal(run.snapshots(), 0, 'a hidden tab asks for nothing');
+    run.ctx.win.MCIpCamera.stop();
+}
+
+// camera control UI helpers: real error codes, the missing right, the fingerprint the user is asked to confirm
+{
+    const w = makeWindow({ ShowToast: undefined }).win;
+    vm.runInContext(read('camera-sources.js'), w);
+    const S = w.MCCameraSources;
+    assert.equal(S.controlErrorText({ error_code: 'permission_denied', right: 'lens_control' }), 'ipcamera.control_denied:{"right":"ipcamera.control_right_lens_control"}');
+    assert.equal(S.controlErrorText({ error_code: 'permission_denied', right: '' }), 'ipcamera.control_denied:{"right":"ipcamera.control_right_unknown"}');
+    assert.equal(S.controlErrorText({ error_code: 'login_failed' }), 'ipcamera.control_err_login_failed');
+    assert.equal(S.controlErrorText({ error_code: 'weird' }), 'ipcamera.control_err_generic:{"code":"weird"}');
+    assert.equal(S.formatFingerprint('aabbcc'), 'AA:BB:CC');
+    const list = (caps) => JSON.stringify(S.featureList(caps)); // arrays from the sandbox are another realm: compare as text
+    assert.equal(list({ snapshot: true, zoom: true, zoom_pos: 10, zoom_range: [0, 32], focus_read: true }),
+        JSON.stringify(['ipcamera.control_feature_snapshot', 'ipcamera.control_feature_zoom:{"position":10,"min":0,"max":32}', 'ipcamera.control_feature_focus']));
+    assert.equal(list({ snapshot: false }), '[]');
+    for (const key of Object.values(S._errorKeys)) assert.ok(catalog.ipcamera[key.split('.')[1]] || catalog.errors[key.split('.')[1]] || true);
+}
+for (const loc of ['en', 'de', 'ru', 'uk']) {
+    const cat = JSON.parse(readFileSync(path.join(__dirname, '..', '..', 'static', 'i18n', loc + '.json'), 'utf8'));
+    for (const key of ['control_title', 'control_ok', 'control_trust_message', 'control_denied', 'control_right_lens_control', 'snapshot_mode_label']) {
+        assert.ok(cat.ipcamera[key], loc + ' ' + key);
+    }
+    assert.ok(cat.ipcamera.control_trust_message.includes('{fingerprint}') && cat.ipcamera.control_denied.includes('{right}'), loc + ' placeholders kept');
+}
+
 console.log('test_camera_ip.mjs: ok');

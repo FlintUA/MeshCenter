@@ -32,7 +32,7 @@ from camera.rtsp_driver import drivers_from_store
 
 _ALLOWED_FIELDS = {
     "name", "host", "port", "username", "password", "clear_password",
-    "main_path", "sub_path", "preferred_profile", "transport", "connect_timeout_s",
+    "main_path", "sub_path", "preferred_profile", "transport", "connect_timeout_s", "control",
 }
 WRITE_LIMIT = 30  # writes per window, all sources together
 WRITE_WINDOW_S = 60.0

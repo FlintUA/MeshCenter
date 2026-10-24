@@ -5084,6 +5084,33 @@ video.camera-stream {
     flex: 0 0 auto;
 }
 
+/* Network camera: snapshot mode label (browsers without MediaSource) and the camera-control section of the source form (CAM2 Phase 2) */
+.camera-snapshot-label {
+    position: absolute;
+    left: 12px;
+    bottom: 12px;
+    z-index: 5;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.62);
+    color: #fff;
+    font-size: 12px;
+    line-height: 1.4;
+    pointer-events: none;
+}
+
+.mc-ipcam-control {
+    margin: 12px 0 0;
+    padding: 10px 12px 4px;
+    border: 1px solid var(--mc-border, #cbd5e1);
+    border-radius: 8px;
+}
+
+.mc-ipcam-control legend {
+    padding: 0 6px;
+    font-weight: 600;
+}
+
 /* ============================================================
    MOB1: one screen at a time on a narrow viewport (<= 768 px)
    Everything here is inside the media query, so a wide viewport is untouched.

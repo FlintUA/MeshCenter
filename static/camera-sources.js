@@ -39,6 +39,7 @@
         path_is_url: 'ipcamera.err_path_is_url',
         rate_limited: 'ipcamera.err_rate_limited',
         storage_write_failed: 'ipcamera.err_storage',
+        http_not_allowed: 'ipcamera.control_err_http_not_allowed',
     };
 
     // The code the server sent (or the HTTP status when there is none) so a failure is never just "could not be saved".
@@ -72,15 +73,42 @@
 
     // ---------- list ----------
 
+    function featureList(caps) {
+        const features = [];
+        if (!caps) return features;
+        if (caps.snapshot) features.push(t('ipcamera.control_feature_snapshot'));
+        if (caps.zoom && Array.isArray(caps.zoom_range)) {
+            // the position is a point in time: shown right after a check, not in the saved summary
+            features.push(caps.zoom_pos == null
+                ? t('ipcamera.control_feature_zoom_range', { min: caps.zoom_range[0], max: caps.zoom_range[1] })
+                : t('ipcamera.control_feature_zoom', { position: caps.zoom_pos, min: caps.zoom_range[0], max: caps.zoom_range[1] }));
+        } else if (caps.zoom) {
+            features.push(t('ipcamera.control_feature_zoom_range', { min: '-', max: '-' }));
+        }
+        if (caps.focus_read) features.push(t('ipcamera.control_feature_focus'));
+        return features;
+    }
+
+    function controlMeta(source) {
+        const control = source.control || {};
+        if (control.type !== 'reolink') return '';
+        const caps = control.capabilities || {};
+        const found = caps.probed_at ? featureList(caps).join(', ') : '';
+        return `<div class="mc-ipcam-row-meta">${esc(t('ipcamera.control_badge'))}${found ? ' · ' + esc(found) : ''}</div>`;
+    }
+
     function renderCard(source) {
         const profile = source.preferred_profile === 'main' ? t('ipcamera.profile_main') : t('ipcamera.profile_sub');
+        const hasControl = Boolean(source.control && source.control.type === 'reolink');
         return `
             <div class="mc-ipcam-row" data-source-id="${esc(source.id)}">
                 <div class="mc-ipcam-row-main">
                     <div class="mc-ipcam-row-name">${esc(source.name)}</div>
                     <div class="mc-ipcam-row-meta">${esc(source.host)}:${esc(source.port)} · ${esc(profile)} · ${esc(source.transport.toUpperCase())}</div>
+                    ${controlMeta(source)}
                 </div>
                 <div class="mc-ipcam-row-actions">
+                    ${hasControl ? `<button type="button" class="device-action-btn device-action-secondary" data-ipcam-action="probe">${esc(t('ipcamera.control_check'))}</button>` : ''}
                     <button type="button" class="device-action-btn device-action-secondary" data-ipcam-action="edit">${esc(t('ipcamera.edit'))}</button>
                     <button type="button" class="device-action-btn device-action-secondary mc-ipcam-danger" data-ipcam-action="delete">${esc(t('ipcamera.delete'))}</button>
                 </div>
@@ -123,6 +151,7 @@
                 if (action === 'add') openForm(null);
                 if (action === 'edit' && source) openForm(source);
                 if (action === 'delete' && source) confirmDelete(source);
+                if (action === 'probe' && source) probeControl(source, button);
             });
         });
     }
@@ -134,6 +163,82 @@
         mountedSection.id = 'ipCameraSources';
         grid.insertBefore(mountedSection, grid.firstChild);
         return render(mountedSection);
+    }
+
+    // ---------- camera control: check, trust a certificate ----------
+
+    const CONTROL_ERRORS = {
+        login_failed: 'ipcamera.control_err_login_failed',
+        too_many_sessions: 'ipcamera.control_err_too_many_sessions',
+        unreachable: 'ipcamera.control_err_unreachable',
+        timeout: 'ipcamera.control_err_timeout',
+        tls_error: 'ipcamera.control_err_tls_error',
+        http_not_allowed: 'ipcamera.control_err_http_not_allowed',
+        address_blocked: 'ipcamera.control_err_address_blocked',
+        not_supported: 'ipcamera.control_err_not_supported',
+        rate_limited: 'ipcamera.control_err_rate_limited',
+    };
+    const RIGHTS = {
+        snapshot: 'ipcamera.control_right_snapshot',
+        lens_control: 'ipcamera.control_right_lens_control',
+        live_view: 'ipcamera.control_right_live_view',
+    };
+
+    function rightText(right) {
+        return t(RIGHTS[right] || 'ipcamera.control_right_unknown');
+    }
+
+    function controlErrorText(body) {
+        const code = body && body.error_code;
+        if (code === 'permission_denied') return t('ipcamera.control_denied', { right: rightText(body.right) });
+        if (CONTROL_ERRORS[code]) return t(CONTROL_ERRORS[code]);
+        return t('ipcamera.control_err_generic', { code: code || '-' });
+    }
+
+    // aa:bb:cc... in upper case, the form the camera's own pages and browsers show
+    function formatFingerprint(value) {
+        return String(value || '').toUpperCase().replace(/(.{2})(?=.)/g, '$1:');
+    }
+
+    async function probeControl(source, button) {
+        const base = `${API}/${encodeURIComponent(source.id)}/control`;
+        if (button) button.disabled = true;
+        try {
+            if (typeof showToast === 'function') showToast(t('ipcamera.control_checking'), 'info', { duration: 3000 });
+            let result = await request('POST', base + '/probe');
+            const code = result.body && result.body.error_code;
+            if (!result.ok && (code === 'tls_untrusted' || code === 'tls_pin_mismatch') && result.body.fingerprint) {
+                const changed = code === 'tls_pin_mismatch';
+                const trusted = await appConfirm({
+                    title: t(changed ? 'ipcamera.control_changed_title' : 'ipcamera.control_trust_title'),
+                    message: t(changed ? 'ipcamera.control_changed_message' : 'ipcamera.control_trust_message', { fingerprint: formatFingerprint(result.body.fingerprint) }),
+                    confirmLabel: t('ipcamera.control_trust_confirm'),
+                    cancelLabel: t('ipcamera.cancel'),
+                    danger: changed,
+                });
+                if (!trusted) return;
+                const trust = await request('POST', base + '/trust', { sha256: result.body.fingerprint });
+                if (!trust.ok) {
+                    showToast(controlErrorText(trust.body), 'error', { duration: 10000 });
+                    return;
+                }
+                result = await request('POST', base + '/probe');
+            }
+            if (!result.ok) {
+                showToast(controlErrorText(result.body), 'error', { duration: 10000 });
+                return;
+            }
+            const caps = result.body.capabilities || {};
+            const features = featureList(caps);
+            if (features.length) showToast(t('ipcamera.control_ok', { features: features.join(', ') }), 'success', { duration: 8000 });
+            else showToast(t('ipcamera.control_nothing'), 'warning', { duration: 10000 });
+            (caps.denied || []).forEach((entry) => {
+                showToast(t('ipcamera.control_denied', { right: rightText(entry.right) }), 'warning', { duration: 10000 });
+            });
+            await afterChange();
+        } finally {
+            if (button) button.disabled = false;
+        }
     }
 
     // ---------- delete (UI1 dialog, never the browser's confirm()) ----------
@@ -180,6 +285,7 @@
         closeForm();
         const editing = Boolean(source);
         const v = source || { name: '', host: '', port: 554, username: '', main_path: '', sub_path: '', preferred_profile: 'sub', transport: 'tcp', connect_timeout_s: 10, password_set: false };
+        const c = Object.assign({ type: 'none', scheme: 'https', port: 443, channel: 0, allow_http: false }, v.control || {});
         const overlay = document.createElement('div');
         overlay.id = 'ipCameraFormModal';
         overlay.className = 'modal-overlay mc-ipcam-overlay';
@@ -205,6 +311,22 @@
                         ${field('ipcamTransport', 'ipcamera.field_transport', `<select id="ipcamTransport" name="transport">${option('tcp', v.transport, 'ipcamera.transport_tcp')}${option('udp', v.transport, 'ipcamera.transport_udp')}</select>`, t('ipcamera.transport_hint'))}
                     </div>
                     ${field('ipcamTimeout', 'ipcamera.field_timeout', `<input id="ipcamTimeout" name="connect_timeout_s" type="number" min="2" max="60" value="${esc(v.connect_timeout_s)}">`)}
+                    <fieldset class="mc-ipcam-control">
+                        <legend>${esc(t('ipcamera.control_title'))}</legend>
+                        <div class="mc-ipcam-hint">${esc(t('ipcamera.control_help'))}</div>
+                        ${field('ipcamCtlType', 'ipcamera.control_type_label', `<select id="ipcamCtlType">${option('none', c.type, 'ipcamera.control_none')}${option('reolink', c.type, 'ipcamera.control_reolink')}</select>`)}
+                        <div id="ipcamCtlBody">
+                            <div class="mc-ipcam-two">
+                                ${field('ipcamCtlScheme', 'ipcamera.control_scheme_label', `<select id="ipcamCtlScheme">${option('https', c.scheme, 'ipcamera.control_https')}${option('http', c.scheme, 'ipcamera.control_http')}</select>`)}
+                                ${field('ipcamCtlPort', 'ipcamera.control_port_label', `<input id="ipcamCtlPort" type="number" min="1" max="65535" value="${esc(c.port)}">`)}
+                            </div>
+                            ${field('ipcamCtlChannel', 'ipcamera.control_channel_label', `<input id="ipcamCtlChannel" type="number" min="0" max="31" value="${esc(c.channel)}">`)}
+                            <div id="ipcamCtlHttpBox" hidden>
+                                <label class="mc-ipcam-check"><input id="ipcamCtlAllowHttp" type="checkbox"${c.allow_http ? ' checked' : ''}> ${esc(t('ipcamera.control_allow_http'))}</label>
+                                <div class="mc-ipcam-hint mc-ipcam-hint-warn">${esc(t('ipcamera.control_http_warning'))}</div>
+                            </div>
+                        </div>
+                    </fieldset>
                     <div class="mc-ipcam-actions">
                         <button type="button" class="device-action-btn device-action-secondary" data-ipcam-form="cancel">${esc(t('ipcamera.cancel'))}</button>
                         <button type="submit" class="device-action-btn device-action-primary is-primary" data-ipcam-form="save">${esc(t('ipcamera.save'))}</button>
@@ -217,6 +339,21 @@
         const syncProfileHint = () => { profileHint.hidden = profileSelect.value !== 'main'; };
         profileSelect.addEventListener('change', syncProfileHint);
         syncProfileHint();
+        const ctlType = overlay.querySelector('#ipcamCtlType');
+        const ctlScheme = overlay.querySelector('#ipcamCtlScheme');
+        const ctlPort = overlay.querySelector('#ipcamCtlPort');
+        const syncControl = () => {
+            overlay.querySelector('#ipcamCtlBody').hidden = ctlType.value === 'none';
+            overlay.querySelector('#ipcamCtlHttpBox').hidden = ctlScheme.value !== 'http';
+        };
+        ctlType.addEventListener('change', syncControl);
+        ctlScheme.addEventListener('change', () => {
+            // convenience only: the usual port of the chosen scheme, unless the user typed another one
+            if (ctlScheme.value === 'http' && ctlPort.value === '443') ctlPort.value = '80';
+            if (ctlScheme.value === 'https' && ctlPort.value === '80') ctlPort.value = '443';
+            syncControl();
+        });
+        syncControl();
         overlay.querySelector('[data-ipcam-form="cancel"]').addEventListener('click', closeForm);
         overlay.addEventListener('click', (event) => { if (event.target === overlay) closeForm(); });
         overlay._onKeydown = (event) => {
@@ -239,6 +376,7 @@
         name: 'ipcamName', host: 'ipcamHost', port: 'ipcamPort', username: 'ipcamUser', password: 'ipcamPassword',
         sub_path: 'ipcamSubPath', main_path: 'ipcamMainPath', preferred_profile: 'ipcamProfile',
         transport: 'ipcamTransport', connect_timeout_s: 'ipcamTimeout',
+        control: 'ipcamCtlType', control_port: 'ipcamCtlPort', control_channel: 'ipcamCtlChannel',
     };
 
     async function submitForm(overlay, source) {
@@ -255,6 +393,17 @@
             transport: value('ipcamTransport'),
             connect_timeout_s: parseInt(value('ipcamTimeout'), 10),
         };
+        if (value('ipcamCtlType') === 'reolink') {
+            payload.control = {
+                type: 'reolink',
+                scheme: value('ipcamCtlScheme'),
+                port: parseInt(value('ipcamCtlPort'), 10) || 0,
+                channel: parseInt(value('ipcamCtlChannel'), 10) || 0,
+                allow_http: overlay.querySelector('#ipcamCtlAllowHttp').checked,
+            };
+        } else {
+            payload.control = { type: 'none' };
+        }
         if (Number.isNaN(payload.port)) payload.port = 0;
         if (Number.isNaN(payload.connect_timeout_s)) payload.connect_timeout_s = 0;
         const password = value('ipcamPassword');
@@ -293,5 +442,5 @@
         }
     }
 
-    window.MCCameraSources = { mount, render, openForm, errorText, _errorKeys: ERROR_KEYS, _request: request };
+    window.MCCameraSources = { mount, render, openForm, errorText, _errorKeys: ERROR_KEYS, _request: request, controlErrorText, formatFingerprint, featureList, probeControl };
 })();

@@ -52,17 +52,17 @@ USB/serial radio, Bluetooth, local camera (CSI and USB), e-Paper display, I2C / 
 BME280 setup, hardware-config editing, Wi-Fi/network management, device
 reboot/shutdown, in-app self-update (**update by rebuilding or loading a new image**).
 
-**Network cameras (RTSP) do work in the container.** Add them under Devices >
-Network cameras. The image includes `ffmpeg` for this (a GPL-2.0-or-later
-program started as a separate process, which is one more reason the image must
-not be published before the licence documentation gap is closed). Use TCP (the
-default; UDP rarely works through Docker's bridge network) and an IP address,
-not a name: Docker's resolver may not know your LAN names. The camera must be on
-your LAN, not on the Docker bridge network: addresses of the container's own
-network and of its gateway (the Docker host) are refused. With
-`network_mode: host` your LAN counts as the container's own network; set
-`MESHCENTER_CAMERA_ALLOW_OWN_SUBNET=1` then (the gateway stays refused). Never
-forward a camera's ports to the Internet.
+**Network cameras (RTSP) are not available in this image yet.** They need
+`ffmpeg`, which is not included: Debian's own `ffmpeg` package would add
+205 packages and about 625 MB (measured: 193 MB -> 818 MB on `python:3.11-slim`),
+so the Network cameras card says "ffmpeg is not available in this Docker image"
+instead. A minimal ffmpeg built in the image (RTSP/RTP input, H.264/H.265
+parsers, MP4 and MJPEG output, LGPL, target 60 MB or less) is planned for the
+next camera phase. Once it is there: use TCP (UDP rarely works through Docker's
+bridge network) and an IP address, and keep the camera on your LAN (addresses of
+the container's own network and of its gateway are refused; with
+`network_mode: host` set `MESHCENTER_CAMERA_ALLOW_OWN_SUBNET=1`). Never forward a
+camera's ports to the Internet.
 
 Host-looking numbers: uptime, load and RAM on the System page are the **host's**
 (a container shares them); hostname, OS, model and CPU temperature are hidden

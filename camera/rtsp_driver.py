@@ -17,6 +17,7 @@ import time
 from typing import Any, Iterator
 
 from camera import address_policy, mjpeg_fallback, rtsp_stream
+from meshsrv import runtime_env
 from camera.camera_driver import CameraDriver
 
 DEFAULT_READY_WAIT_S = 6.0
@@ -139,6 +140,7 @@ class RtspCameraDriver(CameraDriver):
             "model": self.display_name,
             "source_type": self.source_type,
             "mjpeg_fallback": "disabled_low_power" if reason else "available",
+            "container": runtime_env.is_container(),
             **up,
             "state": state,
         }

@@ -83,6 +83,8 @@ const H = win.MCIpCamera._helpers;
     assert.equal(H.stateMessageKey({ state: 'unsupported_codec', codec: 'h265' }), 'ipcamera.error_h265');
     assert.equal(H.stateMessageKey({ state: 'unsupported_codec', codec: 'mpeg4' }), 'ipcamera.error_codec');
     assert.equal(H.stateMessageKey({ state: 'auth_failed' }), 'ipcamera.error_auth_failed');
+    assert.equal(H.stateMessageKey({ state: 'ffmpeg_missing', container: false }), 'ipcamera.error_ffmpeg_missing');
+    assert.equal(H.stateMessageKey({ state: 'ffmpeg_missing', container: true }), 'ipcamera.error_ffmpeg_missing_container', 'Docker image without ffmpeg');
     assert.equal(H.stateMessageKey({ state: 'stream_not_found' }), 'ipcamera.error_stream_not_found');
     assert.equal(H.stateMessageKey({ state: 'reconnecting' }), 'ipcamera.state_reconnecting');
     assert.equal(H.stateMessageKey({ state: 'live' }), 'ipcamera.state_live');

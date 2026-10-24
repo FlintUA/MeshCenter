@@ -65,6 +65,7 @@
 
     function stateMessageKey(st) {
         if (!st) return 'ipcamera.state_connecting';
+        if (st.state === 'ffmpeg_missing' && st.container) return 'ipcamera.error_ffmpeg_missing_container';
         if (st.state === 'unsupported_codec') {
             return st.codec === 'h265' ? 'ipcamera.error_h265' : 'ipcamera.error_codec';
         }

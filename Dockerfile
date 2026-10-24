@@ -3,8 +3,8 @@
 # Build decisions (see docs/Docker_Installation.md and
 # docs/architecture/docker-blockers.md):
 #  * python:3.11-slim - no Raspberry Pi OS base needed: the camera/libcamera
-#    import is already guarded, and this image ships no CSI/USB camera, GPIO, I2C,
-#    BLE or serial support. TCP radios only; network (RTSP) cameras work (ffmpeg below).
+#    import is already guarded, and this image ships no camera, GPIO, I2C,
+#    BLE or serial support. TCP radios only (network cameras need ffmpeg: not included yet, see below).
 #  * ONE container, TWO OS processes, TWO separate venvs - the GPLv3
 #    `meshtastic` package lives only in the adapter venv (the same layout
 #    install.sh builds on a Pi); Core's interpreter cannot import it. The
@@ -41,13 +41,14 @@ ENV MESHCENTER_RUNTIME=container \
     TZ=UTC \
     PATH=/opt/core-venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-# Debian point-release pins break rebuilds; tini, tzdata and ffmpeg are installed.
-# ffmpeg (CAM2): network (RTSP) cameras only - Core starts it as a separate process, never imports it
-# (CSI/USB cameras stay unavailable in a container). It is a GPL-2.0-or-later program, so the image
-# now also redistributes that (see the redistribution note above and the licenses label below).
+# Debian point-release pins break rebuilds; only tini and tzdata are installed.
+# NO ffmpeg on purpose (CAM2): measured with a plain `apt-get install --no-install-recommends ffmpeg`
+# on python:3.11-slim (Debian 13) it adds 205 packages and about 625 MB (193 MB -> 818 MB image), far
+# over the 150 MB budget. Network (RTSP) cameras therefore show "ffmpeg is not available in this image"
+# here; the plan is a minimal LGPL ffmpeg built in a builder stage (Phase 4, target <= 60 MB).
 # hadolint ignore=DL3008
 RUN apt-get update \
- && apt-get install -y --no-install-recommends tini tzdata ffmpeg \
+ && apt-get install -y --no-install-recommends tini tzdata \
  && rm -rf /var/lib/apt/lists/* \
  && (getent group "${PGID}" >/dev/null || groupadd -g "${PGID}" meshcenter) \
  && useradd -l -u "${PUID}" -g "${PGID}" -M -s /usr/sbin/nologin meshcenter \
@@ -87,7 +88,7 @@ RUN ! /opt/core-venv/bin/python -c "import meshtastic" 2>/dev/null \
 # Declared last so a new revision never invalidates the dependency layers above.
 # The licence expression covers the whole image: MIT Core + the GPLv3 adapter environment.
 ARG MESHCENTER_REVISION=unknown
-LABEL org.opencontainers.image.title="MeshCenter"       org.opencontainers.image.version="${MESHCENTER_VERSION}"       org.opencontainers.image.revision="${MESHCENTER_REVISION}"       org.opencontainers.image.source="https://github.com/FlintUA/MeshCenter"       org.opencontainers.image.licenses="MIT AND GPL-3.0-only AND GPL-2.0-or-later"
+LABEL org.opencontainers.image.title="MeshCenter"       org.opencontainers.image.version="${MESHCENTER_VERSION}"       org.opencontainers.image.revision="${MESHCENTER_REVISION}"       org.opencontainers.image.source="https://github.com/FlintUA/MeshCenter"       org.opencontainers.image.licenses="MIT AND GPL-3.0-only"
 
 USER ${PUID}:${PGID}
 EXPOSE 5000

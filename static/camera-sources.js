@@ -80,9 +80,15 @@
 
     async function render(section) {
         let sources = [];
+        let noFfmpeg = null;
         try {
             const result = await request('GET', API);
-            if (result.ok) sources = result.body.sources || [];
+            if (result.ok) {
+                sources = result.body.sources || [];
+                if (result.body.ffmpeg_available === false) {
+                    noFfmpeg = result.body.container ? 'ipcamera.no_ffmpeg_container' : 'ipcamera.no_ffmpeg_native';
+                }
+            }
         } catch (error) { sources = []; }
         const rows = sources.length
             ? sources.map(renderCard).join('')
@@ -94,6 +100,7 @@
                     <h3>${esc(t('ipcamera.title'))}</h3>
                 </div>
             </div>
+            ${noFfmpeg ? `<p class="mc-ipcam-hint mc-ipcam-hint-warn" role="alert">${esc(t(noFfmpeg))}</p>` : ''}
             <div class="mc-ipcam-list">${rows}</div>
             <div class="device-action-row device-action-row-single">
                 <button type="button" class="mc-refresh-btn" data-ipcam-action="add">${esc(t('ipcamera.add'))}</button>

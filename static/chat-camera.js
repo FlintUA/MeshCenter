@@ -341,12 +341,14 @@ async function startCameraStream() {
         status.style.color = '#ff9800';
     }
 
+    if (window.MCIpCamera) await window.MCIpCamera.refresh();
     await reconnectCameraFeed();
 }
 
 function stopCameraStream() {
     if (!cameraActive) return;
     cameraActive = false;
+    if (window.MCIpCamera) window.MCIpCamera.stop();
 
     console.log('[CAMERA] Stopping stream...');
     const img = document.getElementById('videoFeed');
@@ -851,6 +853,7 @@ async function takeScreenshot(source = 'video') {
 }
 
 function stopVideoFeed() {
+    if (window.MCIpCamera) window.MCIpCamera.stop();
     const img = document.getElementById('videoFeed');
     if (img) {
         img.onload = null;
@@ -866,6 +869,11 @@ function reconnectCameraFeed() {
     if (!cameraPowerEnabled) {
         renderCameraPowerState();
         return Promise.resolve(false);
+    }
+
+    // CAM2: a network camera streams H.264 through MediaSource (static/camera-ip.js), not the MJPEG <img>.
+    if (window.MCIpCamera && window.MCIpCamera.handles()) {
+        return window.MCIpCamera.start();
     }
 
     return new Promise((resolve) => {

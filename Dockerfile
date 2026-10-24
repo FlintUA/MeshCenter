@@ -4,7 +4,7 @@
 # docs/architecture/docker-blockers.md):
 #  * python:3.11-slim - no Raspberry Pi OS base needed: the camera/libcamera
 #    import is already guarded, and this image ships no camera, GPIO, I2C,
-#    BLE or serial support. TCP radios only.
+#    BLE or serial support. TCP radios only (network cameras need ffmpeg: not included yet, see below).
 #  * ONE container, TWO OS processes, TWO separate venvs - the GPLv3
 #    `meshtastic` package lives only in the adapter venv (the same layout
 #    install.sh builds on a Pi); Core's interpreter cannot import it. The
@@ -42,6 +42,10 @@ ENV MESHCENTER_RUNTIME=container \
     PATH=/opt/core-venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Debian point-release pins break rebuilds; only tini and tzdata are installed.
+# NO ffmpeg on purpose (CAM2): measured with a plain `apt-get install --no-install-recommends ffmpeg`
+# on python:3.11-slim (Debian 13) it adds 205 packages and about 625 MB (193 MB -> 818 MB image), far
+# over the 150 MB budget. Network (RTSP) cameras therefore show "ffmpeg is not available in this image"
+# here; the plan is a minimal LGPL ffmpeg built in a builder stage (Phase 4, target <= 60 MB).
 # hadolint ignore=DL3008
 RUN apt-get update \
  && apt-get install -y --no-install-recommends tini tzdata \

@@ -188,3 +188,11 @@ def test_corrupt_file_is_quarantined_not_fatal(store, tmp_path):
 
 def test_unset_sentinel_is_not_a_string():
     assert UNSET is not None and not isinstance(UNSET, str)
+
+
+@pytest.mark.parametrize("pasted", ["rtsp://192.168.2.114:554/Preview_01_main", "RTSP://u:p@h/x", "rtsp:/x", "http://h/x"])
+def test_a_pasted_full_address_in_a_path_field_gets_a_specific_error(store, pasted):
+    with pytest.raises(SourceValidationError) as info:
+        store.create(_fields(main_path=pasted))
+    assert info.value.field == "main_path" and info.value.code == "path_is_url"
+    assert pasted not in info.value.message

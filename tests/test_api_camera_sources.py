@@ -235,7 +235,6 @@ def test_driver_skeleton_makes_no_network_calls_and_reports_state(env):
     assert driver.get_status()["state"] == "stopped" and resolver_calls == []
     assert driver.start() is True and driver.get_status()["state"] == "idle"
     assert resolver_calls == ["192.168.2.50"]
-    assert driver.stream_mjpeg() is not None and list(driver.stream_mjpeg()) == []
     assert PASSWORD not in json.dumps([driver.detect(), driver.get_status(), driver.config])
     driver.stop()
     assert driver.get_status()["started"] is False
@@ -249,7 +248,7 @@ def test_driver_revalidates_the_address_on_start(env):
         raise address_policy.AddressPolicyError("not_lan_address", "x")
 
     driver = RtspCameraDriver(source, store, host_validator=now_public)
-    assert driver.start() is False and driver.get_status()["state"] == "error"
+    assert driver.start() is False and driver.get_status()["state"] == "address_blocked"
 
 
 @pytest.mark.parametrize("field", ["sub_path", "main_path", "username", "password", "host", "name"])
@@ -263,3 +262,28 @@ def test_newline_payloads_in_any_field_fail_closed(env, field, payload):
     r = client.put(f"/api/camera/sources/{sid}", json={field: payload})
     assert r.status_code == 400
     assert store.get_source(sid)["sub_path"] == "Preview_01_sub"
+
+
+def test_list_tells_the_ui_whether_ffmpeg_exists_and_whether_this_is_a_container(env, monkeypatch):
+    client, *_ = env
+    import camera.rtsp_stream as stream_module
+
+    monkeypatch.setattr(stream_module, "ffmpeg_cmd", lambda: [])
+    monkeypatch.setenv("MESHCENTER_RUNTIME", "container")
+    body = client.get("/api/camera/sources").get_json()
+    assert body["ffmpeg_available"] is False and body["container"] is True
+
+    monkeypatch.setattr(stream_module, "ffmpeg_cmd", lambda: ["/usr/bin/ffmpeg"])
+    monkeypatch.delenv("MESHCENTER_RUNTIME", raising=False)
+    body = client.get("/api/camera/sources").get_json()
+    assert body["ffmpeg_available"] is True and body["container"] is False
+
+
+def test_driver_status_carries_the_container_flag_for_the_missing_ffmpeg_message(env, monkeypatch):
+    _client, store, *_ = env
+    source = store.create({"name": "Cam", "host": "192.168.2.50", "main_path": "m", "sub_path": "s"})
+    driver = RtspCameraDriver(source, store, host_validator=lambda h: [h])
+    monkeypatch.setenv("MESHCENTER_RUNTIME", "container")
+    assert driver.get_status()["container"] is True
+    monkeypatch.delenv("MESHCENTER_RUNTIME")
+    assert driver.get_status()["container"] is False

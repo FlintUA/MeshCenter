@@ -103,6 +103,20 @@ def ffmpeg_input_args() -> list[str]:
     return ["-f", "concat", "-safe", "0", "-protocol_whitelist", PROTOCOL_WHITELIST, "-i", "pipe:0"]
 
 
+def ffmpeg_stream_args(frag_duration_us: int = 500_000) -> list[str]:
+    """Full argv fragment (after the ffmpeg binary) for the live stream: read the
+    camera from the stdin script, copy the first video stream (NO transcode) into
+    fragmented MP4 on stdout, a new fragment every `frag_duration_us` (not only at
+    keyframes, so latency is not bounded by the camera's keyframe interval)."""
+    return [
+        "-hide_banner", "-nostats", "-loglevel", "warning",
+        *ffmpeg_input_args(),
+        "-map", "0:v:0", "-an", "-sn", "-dn", "-c:v", "copy",
+        "-f", "mp4", "-frag_duration", str(int(frag_duration_us)),
+        "-movflags", "empty_moov+default_base_moof", "pipe:1",
+    ]
+
+
 def redact(text: str, *secrets: str) -> str:
     """Remove URLs (userinfo included) and any listed secret from text meant for logs or API responses."""
     text = re.sub(r"rtsps?://\S+", "rtsp://<redacted>", text)

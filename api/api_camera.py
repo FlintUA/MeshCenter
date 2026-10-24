@@ -1,11 +1,15 @@
 from flask import request, jsonify, Response, send_file
+import socket
+import struct
 from pathlib import Path
 from datetime import datetime
 import base64
 import os
 import threading
 
+from camera import mjpeg_fallback
 from camera.camera_manager import build_camera_manager, network_drivers_from_state
+from camera.rtsp_driver import StreamNotReady, ViewerLimitReached
 from meshsrv import error_reporting
 from storage.json_store import safe_read_json, safe_write_json
 
@@ -114,10 +118,97 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
             print("[CAMERA] ❌ Camera not available", flush=True)
             return "Camera not available", 503
 
+        active = manager.active()
+        if getattr(active, "source_type", None) == "rtsp" and mjpeg_fallback.fallback_disabled_reason():
+            # CAM2: the MJPEG path for a network camera is a transcode; refused on low-power hosts
+            return jsonify({"ok": False, "error_code": "mjpeg_fallback_disabled",
+                            "error": "MJPEG fallback is disabled on this low-power host"}), 503
+
         return Response(
             manager.mjpeg_multipart_stream(),
             mimetype='multipart/x-mixed-replace; boundary=frame'
         )
+
+    def _active_ip_driver():
+        driver = _active_driver()
+        return driver if getattr(driver, "source_type", None) == "rtsp" else None
+
+    CLIENT_SEND_TIMEOUT_S = 30
+
+    def _harden_stream_socket():
+        """A viewer whose network path dies (Wi-Fi drop, a phone that went to sleep) leaves the server
+        blocked in send() with data queued, holding a viewer slot, a server thread and the camera
+        upstream until the kernel gives up (about 15 minutes by default). Found in the .104 live test
+        (Send-Q 224 KB, rto 120 s). Give the connection a send timeout and TCP_USER_TIMEOUT so a dead
+        peer is dropped after CLIENT_SEND_TIMEOUT_S and the slot is released."""
+        sock = request.environ.get("gunicorn.socket")
+        if sock is None:
+            return
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDTIMEO, struct.pack("ll", CLIENT_SEND_TIMEOUT_S, 0))
+        except (OSError, struct.error, AttributeError):
+            pass
+        try:
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_USER_TIMEOUT, CLIENT_SEND_TIMEOUT_S * 1000)
+        except (OSError, AttributeError):
+            pass
+
+    def _network_camera_guard():
+        """The routes below drive the CSI sensor module directly (camera/camera.py globals: settings,
+        mode switching, stop, screenshot). With a network camera active they must not touch it: it
+        would start Picamera2 and its CPU/RAM cost on a Pi that is only showing an IP stream (found
+        in the live test: opening the Camera tab switched the CSI sensor on). None = go ahead."""
+        if _active_ip_driver() is not None:
+            return jsonify({"ok": False, "error": "Not available for a network camera",
+                            "error_code": "not_available_for_network_camera"}), 409
+        return None
+
+    @app.route("/api/camera/stream/fmp4")
+    def api_camera_stream_fmp4():
+        """H.264 remux (no transcode) of the active network camera as fragmented MP4, for
+        MediaSource / ManagedMediaSource. One upstream ffmpeg per source; at most
+        MAX_VIEWERS_PER_SOURCE / MAX_VIEWERS_TOTAL viewers."""
+        if not power_state["enabled"]:
+            return jsonify({"ok": False, "error": "Camera is turned off", "error_code": "camera_off"}), 409
+        driver = _active_ip_driver()
+        if driver is None:
+            return jsonify({"ok": False, "error": "The active camera is not a network camera", "error_code": "not_an_ip_source"}), 404
+        try:
+            stream = driver.open_fmp4()
+        except ViewerLimitReached:
+            return jsonify({"ok": False, "error": "Too many viewers", "error_code": "viewer_limit"}), 429
+        except StreamNotReady as error:
+            return jsonify({"ok": False, "error": "Stream not ready", "error_code": "stream_not_ready",
+                            "state": error.state, "stream_error": error.error_code}), 503
+        _harden_stream_socket()
+        response = Response(stream, mimetype="video/mp4", direct_passthrough=True)
+        response.headers["X-Codec"] = stream.mse_codec
+        response.headers["Access-Control-Expose-Headers"] = "X-Codec"
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Accel-Buffering"] = "no"
+        return response
+
+    @app.route("/api/camera/stream/profile", methods=["POST"])
+    @handle_errors
+    def api_camera_stream_profile():
+        driver = _active_ip_driver()
+        if driver is None:
+            return jsonify({"ok": False, "error": "The active camera is not a network camera", "error_code": "not_an_ip_source"}), 404
+        data = request.get_json(silent=True)
+        profile = data.get("profile") if isinstance(data, dict) else None
+        if profile not in ("sub", "main"):
+            return jsonify({"ok": False, "error": "profile must be sub or main", "error_code": "invalid_field"}), 400
+        driver.set_profile(profile)
+        return jsonify({"ok": True, "status": driver.get_status()})
+
+    @app.route("/api/camera/stream/reconnect", methods=["POST"])
+    @handle_errors
+    def api_camera_stream_reconnect():
+        driver = _active_ip_driver()
+        if driver is None:
+            return jsonify({"ok": False, "error": "The active camera is not a network camera", "error_code": "not_an_ip_source"}), 404
+        driver.reconnect()
+        return jsonify({"ok": True, "status": driver.get_status()})
 
     @app.route("/api/camera/power", methods=["GET"])
     def api_camera_power_get():
@@ -188,6 +279,9 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
     @handle_errors
     def api_camera_update_settings():
         """Обновить настройки камеры"""
+        blocked = _network_camera_guard()
+        if blocked:
+            return blocked
         if not power_state["enabled"]:
             return jsonify({
                 "ok": False,
@@ -202,6 +296,9 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
     @handle_errors
     def api_camera_stop():
         """Полностью остановить камеру"""
+        blocked = _network_camera_guard()
+        if blocked:
+            return blocked
         camera.stop_camera()
         return jsonify({
             "ok": True,
@@ -213,6 +310,10 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
     @handle_errors
     def api_camera_switch_mode():
         """Переключение режима камеры"""
+        if _active_ip_driver() is not None:
+            # opening the Camera tab always asks for the video mode: for a network camera that is a no-op
+            return jsonify({"ok": True, "mode": (request.get_json(silent=True) or {}).get("mode", "video"),
+                            "not_applicable": True})
         if not power_state["enabled"]:
             return jsonify({
                 "ok": False,
@@ -226,6 +327,9 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
     @app.route("/api/camera/mode/<mode>", methods=["POST"])
     def api_camera_set_mode(mode):
         """Переключить предустановленный режим"""
+        blocked = _network_camera_guard()
+        if blocked:
+            return blocked
         result, status = camera.set_video_mode(mode)
         return jsonify(result), status
 
@@ -233,6 +337,9 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
     @handle_errors
     def api_camera_screenshot():
         """Создать скриншот"""
+        blocked = _network_camera_guard()
+        if blocked:
+            return blocked
         if not power_state["enabled"]:
             return jsonify({
                 "ok": False,

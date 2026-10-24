@@ -204,7 +204,8 @@ if __name__ == "__main__":  # manual use: python fake_rtsp_server.py [user passw
     import sys
 
     args = sys.argv[1:]
-    srv = FakeRtspServer(user=args[0] if args else None, password=args[1] if len(args) > 1 else None).start()
+    srv = FakeRtspServer(port=int(os.environ.get("PORT", "0")), user=args[0] if args else None,
+                         password=args[1] if len(args) > 1 else None).start()
     print("rtsp://127.0.0.1:%d/live" % srv.port, flush=True)
     while True:
         time.sleep(1)

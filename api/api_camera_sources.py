@@ -25,7 +25,9 @@ from collections import deque
 from flask import jsonify, request
 
 from camera import source_store as store_module
+from camera import rtsp_stream
 from camera.camera_manager import network_drivers_from_state
+from meshsrv import runtime_env
 from camera.rtsp_driver import drivers_from_store
 
 _ALLOWED_FIELDS = {
@@ -106,6 +108,9 @@ def register_camera_source_routes(app, source_store, camera_manager_state, devic
         return jsonify({
             "ok": True,
             "sources": source_store.list_sources(),
+            # the UI explains a missing ffmpeg up front instead of failing at the first preview
+            "ffmpeg_available": bool(rtsp_stream.ffmpeg_cmd()),
+            "container": runtime_env.is_container(),
             "max_sources": store_module.MAX_SOURCES,
             "profiles": list(store_module.PROFILES),
             "transports": list(store_module.TRANSPORTS),

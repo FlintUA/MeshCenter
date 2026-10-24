@@ -48,9 +48,21 @@ TCP slot MeshCenter uses (see "One Meshtastic TCP client at a time").
 ### Disabled in container mode
 
 These need the host and are refused by the server (and hidden in the UI):
-USB/serial radio, Bluetooth, camera (CSI and USB), e-Paper display, I2C / RTC /
+USB/serial radio, Bluetooth, local camera (CSI and USB), e-Paper display, I2C / RTC /
 BME280 setup, hardware-config editing, Wi-Fi/network management, device
 reboot/shutdown, in-app self-update (**update by rebuilding or loading a new image**).
+
+**Network cameras (RTSP) are not available in this image yet.** They need
+`ffmpeg`, which is not included: Debian's own `ffmpeg` package would add
+205 packages and about 625 MB (measured: 193 MB -> 818 MB on `python:3.11-slim`),
+so the Network cameras card says "ffmpeg is not available in this Docker image"
+instead. A minimal ffmpeg built in the image (RTSP/RTP input, H.264/H.265
+parsers, MP4 and MJPEG output, LGPL, target 60 MB or less) is planned for the
+next camera phase. Once it is there: use TCP (UDP rarely works through Docker's
+bridge network) and an IP address, and keep the camera on your LAN (addresses of
+the container's own network and of its gateway are refused; with
+`network_mode: host` set `MESHCENTER_CAMERA_ALLOW_OWN_SUBNET=1`). Never forward a
+camera's ports to the Internet.
 
 Host-looking numbers: uptime, load and RAM on the System page are the **host's**
 (a container shares them); hostname, OS, model and CPU temperature are hidden

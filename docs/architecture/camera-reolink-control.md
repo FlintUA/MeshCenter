@@ -41,7 +41,7 @@ refused by the camera).
 | Abilities | `GetAbility`, action 0, `param.User.userName` | `value.Ability` (entries with `permit`) |
 | Zoom/focus read | `GetZoomFocus`, action 1, `param.channel` | `value.ZoomFocus.{zoom,focus}.pos` and the ranges |
 | Zoom move | `StartZoomFocus`, action 0, `param.ZoomFocus.{channel,pos,op:"ZoomPos"}` | accepted; the lens takes a moment |
-| Snapshot | `GET ?cmd=Snap&channel=N&rs=<random>&token=<token>` | `image/jpeg` (a refusal is a small JSON answer) |
+| Snapshot | `GET ?cmd=Snap&channel=N&rs=<random>&snapType=sub&token=<token>` (`snapType=sub` for the small live picture) | `image/jpeg` (a refusal is a small JSON answer) |
 | Logout | `Logout` | best effort |
 
 Error classification: `rspCode -6` or "login first" = token expired (re-login ONCE, then fail);
@@ -99,11 +99,29 @@ A view-only account may not be allowed lens control. The probe reports each miss
 (`denied: [{command, right}]`), the zoom route answers 403 `permission_denied` with the `right`, and the
 UI says "This account has no permission for lens control".
 
-## 9. What is confirmed only live (the mock cannot prove it)
+## 9. Confirmed on the real camera (RLC-811A, Step A, 2026-10-24, reads only)
 
-The field names above follow the public documentation and community-verified usage. On the real camera
-(RLC-811A, after Flint's go) confirm: the login answer shape, which `GetAbility` entries exist, that
-`GetZoomFocus` with action 1 returns the ranges, how long the lens takes to settle, the permission error
-code of a limited account, and whether `Snap` needs only the token. Zoom moves only with a separate go,
-with read-back, and the lens is returned to its original position (positions before and after go into
-the report). Focus: read only until verified.
+Camera: Reolink RLC-811A, HTTPS on port 443 with a self-signed certificate (pinned through the fingerprint
+confirm flow), channel 0, a full-function account. Nothing was written to the camera in Step A.
+
+| Question | Result |
+| --- | --- |
+| Login (JSON array body, user name + password) | Works over HTTPS; about 0.5 s; `leaseTime` 3600 s; token re-used for later calls; logout works |
+| `GetAbility` | 196 entries, each with a `permit` number (0 = not available, 1, 4, 6, 7 seen). Relevant ones: `snap` 6, `live` 4, `ptzCtrl` 7, `supportZoom` 6, `supportFocus` 6, `supportZoomAndFocusSliderCfg` 6, `disableAutoFocus` 6, `supportDigitalZoom` 0, `ptzType` 0, `supportPt` 6, `supportPtzSpeed` 6 |
+| `GetZoomFocus` (action 1) | Returns the position and the ranges. Zoom range 0 to 28, focus range 0 to 238. Baseline before any lens move: **zoom 22, focus 222** |
+| Snapshot, default `Snap` | JPEG 3840x2160, about 454 KB, 0.75 to 0.8 s per picture (Wi-Fi limited) |
+| Snapshot, `snapType=sub` | JPEG **640x360, about 18 KB, about 0.5 s** (the width/height form `&width=640&height=360` gives the same picture, slower and less steady). The live-view fallback uses `snapType=sub`; full pictures stay available for Phase 3 Media |
+| Token in query only for Snap | Yes: `Snap` works with the token alone, no user/password in the URL |
+
+Notes: a 4K picture is 25 times larger than the sub picture, which matters on Wi-Fi and for an iPhone; this
+is why the fallback asks for the sub picture. The abilities list is long: the client keeps only the names and
+`permit` values and decides capabilities from what the real reads deliver (snapshot, zoom with range,
+focus position), not from ability names alone.
+
+## 10. Still to confirm
+
+* The error code and text a **view-only** account gets for `StartZoomFocus` (expected `-26` "ability error",
+  seen in third-party documentation) and for the other commands. Needs a view-only account; the account in
+  Step A is full-function, so no zoom command was sent.
+* How long the lens takes to settle after a move, and whether `ZoomPos` reads back exactly (Step B).
+* Focus writes: not implemented; only the position and range are read.

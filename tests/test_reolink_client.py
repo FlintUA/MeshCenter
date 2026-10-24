@@ -165,6 +165,13 @@ def test_snapshot_returns_the_cameras_own_jpeg(fake):
     assert fake.log[-1]["token_in_query"]
 
 
+def test_the_live_view_snapshot_asks_for_the_small_sub_picture_and_the_full_one_on_request(fake):
+    client = make_client(fake)
+    client.snapshot()
+    client.snapshot(sub=False)
+    assert fake.snap_types == ["sub", ""]
+
+
 def test_snapshot_refused_to_a_guest_names_the_right(fake):
     with pytest.raises(rc.ReolinkError) as raised:
         make_client(fake, user=GUEST, password=GUEST_PW).snapshot()

@@ -76,6 +76,7 @@ class FakeReolink:
         self.log: list[dict] = []  # what the client sent: method, command, whether the token was in the query
         self.logins = 0
         self.snaps = 0
+        self.snap_types: list[str] = []
         self.zoom_commands: list[int] = []
         self._lock = threading.Lock()
         self._server: _QuietServer | None = None
@@ -216,6 +217,7 @@ class FakeReolink:
         with self._lock:
             user = self.tokens.get(token)
         self.log.append({"method": "GET", "command": "Snap", "token_in_query": bool(token), "array": False})
+        self.snap_types.append((parse_qs(urlparse(handler.path).query).get("snapType") or [""])[0])
         if user is None:
             return handler._send(200, json.dumps([self._error("Snap", -6, "please login first")]).encode())
         if user in self.snap_denied or not self.snapshot:

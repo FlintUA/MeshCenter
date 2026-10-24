@@ -652,7 +652,17 @@
     "wb_incandescent": "Glühlampe",
     "wb_select_tooltip": "Wähle den automatischen Weißabgleich-Modus",
     "wb_tungsten": "Glühlicht",
-    "white_balance_label": "Weißabgleich"
+    "white_balance_label": "Weißabgleich",
+    "tab_mode": "Modus",
+    "tab_image": "Bild",
+    "tab_lens": "Objektiv",
+    "defaults": "Standard",
+    "defaults_tooltip": "Neutrale Bildeinstellungen wiederherstellen",
+    "brightness": "Helligkeit",
+    "contrast": "Kontrast",
+    "saturation": "Sättigung",
+    "sharpness": "Schärfe",
+    "exposure": "Belichtung"
   },
   "media": {
     "media_gallery": "Mediengalerie",
@@ -1865,9 +1875,6 @@
     "running": "Läuft, das dauert bis zu einer Minute..."
   },
   "ipctl": {
-    "tablist_label": "Kameraeinstellungen",
-    "tab_mode": "Modus",
-    "tab_lens": "Objektiv",
     "info_stream": "Stream",
     "info_resolution": "Auflösung",
     "info_fps": "Bildrate",
@@ -1880,8 +1887,6 @@
     "quality_label": "Bildqualität",
     "quality_full": "Volle Auflösung",
     "quality_small": "Klein (schneller)",
-    "snapshot_hint_api": "Das Bild kommt von der Kamera selbst und wird in Medien gespeichert.",
-    "snapshot_hint_stream": "Das Bild wird aus der laufenden Vorschau aufgenommen und in Medien gespeichert. Zuerst die Vorschau starten.",
     "image_note": "Bildeinstellungen werden in der Kamera-App geändert.",
     "snapshot_saved": "Bild in Medien gespeichert.",
     "snapshot_saved_stream": "Bild in Medien gespeichert (aus dem Stream aufgenommen, die Kamerafunktion war nicht erreichbar).",
@@ -1901,6 +1906,11 @@
     "lens_hint": "Positionen sind die eigenen Schritte der Kamera, keine Vergrößerung. Die Position wird beim Öffnen dieses Tabs und nach jeder Bewegung gelesen.",
     "lens_reading": "Objektivposition wird gelesen...",
     "lens_moving": "Objektiv bewegt sich...",
-    "lens_not_arrived": "Das Objektiv hat die Position noch nicht erreicht; die angezeigte Zahl ist die Messung der Kamera."
+    "lens_not_arrived": "Das Objektiv hat die Position noch nicht erreicht; die angezeigte Zahl ist die Messung der Kamera.",
+    "snapshot_hint_api_full": "Bild in voller Auflösung von der Kamera selbst, in Medien gespeichert.",
+    "snapshot_hint_api_small": "Kleines Bild von der Kamera selbst, in Medien gespeichert.",
+    "snapshot_hint_stream_running": "Das Bild wird aus der laufenden Vorschau aufgenommen und in Medien gespeichert.",
+    "snapshot_hint_stream_stopped": "Zuerst die Vorschau starten: Das Bild wird aus der laufenden Vorschau aufgenommen.",
+    "info_reconnect": "Neu verbinden"
   }
 }

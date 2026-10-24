@@ -144,8 +144,13 @@
     function setAspect(width, height) {
         const view = el('videoView');
         if (!view || !view.style) return;
-        if (width > 0 && height > 0) view.style.setProperty('--camera-aspect', width + ' / ' + height);
-        else view.style.removeProperty('--camera-aspect');
+        if (width > 0 && height > 0) {
+            view.style.setProperty('--camera-aspect', width + ' / ' + height);
+            view.style.setProperty('--camera-ratio', String(width / height));
+        } else {
+            view.style.removeProperty('--camera-aspect');
+            view.style.removeProperty('--camera-ratio');
+        }
     }
 
     function applyModeClass() {
@@ -154,9 +159,8 @@
         if (window.MCIpControls) window.MCIpControls.update(handles() ? status : null); // Mode / Lens under the picture
         const select = el('ipCameraProfile');
         if (select) {
-            select.style.display = handles() ? '' : 'none';
             labelProfiles();
-            if (handles()) select.value = status.profile || 'sub';
+            if (handles() && document.activeElement !== select) select.value = status.profile || 'sub';
         }
     }
 
@@ -646,10 +650,16 @@
     }
 
     function wireControls() {
-        const select = el('ipCameraProfile');
-        if (select) select.addEventListener('change', () => changeProfile(select.value));
-        const button = el('ipCameraReconnectBtn');
-        if (button) button.addEventListener('click', () => reconnect());
+        // the picker and Reconnect sit in the Mode panel, which camera-ip-controls.js (re)builds: delegate
+        document.addEventListener('change', (event) => {
+            const target = event.target;
+            if (target && target.id === 'ipCameraProfile') changeProfile(target.value);
+        });
+        document.addEventListener('click', (event) => {
+            const target = event.target;
+            const button = target && typeof target.closest === 'function' ? target.closest('#ipCameraReconnectBtn') : null;
+            if (button) reconnect();
+        });
         if (typeof window.matchMedia === 'function') {
             const mq = window.matchMedia('(max-width: 768px)');
             if (typeof mq.addEventListener === 'function') mq.addEventListener('change', labelProfiles);

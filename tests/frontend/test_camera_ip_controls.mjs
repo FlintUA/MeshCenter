@@ -18,7 +18,7 @@ const catalog = JSON.parse(readFileSync(path.join(__dirname, '..', '..', 'static
 function makeEnv({ fetchImpl } = {}) {
     const registry = {};
     class FakeEl {
-        constructor(tag) { this.tag = tag; this.children = []; this.attrs = {}; this.listeners = {}; this.hidden = false; this.disabled = false; this.value = ''; this.className = ''; this._text = ''; this.min = ''; this.max = ''; }
+        constructor(tag) { this.tag = tag; this.children = []; this.attrs = {}; this.listeners = {}; this.hidden = false; this.disabled = false; this.value = ''; this.className = ''; this._text = ''; this.min = ''; this.max = ''; this.dataset = {}; this.style = {}; }
         setAttribute(k, v) { this.attrs[k] = String(v); if (k === 'id') registry[v] = this; if (k === 'value') this.value = String(v); if (k === 'class') this.className = String(v); }
         getAttribute(k) { return this.attrs[k]; }
         appendChild(child) { this.children.push(child); return child; }
@@ -34,6 +34,13 @@ function makeEnv({ fetchImpl } = {}) {
     const container = new FakeEl('div');
     container.hidden = true;
     registry.ipCameraControls = container;
+    // the shared tab row belongs to the template (UX3): Mode / Image / Lens, the Lens tab hidden until shown
+    for (const id of ['cameraControlTabCamera', 'cameraControlTabImage', 'cameraControlTabLens']) {
+        const tab = new FakeEl('button');
+        tab.attrs.id = id;
+        registry[id] = tab;
+    }
+    registry.cameraControlTabLens.hidden = true;
     const win = {
         document,
         I18N: { t: (key, params) => (params ? key + ':' + JSON.stringify(params) : key) },
@@ -144,24 +151,36 @@ const tick = (ms = 5) => new Promise((resolve) => setTimeout(resolve, ms));
     assert.equal(env.container.hidden, true);
     env.api.update(STATUS);
     assert.equal(env.container.hidden, false);
-    assert.ok(env.registry.ipTabMode && env.registry.ipTabLens, 'Mode and Lens tabs');
+    assert.equal(env.registry.cameraControlTabLens.hidden, false, 'the shared Lens tab is shown for a camera with zoom');
+    assert.equal(env.registry.ipTabMode, undefined, 'no tab row of its own any more');
+    assert.ok(env.registry.ipCameraProfile && env.registry.ipCameraReconnectBtn, 'stream picker and Reconnect are in the Mode panel');
+    assert.equal(env.registry.ipCameraProfile.children.length, 2);
+    assert.equal(env.registry.ipCameraReconnectBtn.style.display, 'none', 'Reconnect only while the stream is down');
     assert.equal(env.registry.ipInfoResolution.textContent, '640x360');
     assert.equal(env.registry.ipInfoFps.textContent, '15.1 FPS');
     assert.equal(env.registry.ipInfoCodec.textContent, 'H264');
     assert.equal(env.registry.ipInfoBitrate.textContent, '139 kbps');
-    assert.equal(env.registry.ipInfoStream.textContent, 'ipcamera.profile_sub');
+    assert.equal(env.registry.ipSnapshotHint.textContent, 'ipctl.snapshot_hint_api_full', 'Reolink control: the camera makes the full picture');
     assert.equal(env.registry.ipSnapshotQuality.value, 'full');
     env.api.update({ ...STATUS, fps: 14.2, resolution: '1280x720' }); // the 2 s status poll: text updates, no rebuild
     assert.equal(env.registry.ipInfoFps.textContent, '14.2 FPS');
-    const modeTab = env.registry.ipTabMode;
+    const modePanel = env.registry.ipPanelMode;
     env.api.update({ ...STATUS });
-    assert.equal(env.registry.ipTabMode, modeTab, 'the panel is not rebuilt on every status');
+    assert.equal(env.registry.ipPanelMode, modePanel, 'the panel is not rebuilt on every status');
+    env.api.update({ ...STATUS, snapshot_quality: 'small' });
+    assert.equal(env.registry.ipSnapshotHint.textContent, 'ipctl.snapshot_hint_api_small');
+    env.api.update({ ...STATUS, state: 'reconnecting' });
+    assert.equal(env.registry.ipCameraReconnectBtn.style.display, '', 'Reconnect shows while the stream is down');
 
     // no zoom -> no Lens tab; no API -> no quality setting
     const plain = makeEnv({ fetchImpl: async () => json(200, { ok: true }) });
     plain.api.update({ ...STATUS, zoom_control: false, control_type: 'none' });
-    assert.equal(plain.registry.ipTabLens, undefined);
+    assert.equal(plain.registry.cameraControlTabLens.hidden, true);
     assert.equal(plain.registry.ipSnapshotQuality, undefined);
+    // no API: the hint says where the picture comes from, and that the preview has to run
+    assert.equal(plain.registry.ipSnapshotHint.textContent, 'ipctl.snapshot_hint_stream_running');
+    plain.api.update({ ...STATUS, zoom_control: false, control_type: 'none', state: 'stopped' });
+    assert.equal(plain.registry.ipSnapshotHint.textContent, 'ipctl.snapshot_hint_stream_stopped');
     plain.api.update(null);
     assert.equal(plain.container.hidden, true, 'hidden for a camera that is not a network camera');
 }
@@ -178,7 +197,7 @@ const tick = (ms = 5) => new Promise((resolve) => setTimeout(resolve, ms));
     });
     env.api.update(STATUS);
     assert.equal(env.calls.length, 0, 'the position is NOT read until the Lens tab is opened');
-    env.registry.ipTabLens.fire('click');
+    env.registry.cameraControlTabLens.fire('click');
     await tick(20);
     assert.equal(env.calls.filter((c) => c.url.endsWith('/control/zoom')).length, 1, 'read once on open');
     const slider = env.registry.ipLensSlider;
@@ -198,7 +217,7 @@ const tick = (ms = 5) => new Promise((resolve) => setTimeout(resolve, ms));
     assert.equal(posts[0].options.body, '{"pos":25}');
     assert.equal(env.registry.ipLensValue.textContent, 'ipctl.lens_zoom:{"position":25,"max":28}', 'read back from the move answer');
     assert.equal(env.calls.filter((c) => c.options.method !== 'POST').length, 1, 'no extra read: the answer is the read-back');
-    env.registry.ipTabMode.fire('click');
+    env.api.selectTab('mode');
     assert.equal(env.registry.ipPanelLens.hidden, true);
 }
 
@@ -210,7 +229,7 @@ const tick = (ms = 5) => new Promise((resolve) => setTimeout(resolve, ms));
             : json(200, { ok: true, zoom: { position: 22, range: [0, 28], focus_position: 222 } })),
     });
     env.api.update(STATUS);
-    env.registry.ipTabLens.fire('click');
+    env.registry.cameraControlTabLens.fire('click');
     await tick(20);
     env.registry.ipLensSlider.value = '24';
     env.registry.ipLensSlider.fire('change');

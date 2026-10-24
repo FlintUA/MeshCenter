@@ -29,10 +29,11 @@ function showCameraFeed() {
     const img = document.getElementById('videoFeed');
     if (img) {
         img.classList.remove('camera-stream-hidden');
-        // the frame box follows the picture's aspect ratio (CSS --camera-aspect, used on a phone)
+        // the frame box follows the picture's aspect ratio (CSS --camera-aspect / --camera-ratio)
         const view = document.getElementById('videoView');
         if (view && img.naturalWidth > 0 && img.naturalHeight > 0) {
             view.style.setProperty('--camera-aspect', `${img.naturalWidth} / ${img.naturalHeight}`);
+            view.style.setProperty('--camera-ratio', String(img.naturalWidth / img.naturalHeight));
         }
     }
     setCameraFeedLoading(false);
@@ -602,6 +603,12 @@ const CAMERA_IMAGE_PRESETS = Object.freeze({
 });
 
 function switchCameraControlTab(tabName) {
+    // a network camera: the same tab row, its panels are the Mode / Lens ones built by camera-ip-controls.js
+    const view = document.getElementById('videoView');
+    if (view && view.classList.contains('camera-ip-mode') && window.MCIpControls) {
+        window.MCIpControls.selectTab(tabName === 'lens' ? 'lens' : 'mode');
+        return;
+    }
     const showImage = tabName === 'image';
 
     const cameraTab = document.getElementById('cameraControlTabCamera');
@@ -614,6 +621,7 @@ function switchCameraControlTab(tabName) {
 
     cameraTab?.setAttribute('aria-selected', String(!showImage));
     imageTab?.setAttribute('aria-selected', String(showImage));
+    document.getElementById('cameraControlTabLens')?.classList.remove('active');
 
     if (cameraPanel) {
         cameraPanel.hidden = showImage;

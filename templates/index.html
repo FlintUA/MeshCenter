@@ -7,14 +7,14 @@
     <meta name="csrf-token" content="{{ csrf_token }}">
     <meta name="runtime-capabilities" content="{{ runtime_capabilities }}">
     <!-- csrf.js must stay the FIRST script, in <head>, without defer/async: it wraps window.fetch, so no API request can run before the wrapper exists (tests/test_csrf_script_order.py) -->
-    <script src="{{ url_for('static', filename='csrf.js') }}?v=20261030-ux2c"></script>
+    <script src="{{ url_for('static', filename='csrf.js') }}?v=20261030-ux3a"></script>
     <title>MeshCenter</title>
     <!-- MeshCenter build: stage2c7-4-unified-popovers-20260725 -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part1.css') }}?v=20261030-ux2c">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part2.css') }}?v=20261030-ux2c">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part3.css') }}?v=20261030-ux2c">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part4.css') }}?v=20261030-ux2c">
-    <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=20261030-ux2c">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part1.css') }}?v=20261030-ux3a">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part2.css') }}?v=20261030-ux3a">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part3.css') }}?v=20261030-ux3a">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part4.css') }}?v=20261030-ux3a">
+    <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=20261030-ux3a">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 </head>
@@ -362,14 +362,6 @@
                                     aria-label="Camera"
                                     data-i18n-aria-label="camera.select_source_label"></select>
 
-                            <select id="ipCameraProfile"
-                                    class="camera-source-select"
-                                    style="display:none;"
-                                    aria-label="Stream"
-                                    data-i18n-aria-label="ipcamera.profile_label">
-                                <option value="sub" data-i18n="ipcamera.profile_sub">Sub stream (recommended)</option>
-                                <option value="main" data-i18n="ipcamera.profile_main">Main stream</option>
-                            </select>
 
                             <button type="button"
                                     class="camera-power-btn"
@@ -431,7 +423,7 @@
                                     aria-selected="true"
                                     aria-controls="cameraControlsPanel"
                                     onclick="switchCameraControlTab('camera')">
-                                🎥 Mode
+                                🎥 <span data-i18n="camera.tab_mode">Mode</span>
                             </button>
 
                             <button type="button"
@@ -441,7 +433,17 @@
                                     aria-selected="false"
                                     aria-controls="imageControlsPanel"
                                     onclick="switchCameraControlTab('image')">
-                                🎛 Image
+                                🎛 <span data-i18n="camera.tab_image">Image</span>
+                            </button>
+
+                            <button type="button"
+                                    class="camera-control-tab"
+                                    id="cameraControlTabLens"
+                                    role="tab"
+                                    aria-selected="false"
+                                    aria-controls="ipPanelLens"
+                                    hidden>
+                                🔎 <span data-i18n="camera.tab_lens">Lens</span>
                             </button>
                         </div>
 
@@ -449,7 +451,6 @@
                             <span id="videoLiveInfo">Live: 640×480 @ 12 FPS</span>
                             <span class="camera-status-divider" aria-hidden="true">·</span>
                             <span id="videoStatus">⏸️ Paused</span>
-                            <button type="button" id="ipCameraReconnectBtn" class="camera-ip-reconnect-btn" style="display:none;" data-i18n="ipcamera.reconnect">Reconnect</button>
                         </div>
                     </div>
 
@@ -597,15 +598,16 @@
                                     <button type="button"
                                             class="camera-defaults-btn"
                                             onclick="restoreCameraImageDefaults()"
-                                            title="Restore neutral image settings">
-                                        Defaults
+                                            title="Restore neutral image settings"
+                                            data-i18n-title="camera.defaults_tooltip">
+                                        <span data-i18n="camera.defaults">Defaults</span>
                                     </button>
                                 </div>
 
                                 <div class="camera-image-controls-grid">
                                     <div class="camera-control-slider">
                                         <label for="cameraBrightness">
-                                            Brightness
+                                            <span data-i18n="camera.brightness">Brightness</span>
                                             <span id="cameraBrightnessValue">0.0</span>
                                         </label>
                                         <input type="range"
@@ -620,7 +622,7 @@
 
                                     <div class="camera-control-slider">
                                         <label for="cameraContrast">
-                                            Contrast
+                                            <span data-i18n="camera.contrast">Contrast</span>
                                             <span id="cameraContrastValue">1.0</span>
                                         </label>
                                         <input type="range"
@@ -635,7 +637,7 @@
 
                                     <div class="camera-control-slider">
                                         <label for="cameraSaturation">
-                                            Saturation
+                                            <span data-i18n="camera.saturation">Saturation</span>
                                             <span id="cameraSaturationValue">1.0</span>
                                         </label>
                                         <input type="range"
@@ -650,7 +652,7 @@
 
                                     <div class="camera-control-slider">
                                         <label for="cameraSharpness">
-                                            Sharpness
+                                            <span data-i18n="camera.sharpness">Sharpness</span>
                                             <span id="cameraSharpnessValue">1.0</span>
                                         </label>
                                         <input type="range"
@@ -665,7 +667,7 @@
 
                                     <div class="camera-control-slider camera-exposure-slider">
                                         <label for="cameraExposure">
-                                            Exposure
+                                            <span data-i18n="camera.exposure">Exposure</span>
                                             <span id="cameraExposureValue">0.0</span>
                                         </label>
                                         <input type="range"
@@ -2440,8 +2442,8 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="/static/chart.umd.min.js"></script>
-<script src="/static/i18n.js?v=20261030-ux2c"></script>
-<script src="/static/runtime-caps.js?v=20261030-ux2c"></script>
+<script src="/static/i18n.js?v=20261030-ux3a"></script>
+<script src="/static/runtime-caps.js?v=20261030-ux3a"></script>
 <script>
     // Server already resolved "auto" (stored ui.language, or an
     // Accept-Language guess) to a concrete locale for <html lang> above -
@@ -2451,23 +2453,23 @@
     // weather.js is untouched until those call I18N.t()/plural() directly.
     window.I18N.init("{{ ui_language }}").then(() => window.I18N.applyStaticDom());
 </script>
-<script src="{{ url_for('static', filename='app-dialog.js') }}?v=20261030-ux2c"></script>
+<script src="{{ url_for('static', filename='app-dialog.js') }}?v=20261030-ux3a"></script>
 <script src="{{ url_for('static', filename='chat-emoji.js') }}?v=20260821-domain-split"></script>
 <script src="{{ url_for('static', filename='chat-photo.js') }}?v=20260821-domain-split"></script>
-<script src="{{ url_for('static', filename='chat-telemetry.js') }}?v=20261030-ux2c"></script>
-<script src="{{ url_for('static', filename='chat-camera.js') }}?v=20261030-ux2c"></script>
-<script src="{{ url_for('static', filename='camera-ip.js') }}?v=20261030-ux2c"></script>
-<script src="{{ url_for('static', filename='camera-ip-controls.js') }}?v=20261030-ux2c"></script>
-<script src="{{ url_for('static', filename='camera-sources.js') }}?v=20261030-ux2c"></script>
-<script src="{{ url_for('static', filename='camera-diag.js') }}?v=20261030-ux2c"></script>
-<script src="{{ url_for('static', filename='chat-map.js') }}?v=20261030-ux2c"></script>
-<script src="{{ url_for('static', filename='chat-updates-security.js') }}?v=20261030-ux2c"></script>
-<script src="{{ url_for('static', filename='targets.js') }}?v=20261030-ux2c"></script>
-<script src="/static/files.js?v=20261030-ux2c"></script>
-<script src="{{ url_for('static', filename='chat-views.js') }}?v=20261030-ux2c"></script>
-<script src="/static/chat.js?v=20261030-ux2c"></script>
-<script src="/static/mobile-layout.js?v=20261030-ux2c"></script>
-<script src="/static/media.js?v=20261030-ux2c"></script>
+<script src="{{ url_for('static', filename='chat-telemetry.js') }}?v=20261030-ux3a"></script>
+<script src="{{ url_for('static', filename='chat-camera.js') }}?v=20261030-ux3a"></script>
+<script src="{{ url_for('static', filename='camera-ip.js') }}?v=20261030-ux3a"></script>
+<script src="{{ url_for('static', filename='camera-ip-controls.js') }}?v=20261030-ux3a"></script>
+<script src="{{ url_for('static', filename='camera-sources.js') }}?v=20261030-ux3a"></script>
+<script src="{{ url_for('static', filename='camera-diag.js') }}?v=20261030-ux3a"></script>
+<script src="{{ url_for('static', filename='chat-map.js') }}?v=20261030-ux3a"></script>
+<script src="{{ url_for('static', filename='chat-updates-security.js') }}?v=20261030-ux3a"></script>
+<script src="{{ url_for('static', filename='targets.js') }}?v=20261030-ux3a"></script>
+<script src="/static/files.js?v=20261030-ux3a"></script>
+<script src="{{ url_for('static', filename='chat-views.js') }}?v=20261030-ux3a"></script>
+<script src="/static/chat.js?v=20261030-ux3a"></script>
+<script src="/static/mobile-layout.js?v=20261030-ux3a"></script>
+<script src="/static/media.js?v=20261030-ux3a"></script>
 <script src="/static/weather.js?v=20260815-weather-provider"></script>
 
 <div class="modal-overlay" id="wifiConnectModal" style="display:none;" onclick="closeWifiConnectModal()">

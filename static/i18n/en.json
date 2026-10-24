@@ -652,7 +652,17 @@
     "wb_incandescent": "Incandescent",
     "wb_select_tooltip": "Select the automatic white-balance mode",
     "wb_tungsten": "Tungsten",
-    "white_balance_label": "White balance"
+    "white_balance_label": "White balance",
+    "tab_mode": "Mode",
+    "tab_image": "Image",
+    "tab_lens": "Lens",
+    "defaults": "Defaults",
+    "defaults_tooltip": "Restore neutral image settings",
+    "brightness": "Brightness",
+    "contrast": "Contrast",
+    "saturation": "Saturation",
+    "sharpness": "Sharpness",
+    "exposure": "Exposure"
   },
   "media": {
     "media_gallery": "Media Gallery",
@@ -1865,9 +1875,6 @@
     "running": "Running, this takes up to a minute..."
   },
   "ipctl": {
-    "tablist_label": "Camera settings",
-    "tab_mode": "Mode",
-    "tab_lens": "Lens",
     "info_stream": "Stream",
     "info_resolution": "Resolution",
     "info_fps": "Frame rate",
@@ -1880,8 +1887,6 @@
     "quality_label": "Picture quality",
     "quality_full": "Full resolution",
     "quality_small": "Small (faster)",
-    "snapshot_hint_api": "The picture comes from the camera itself and is saved to Media.",
-    "snapshot_hint_stream": "The picture is taken from the running preview and saved to Media. Start the preview first.",
     "image_note": "Image settings are changed in the camera app.",
     "snapshot_saved": "Picture saved to Media.",
     "snapshot_saved_stream": "Picture saved to Media (taken from the stream, the camera's own function was not reachable).",
@@ -1901,6 +1906,11 @@
     "lens_hint": "Positions are the camera's own steps, not a magnification. The position is read when this tab opens and after each move.",
     "lens_reading": "Reading the lens position...",
     "lens_moving": "Moving the lens...",
-    "lens_not_arrived": "The lens has not reached the position yet; the number shown is the camera's own reading."
+    "lens_not_arrived": "The lens has not reached the position yet; the number shown is the camera's own reading.",
+    "snapshot_hint_api_full": "Full-resolution picture from the camera itself, saved to Media.",
+    "snapshot_hint_api_small": "Small picture from the camera itself, saved to Media.",
+    "snapshot_hint_stream_running": "The picture is taken from the running preview and saved to Media.",
+    "snapshot_hint_stream_stopped": "Start the preview first: the picture is taken from the running preview.",
+    "info_reconnect": "Reconnect"
   }
 }

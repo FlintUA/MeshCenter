@@ -145,8 +145,23 @@ if the right existed) was refused by the camera with `rspCode -26`; the client r
 `right` = `lens_control`, command `StartZoomFocus`. Position after the attempt: zoom 22, focus 222, unchanged.
 This confirms the real error code (the code `-26` previously came only from third-party documentation).
 
+### Lens zoom with an account that has lens rights (Step B, same day, Flint's go)
+
+Start position (read first): **zoom 22, focus 222**. Two commands only, through the client's `set_zoom` (range checked,
+rate limited, read back):
+
+| Step | Result |
+| --- | --- |
+| `ZoomPos` 21 (one unit) | accepted; read-back 21, `settled` true after 2.6 s (includes the range read and two 0.4 s polls); zoom stayed 21 |
+| focus after the move | 221 (the camera's autofocus followed the zoom by one unit and stayed there) |
+| `ZoomPos` 22 (back) | accepted; read-back 22, `settled` true after 1.4 s |
+| focus after the return | 221 for about a second, then **222** |
+| End position (read last) | **zoom 22, focus 222**: identical to the start |
+
+So `ZoomPos` reads back exactly, one unit takes about 1 to 2.5 s including polling, and the lens returned to its original
+position; the focus is the camera's own autofocus (the client never writes it). No other command was sent.
+
 ## 10. Still to confirm
 
-* How long the lens takes to settle after a move, and whether `ZoomPos` reads back exactly (Step B, needs an
-  account with lens rights).
-* Focus writes: not implemented; only the position and range are read.
+* Larger moves (several units) and the time they take; nothing larger than one unit was tried on purpose.
+* Focus writes: not implemented; only the position and range are read, and the camera's autofocus follows zoom by itself.

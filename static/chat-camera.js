@@ -29,6 +29,11 @@ function showCameraFeed() {
     const img = document.getElementById('videoFeed');
     if (img) {
         img.classList.remove('camera-stream-hidden');
+        // the frame box follows the picture's aspect ratio (CSS --camera-aspect, used on a phone)
+        const view = document.getElementById('videoView');
+        if (view && img.naturalWidth > 0 && img.naturalHeight > 0) {
+            view.style.setProperty('--camera-aspect', `${img.naturalWidth} / ${img.naturalHeight}`);
+        }
     }
     setCameraFeedLoading(false);
 }

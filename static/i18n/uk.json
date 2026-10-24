@@ -1722,7 +1722,14 @@
     "theme_mode_light": "Світла",
     "theme_mode_dark": "Темна",
     "theme_mode_fixed_light": "Завжди світла",
-    "theme_mode_fixed_dark": "Завжди темна"
+    "theme_mode_fixed_dark": "Завжди темна",
+    "panel_hide_base": "Приховати панель Base",
+    "panel_show_base": "Показати панель Base",
+    "panel_hide_nodes": "Приховати панель вузлів",
+    "panel_show_nodes": "Показати панель вузлів",
+    "mobile_open_base": "Відкрити сторінку Base",
+    "mobile_open_nodes": "Відкрити сторінку вузлів",
+    "mobile_back": "Назад до робочої області"
   },
   "ipcamera": {
     "title": "Мережеві камери",
@@ -1799,7 +1806,9 @@
     "err_rate_limited": "Забагато змін. Повторіть за хвилину.",
     "err_storage": "Не вдалося зберегти: помилка запису.",
     "err_generic": "Не вдалося зберегти камеру.",
-    "err_generic_code": "Не вдалося зберегти камеру (код: {code}, HTTP {status})."
+    "err_generic_code": "Не вдалося зберегти камеру (код: {code}, HTTP {status}).",
+    "profile_sub_short": "Суб (рекомендовано)",
+    "profile_main_short": "Основний"
   },
   "camdiag": {
     "title": "Діагностика камери",

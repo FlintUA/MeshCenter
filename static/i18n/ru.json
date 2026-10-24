@@ -1722,7 +1722,14 @@
     "theme_mode_light": "Светлая",
     "theme_mode_dark": "Тёмная",
     "theme_mode_fixed_light": "Всегда светлая",
-    "theme_mode_fixed_dark": "Всегда тёмная"
+    "theme_mode_fixed_dark": "Всегда тёмная",
+    "panel_hide_base": "Скрыть панель Base",
+    "panel_show_base": "Показать панель Base",
+    "panel_hide_nodes": "Скрыть панель узлов",
+    "panel_show_nodes": "Показать панель узлов",
+    "mobile_open_base": "Открыть страницу Base",
+    "mobile_open_nodes": "Открыть страницу узлов",
+    "mobile_back": "Назад к рабочей области"
   },
   "ipcamera": {
     "title": "Сетевые камеры",
@@ -1799,7 +1806,9 @@
     "err_rate_limited": "Слишком много изменений. Повторите через минуту.",
     "err_storage": "Не удалось сохранить: ошибка записи.",
     "err_generic": "Не удалось сохранить камеру.",
-    "err_generic_code": "Не удалось сохранить камеру (код: {code}, HTTP {status})."
+    "err_generic_code": "Не удалось сохранить камеру (код: {code}, HTTP {status}).",
+    "profile_sub_short": "Суб (рекомендуется)",
+    "profile_main_short": "Основной"
   },
   "camdiag": {
     "title": "Диагностика камеры",

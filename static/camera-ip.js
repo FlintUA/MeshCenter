@@ -118,12 +118,37 @@
         return Boolean(status && status.source_type === 'rtsp');
     }
 
+    // On a phone the stream picker is narrow: the short labels ("Sub (recommended)") keep it readable.
+    function narrowViewport() {
+        return typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 768px)').matches;
+    }
+
+    function labelProfiles() {
+        const select = el('ipCameraProfile');
+        if (!select || !select.options) return;
+        const short = narrowViewport();
+        for (const option of Array.from(select.options)) {
+            const key = option.value === 'main' ? 'ipcamera.profile_main' : 'ipcamera.profile_sub';
+            const text = t(short ? key + '_short' : key);
+            if (text.indexOf('[[') !== 0) option.textContent = text; // catalog not loaded yet: keep what is there
+        }
+    }
+
+    // The frame box follows the picture's own aspect ratio (CSS: --camera-aspect), not a fixed height.
+    function setAspect(width, height) {
+        const view = el('videoView');
+        if (!view || !view.style) return;
+        if (width > 0 && height > 0) view.style.setProperty('--camera-aspect', width + ' / ' + height);
+        else view.style.removeProperty('--camera-aspect');
+    }
+
     function applyModeClass() {
         const view = el('videoView');
         if (view) view.classList.toggle('camera-ip-mode', handles());
         const select = el('ipCameraProfile');
         if (select) {
             select.style.display = handles() ? '' : 'none';
+            labelProfiles();
             if (handles()) select.value = status.profile || 'sub';
         }
     }
@@ -219,6 +244,7 @@
     function stop() {
         generation += 1;
         mode = 'none';
+        setAspect(0, 0);
         overlayActive = false;
         stickyMessage = false;
         const subLine = document.querySelector('#cameraLoadingPlaceholder .camera-loading-text');
@@ -244,7 +270,11 @@
         if (!img) return;
         mode = 'mjpeg';
         setMjpegLayout(true);
-        img.onload = () => { if (gen === generation && typeof showCameraFeed === 'function') showCameraFeed(); };
+        img.onload = () => {
+            if (gen !== generation) return;
+            setAspect(img.naturalWidth, img.naturalHeight);
+            if (typeof showCameraFeed === 'function') showCameraFeed();
+        };
         img.onerror = () => {
             if (gen !== generation) return;
             showMessage(t('ipcamera.error_mjpeg_failed'), false);
@@ -378,8 +408,12 @@
             teardownVideo();
             showMessage(t('ipcamera.error_not_supported'), false, true);
         }, FIRST_FRAME_TIMEOUT_MS);
+        const reportSize = () => { if (gen === generation) setAspect(video.videoWidth, video.videoHeight); };
+        video.addEventListener('loadedmetadata', reportSize);
+        video.addEventListener('resize', reportSize);
         video.addEventListener('playing', () => {
             if (gen !== generation) return;
+            reportSize();
             clearTimeout(firstFrameTimer);
             playing = true;
             overlayActive = false;
@@ -523,6 +557,11 @@
         if (select) select.addEventListener('change', () => changeProfile(select.value));
         const button = el('ipCameraReconnectBtn');
         if (button) button.addEventListener('click', () => reconnect());
+        if (typeof window.matchMedia === 'function') {
+            const mq = window.matchMedia('(max-width: 768px)');
+            if (typeof mq.addEventListener === 'function') mq.addEventListener('change', labelProfiles);
+        }
+        labelProfiles();
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wireControls);
     else wireControls();
@@ -531,6 +570,6 @@
         handles, start, stop, refresh, reconnect, changeProfile,
         // exported for tests
         lastError: () => lastError,
-        _helpers: { reopenStream, startUnsupported, progressText, mseSupports, liveEdgeTarget, stateMessageKey, isTerminal, infoLine, mseConstructor, TARGET_LEAD_S },
+        _helpers: { reopenStream, startUnsupported, labelProfiles, setAspect, progressText, mseSupports, liveEdgeTarget, stateMessageKey, isTerminal, infoLine, mseConstructor, TARGET_LEAD_S },
     };
 })();

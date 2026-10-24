@@ -2,7 +2,7 @@
 #
 # Build decisions (see docs/Docker_Installation.md and
 # docs/architecture/docker-blockers.md):
-#  * python:3.11-slim - no Raspberry Pi OS base needed: the camera/libcamera
+#  * python:3.11-slim-trixie (Debian 13, pinned) - no Raspberry Pi OS base needed: the camera/libcamera
 #    import is already guarded, and this image ships no camera, GPIO, I2C,
 #    BLE or serial support. TCP radios only (network cameras need ffmpeg: not included yet, see below).
 #  * ONE container, TWO OS processes, TWO separate venvs - the GPLv3
@@ -23,7 +23,9 @@
 #  * Redistribution note: an image containing the adapter venv redistributes
 #    GPLv3 code. Build locally; do not publish it before the D0 section 5
 #    documentation gap is closed.
-FROM python:3.11-slim
+# Pinned on purpose (DK5): python:3.11-slim silently moved from Debian 12 to 13 once. This is the system the
+# running image already uses; change it only deliberately, with a release note.
+FROM python:3.11-slim-trixie
 
 ARG MESHCENTER_VERSION=unknown
 ARG PUID=1026

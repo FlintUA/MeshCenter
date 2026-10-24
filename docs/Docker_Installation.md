@@ -103,6 +103,8 @@ variant (building on the NAS itself).
 
 ### 2. Build the image on your PC
 
+The base image is pinned to `python:3.11-slim-trixie` (Debian 13, the system the running image already uses). It is changed only on purpose, with a release note, never by a moving tag.
+
 Build from a **release tag**, not from whatever `main` happens to be:
 
 ```bash

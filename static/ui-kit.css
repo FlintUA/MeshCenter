@@ -4898,8 +4898,8 @@ video.camera-stream {
     inset: 0;
 }
 
-.camera-ip-mode .camera-control-tabs,
-.camera-ip-mode #videoControls {
+.camera-ip-mode #videoControls,
+.camera-ip-mode #cameraControlTabImage {
     display: none !important;
 }
 
@@ -4924,6 +4924,11 @@ video.camera-stream {
     color: var(--mc-text-primary, #111827);
     cursor: pointer;
     font: inherit;
+}
+
+/* the network cameras card spans the whole Devices grid: squeezed into one narrow column its rows and buttons did not fit */
+.peripheral-card.mc-ipcam-card {
+    grid-column: 1 / -1;
 }
 
 .mc-ipcam-card .mc-ipcam-list {
@@ -4964,8 +4969,11 @@ video.camera-stream {
 
 .mc-ipcam-row-actions {
     display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     gap: 6px;
-    flex: 0 0 auto;
+    flex: 1 1 280px;
+    min-width: 0;
 }
 
 .mc-ipcam-row-actions .device-action-btn {
@@ -5009,7 +5017,8 @@ video.camera-stream {
 
 .mc-ipcam-two {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    /* two columns only when each has room for a full option text ("Sub stream (recommended)"), else one */
+    grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
     gap: 10px;
 }
 
@@ -5026,11 +5035,9 @@ video.camera-stream {
     min-height: 0;
 }
 
+/* the footer is the standard dialog footer (.mc-dialog-actions: equal, full-size buttons, stacked on a phone) */
 .mc-ipcam-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    margin-top: 12px;
+    margin-top: 14px;
 }
 
 /* ?camdiag=1 panel (CAM2-M) */
@@ -5076,6 +5083,17 @@ video.camera-stream {
     .mc-ipcam-row {
         flex-direction: column;
         align-items: stretch;
+    }
+
+    /* a column: the flex bases of the text and the actions would be heights here, and the buttons share the width */
+    .mc-ipcam-row-main,
+    .mc-ipcam-row-actions {
+        flex: 0 0 auto;
+    }
+
+    .mc-ipcam-row-actions .device-action-btn {
+        flex: 1 1 auto;
+        min-height: 44px;
     }
 }
 
@@ -5130,52 +5148,204 @@ video.camera-stream {
     overflow-y: auto;
 }
 
-/* a network camera's card: one column that may shrink (the workspace is only about 440 px wide between the two
-   side panels at 1280 px), and a header that wraps its pickers below the title instead of squeezing it */
-.camera-ip-mode .video-panel {
+/* The Camera card is one component for every source type (CSI, USB, network): one column that may shrink (the
+   workspace is only about 440 px wide between the two side panels at 1280 px), and the SAME header - title on
+   the left, source picker and power button on the right, wrapping below the title when it does not fit - so
+   switching sources never moves it. The picker has one fixed width for the same reason. */
+.video-view .video-panel {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none !important;
+    grid-auto-rows: max-content;
+    align-content: start;
+    overflow-y: auto !important;
 }
 
-.camera-ip-mode .video-header.mc-workspace-header {
+.video-view .video-header.mc-workspace-header {
     height: auto;
     min-height: 72px;
     flex-wrap: wrap;
     row-gap: 8px;
 }
 
-.ip-camera-tabs {
-    display: flex;
-    gap: 6px;
-    margin-bottom: 10px;
-    overflow-x: auto;
+.video-view .video-header-actions {
+    flex-wrap: wrap;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.video-view .video-header-actions .camera-source-select {
+    width: 220px;
+    max-width: 100%;
+}
+
+/* the tab row and the status line share one bar: the status sits at the right end, and drops under the tabs
+   (still right-aligned) when the card is too narrow for both, instead of overlapping them */
+.video-view .video-info-bar {
+    flex-wrap: wrap;
+    row-gap: 4px;
+    align-items: flex-end;
+}
+
+.video-view .camera-control-tab {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+.video-view .camera-live-status {
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    min-width: 0;
+    padding-bottom: 8px;
+}
+
+/* local camera controls wrap inside the card at any workspace width (three fixed columns were clipped when both
+   side panels are open and the card is only about 424 px wide) */
+.video-view .camera-basic-controls-grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+}
+
+.video-view .camera-settings-row {
+    flex-wrap: wrap;
+}
+
+/* A wide card (side panels hidden): Mode becomes two columns - the facts compact on the left, Take picture with its
+   quality and hint on the right - instead of a tall single column with an empty right half. Sized by the card
+   (container query), not the window, since the card is 424 px wide with both side panels open. */
+.ip-camera-controls {
+    container-type: inline-size;
+}
+
+@container (min-width: 640px) {
+    #ipPanelMode {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(220px, 300px);
+        column-gap: 24px;
+        align-items: start;
+    }
+
+    #ipPanelMode .ip-info-grid {
+        grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+        gap: 0 20px;
+        margin-bottom: 0;
+    }
+
+    #ipPanelMode .ip-info-grid > .ip-info-row:first-child {
+        grid-column: 1 / -1;
+    }
+
+    #ipPanelMode .ip-info-row {
+        grid-template-columns: max-content minmax(0, 1fr);
+        min-height: 28px;
+        column-gap: 12px;
+    }
+
+    #ipPanelMode .ip-info-label {
+        white-space: nowrap;
+    }
+
+    #ipPanelMode .ip-section {
+        padding: 0 0 0 20px;
+        border-top: 0;
+        border-left: 1px solid var(--mc-border-soft, #e5e8ec);
+    }
+
+    #ipPanelMode .ip-snapshot-row {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    #ipPanelMode .ip-image-note {
+        grid-column: 1 / -1;
+        margin-top: 6px;
+    }
+}
+
+/* the picture box follows the picture's own aspect ratio (--camera-aspect / --camera-ratio, set when the first
+   frame is known): no black bars above and below. Its height is capped so a wide card cannot push the controls
+   off the screen; the width shrinks with the cap to keep the ratio. */
+/* the picture runs edge to edge in the card (full size), so its corners are square on a desktop (on a phone the picture is inset and keeps its rounding): rounded corners against the
+   card's straight side edges looked wrong, and an inset frame would cost picture size */
+@media (min-width: 769px) {
+    /* the "connecting" card fills the picture box too: no inset border or rounding while the camera (re)connects */
+    .video-view .camera-loading-placeholder {
+        inset: 0;
+        border: 0;
+        border-radius: 0;
+    }
+
+    .video-view .video-frame-wrap,
+    .video-view .video-frame-wrap .camera-stream,
+    .video-view .video-frame-wrap .camera-freeze-frame {
+        border-radius: 0 !important;
+    }
+}
+
+.video-view .video-frame-wrap {
+    flex: 0 0 auto !important;
+    width: min(100%, calc(62vh * var(--camera-ratio, 1.7778))) !important;
+    height: auto !important;
+    margin: 0 auto !important;
+    padding: 0 !important;
+    aspect-ratio: var(--camera-aspect, 16 / 9);
 }
 
 .ip-panel[hidden] {
     display: none;
 }
 
+/* Mode: a tidy label / value grid. Two columns on a desktop, one on a phone. Labels are muted and left-aligned,
+   the value sits right next to its label. */
 .ip-info-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(140px, 100%), 1fr));
-    gap: 6px 16px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px 24px;
     margin-bottom: 12px;
 }
 
+/* the stream picker has the room it needs on a row of its own; the facts below it run in two columns */
+.ip-info-grid > .ip-info-row:first-child {
+    grid-column: 1 / -1;
+}
+
 .ip-info-row {
-    display: flex;
-    justify-content: space-between;
-    gap: 8px;
+    display: grid;
+    grid-template-columns: 6.5em minmax(0, 1fr);
+    align-items: center;
+    column-gap: 10px;
+    min-height: 32px;
     font-size: 0.9em;
 }
 
 .ip-info-label,
 .ip-hint {
     color: var(--mc-text-secondary, #6b7280);
+    text-align: left;
+    overflow-wrap: anywhere;
 }
 
 .ip-info-value {
     font-weight: 600;
-    text-align: right;
+    text-align: left;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.ip-info-stream {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 8px;
+}
+
+.ip-info-stream .ip-select {
+    flex: 0 1 auto;
+    max-width: 100%;
+    font-weight: 400;
+}
+
+.ip-reconnect-btn {
+    width: auto;
+    white-space: nowrap;
 }
 
 .ip-section {
@@ -5195,8 +5365,14 @@ video.camera-stream {
     gap: 10px;
 }
 
+/* sized to its own text (the standard button rules give it a fixed width that clipped the longer translations) */
 .ip-snapshot-btn {
     min-height: 44px;
+    width: auto;
+    max-width: 100%;
+    flex: 0 0 auto;
+    padding-inline: 18px;
+    white-space: nowrap;
 }
 
 .ip-quality {
@@ -5398,7 +5574,7 @@ video.camera-stream {
     }
 
     /* the live picture box follows the picture's aspect ratio (set from the video/image size), no black bars */
-    .video-frame-wrap {
+    .video-view .video-frame-wrap {
         flex: 0 0 auto !important;
         width: auto !important;
         height: auto !important;
@@ -5450,30 +5626,34 @@ video.camera-stream {
     }
 
     /* network camera controls: the card scrolls as a whole, tap-size targets, the lens slider thumb is 44 px */
-    .camera-ip-mode .video-panel {
+    .video-view .video-panel {
         display: flex !important;
         flex-direction: column;
         overflow-y: auto !important;
     }
 
-    .camera-ip-mode .video-panel > * {
+    .video-view .video-panel > * {
         flex-shrink: 0;
     }
 
     /* the header is a column here (title, then the pickers): a wrapping column would start a second, clipped column */
-    .camera-ip-mode .video-header.mc-workspace-header {
+    .video-view .video-header.mc-workspace-header {
         flex: 0 0 auto;
         flex-wrap: nowrap;
+    }
+
+    .video-view .video-header-actions .camera-source-select {
+        width: 100%;
+    }
+
+    .ip-info-grid {
+        grid-template-columns: minmax(0, 1fr);
     }
 
     .camera-ip-mode .ip-camera-controls {
         max-height: none;
         overflow-y: visible;
         padding: 10px 12px 14px;
-    }
-
-    .ip-camera-tabs .camera-control-tab {
-        min-height: 44px;
     }
 
     .ip-select {

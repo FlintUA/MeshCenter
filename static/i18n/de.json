@@ -652,7 +652,17 @@
     "wb_incandescent": "Glühlampe",
     "wb_select_tooltip": "Wähle den automatischen Weißabgleich-Modus",
     "wb_tungsten": "Glühlicht",
-    "white_balance_label": "Weißabgleich"
+    "white_balance_label": "Weißabgleich",
+    "tab_mode": "Modus",
+    "tab_image": "Bild",
+    "tab_lens": "Objektiv",
+    "defaults": "Standard",
+    "defaults_tooltip": "Neutrale Bildeinstellungen wiederherstellen",
+    "brightness": "Helligkeit",
+    "contrast": "Kontrast",
+    "saturation": "Sättigung",
+    "sharpness": "Schärfe",
+    "exposure": "Belichtung"
   },
   "media": {
     "media_gallery": "Mediengalerie",
@@ -747,7 +757,8 @@
     "bme280_ready": "Bereit",
     "bme280_incomplete": "Unvollständig",
     "bme280_detected": "Erkannt",
-    "bme280_readable": "Lesbar"
+    "bme280_readable": "Lesbar",
+    "local_cameras_not_in_docker": "Lokale CSI-/USB-Kameras sind in Docker nicht verfügbar."
   },
   "node_manager": {
     "title": "Knoten-Manager",
@@ -1785,7 +1796,7 @@
     "error_address_blocked": "Diese Kameraadresse ist nicht erlaubt. Nur Adressen im lokalen Netzwerk können verwendet werden.",
     "error_ffmpeg_missing": "ffmpeg ist auf diesem Gerät nicht installiert, daher können Netzwerkkameras nicht angezeigt werden.",
     "error_ffmpeg_missing_container": "ffmpeg ist in diesem Docker-Image noch nicht enthalten, daher können Netzwerkkameras nicht angezeigt werden.",
-    "no_ffmpeg_container": "ffmpeg ist in diesem Docker-Image noch nicht enthalten. Kameras lassen sich speichern, aber erst anzeigen, wenn es verfügbar ist.",
+    "no_ffmpeg_container": "ffmpeg ist in diesem Docker-Image noch nicht verfügbar, daher kann kein Live-Video gezeigt werden. Eine Kamera mit Reolink-Steuerung zeigt stattdessen Schnappschüsse (etwa 1 Bild/s); andere Kameras können erst gezeigt werden, wenn ffmpeg vorhanden ist.",
     "no_ffmpeg_native": "ffmpeg ist auf diesem Gerät nicht installiert. Installiere es (sudo apt install ffmpeg), um Netzwerkkameras anzuzeigen.",
     "error_viewer_limit": "Zu viele Personen sehen diese Kamera gerade an.",
     "error_no_mse_low_power": "Dieser Browser kann den Kamera-Stream nicht direkt abspielen, und der Fallback ist auf diesem leistungsschwachen Gerät abgeschaltet.",
@@ -1852,7 +1863,8 @@
     "control_err_not_supported": "Die Kamera-Steuerung ist für diese Kamera nicht eingeschaltet.",
     "control_err_rate_limited": "Zu viele Prüfungen. In einer Minute erneut versuchen.",
     "control_err_generic": "Die Kamera-Steuerung ist fehlgeschlagen (Code {code}).",
-    "control_feature_zoom_range": "Zoom (Bereich {min} bis {max})"
+    "control_feature_zoom_range": "Zoom (Bereich {min} bis {max})",
+    "snapshot_mode_label_ffmpeg": "Live-Video braucht ffmpeg, es werden Schnappschüsse gezeigt (etwa 1 Bild/s)"
   },
   "camdiag": {
     "title": "Kamera-Diagnose",
@@ -1863,9 +1875,6 @@
     "running": "Läuft, das dauert bis zu einer Minute..."
   },
   "ipctl": {
-    "tablist_label": "Kameraeinstellungen",
-    "tab_mode": "Modus",
-    "tab_lens": "Objektiv",
     "info_stream": "Stream",
     "info_resolution": "Auflösung",
     "info_fps": "Bildrate",
@@ -1878,8 +1887,6 @@
     "quality_label": "Bildqualität",
     "quality_full": "Volle Auflösung",
     "quality_small": "Klein (schneller)",
-    "snapshot_hint_api": "Das Bild kommt von der Kamera selbst und wird in Medien gespeichert.",
-    "snapshot_hint_stream": "Das Bild wird aus der laufenden Vorschau aufgenommen und in Medien gespeichert. Zuerst die Vorschau starten.",
     "image_note": "Bildeinstellungen werden in der Kamera-App geändert.",
     "snapshot_saved": "Bild in Medien gespeichert.",
     "snapshot_saved_stream": "Bild in Medien gespeichert (aus dem Stream aufgenommen, die Kamerafunktion war nicht erreichbar).",
@@ -1899,6 +1906,11 @@
     "lens_hint": "Positionen sind die eigenen Schritte der Kamera, keine Vergrößerung. Die Position wird beim Öffnen dieses Tabs und nach jeder Bewegung gelesen.",
     "lens_reading": "Objektivposition wird gelesen...",
     "lens_moving": "Objektiv bewegt sich...",
-    "lens_not_arrived": "Das Objektiv hat die Position noch nicht erreicht; die angezeigte Zahl ist die Messung der Kamera."
+    "lens_not_arrived": "Das Objektiv hat die Position noch nicht erreicht; die angezeigte Zahl ist die Messung der Kamera.",
+    "snapshot_hint_api_full": "Bild in voller Auflösung von der Kamera selbst, in Medien gespeichert.",
+    "snapshot_hint_api_small": "Kleines Bild von der Kamera selbst, in Medien gespeichert.",
+    "snapshot_hint_stream_running": "Das Bild wird aus der laufenden Vorschau aufgenommen und in Medien gespeichert.",
+    "snapshot_hint_stream_stopped": "Zuerst die Vorschau starten: Das Bild wird aus der laufenden Vorschau aufgenommen.",
+    "info_reconnect": "Neu verbinden"
   }
 }

@@ -52,8 +52,10 @@ USB/serial radio, Bluetooth, local camera (CSI and USB), e-Paper display, I2C / 
 BME280 setup, hardware-config editing, Wi-Fi/network management, device
 reboot/shutdown, in-app self-update (**update by rebuilding or loading a new image**).
 
-**Network cameras (RTSP) are not available in this image yet.** They need
-`ffmpeg`, which is not included: Debian's own `ffmpeg` package would add
+**Live video of network cameras is not available in this image yet.** It needs
+`ffmpeg`, which is not included (a camera with Reolink API control still shows
+snapshots, about one picture per second, and "Take picture" works; the Devices
+card for local CSI/USB cameras says they are not available in Docker): Debian's own `ffmpeg` package would add
 205 packages and about 625 MB (measured: 193 MB -> 818 MB on `python:3.11-slim`),
 so the Network cameras card says "ffmpeg is not available in this Docker image"
 instead. A minimal ffmpeg built in the image (RTSP/RTP input, H.264/H.265

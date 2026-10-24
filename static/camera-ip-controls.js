@@ -2,10 +2,12 @@
 // Network camera controls in the Camera card (CAM2 Phase 3b).
 //
 // A network camera has no CSI/USB mode or image controls (they stay hidden, see camera-ip.js), so this module
-// renders what such a camera really offers, below the picture:
+// renders what such a camera really offers, below the picture. The tab row is the card's one shared row (Mode /
+// Image / Lens, template + chat-camera.js); this module only fills the panels:
 //
-//   Mode  - what the stream is (resolution, frame rate, codec, bitrate, state), the Snapshot button with its
-//           quality setting (full / small), and the note that image settings are changed in the camera app.
+//   Mode  - what the stream is (stream picker with Reconnect, resolution, frame rate, codec, bitrate, state), the
+//           Snapshot button with its quality setting (full / small) and a hint that follows the real situation,
+//           and the note that image settings are changed in the camera app.
 //   Lens  - only when the camera reported zoom (a saved "Check control" result): a zoom slider in the camera's
 //           own steps. The position is read when the tab opens and after each move, never by polling. The slider
 //           is disabled while the lens moves; drags made meanwhile coalesce (the latest target wins).
@@ -177,22 +179,32 @@
         ]);
     }
 
+    // The stream picker (sub / main) and Reconnect live in the Mode tab. camera-ip.js owns their behaviour (it
+    // listens on the document, so a rebuilt panel needs no re-wiring) and fills the option texts.
+    function streamRow() {
+        const select = el('select', { id: 'ipCameraProfile', class: 'ip-select', 'aria-label': t('ipctl.info_stream') }, [
+            el('option', { value: 'sub', text: t('ipcamera.profile_sub') }),
+            el('option', { value: 'main', text: t('ipcamera.profile_main') }),
+        ]);
+        const reconnect = el('button', { type: 'button', class: 'device-action-btn device-action-secondary ip-reconnect-btn', id: 'ipCameraReconnectBtn', text: t('ipctl.info_reconnect') });
+        reconnect.style.display = 'none';
+        return el('div', { class: 'ip-info-row' }, [
+            el('span', { class: 'ip-info-label', text: t('ipctl.info_stream') }),
+            el('span', { class: 'ip-info-value ip-info-stream' }, [select, reconnect]),
+        ]);
+    }
+
     function build(status, container) {
         container.textContent = '';
         const hasLens = Boolean(status.zoom_control);
         const hasApi = status.control_type === 'reolink';
-        const tabs = el('div', { class: 'ip-camera-tabs', role: 'tablist', 'aria-label': t('ipctl.tablist_label') }, [
-            el('button', { type: 'button', class: 'camera-control-tab', id: 'ipTabMode', role: 'tab', 'aria-controls': 'ipPanelMode', text: t('ipctl.tab_mode') }),
-            hasLens ? el('button', { type: 'button', class: 'camera-control-tab', id: 'ipTabLens', role: 'tab', 'aria-controls': 'ipPanelLens', text: t('ipctl.tab_lens') }) : null,
-        ]);
-
         const quality = hasApi ? el('select', { id: 'ipSnapshotQuality', class: 'ip-select', 'aria-label': t('ipctl.quality_label') }, [
             el('option', { value: 'full', text: t('ipctl.quality_full') }),
             el('option', { value: 'small', text: t('ipctl.quality_small') }),
         ]) : null;
-        const modePanel = el('div', { class: 'ip-panel', id: 'ipPanelMode', role: 'tabpanel', 'aria-labelledby': 'ipTabMode' }, [
+        const modePanel = el('div', { class: 'ip-panel', id: 'ipPanelMode', role: 'tabpanel', 'aria-labelledby': 'cameraControlTabCamera' }, [
             el('div', { class: 'ip-info-grid' }, [
-                infoRow('ipctl.info_stream', 'ipInfoStream'),
+                streamRow(),
                 infoRow('ipctl.info_resolution', 'ipInfoResolution'),
                 infoRow('ipctl.info_fps', 'ipInfoFps'),
                 infoRow('ipctl.info_codec', 'ipInfoCodec'),
@@ -205,14 +217,14 @@
                     el('button', { type: 'button', class: 'device-action-btn device-action-primary is-primary ip-snapshot-btn', id: 'ipSnapshotBtn', text: t('ipctl.snapshot_button') }),
                     hasApi ? el('label', { class: 'ip-quality', for: 'ipSnapshotQuality' }, [el('span', { text: t('ipctl.quality_label') }), quality]) : null,
                 ]),
-                el('div', { class: 'ip-hint', text: t(hasApi ? 'ipctl.snapshot_hint_api' : 'ipctl.snapshot_hint_stream') }),
+                el('div', { class: 'ip-hint', id: 'ipSnapshotHint', text: '' }),
             ]),
             el('div', { class: 'ip-hint ip-image-note', text: t('ipctl.image_note') }),
         ]);
 
         const slider = el('input', { type: 'range', id: 'ipLensSlider', class: 'ip-lens-slider', min: '0', max: '0', step: '1', value: '0', 'aria-label': t('ipctl.lens_slider_label') });
         slider.disabled = true;
-        const lensPanel = hasLens ? el('div', { class: 'ip-panel', id: 'ipPanelLens', role: 'tabpanel', 'aria-labelledby': 'ipTabLens' }, [
+        const lensPanel = hasLens ? el('div', { class: 'ip-panel', id: 'ipPanelLens', role: 'tabpanel', 'aria-labelledby': 'cameraControlTabLens' }, [
             el('div', { class: 'ip-lens-value', id: 'ipLensValue', text: '-' }),
             slider,
             el('div', { class: 'ip-lens-focus', id: 'ipLensFocus', text: '' }),
@@ -220,12 +232,20 @@
             el('div', { class: 'ip-lens-status', id: 'ipLensStatus', role: 'status', 'aria-live': 'polite', text: '' }),
         ]) : null;
 
-        container.appendChild(tabs);
         container.appendChild(modePanel);
         if (lensPanel) container.appendChild(lensPanel);
 
-        byId('ipTabMode').addEventListener('click', () => selectTab('mode'));
-        if (hasLens) byId('ipTabLens').addEventListener('click', () => selectTab('lens'));
+        const lensTab = byId('cameraControlTabLens');
+        if (lensTab) {
+            lensTab.hidden = !hasLens;
+            if (!lensTab.dataset.wired) { // the tab belongs to the template and outlives a rebuilt panel
+                lensTab.dataset.wired = '1';
+                lensTab.addEventListener('click', () => {
+                    if (typeof window.switchCameraControlTab === 'function') window.switchCameraControlTab('lens');
+                    else selectTab('lens');
+                });
+            }
+        }
         byId('ipSnapshotBtn').addEventListener('click', takePicture);
         if (hasApi) byId('ipSnapshotQuality').addEventListener('change', (event) => saveQuality(status.source_id, event.target.value));
         if (hasLens) {
@@ -248,13 +268,15 @@
 
     function selectTab(name, silent) {
         activeTab = name === 'lens' && built && built.hasLens ? 'lens' : 'mode';
-        const modeTab = byId('ipTabMode');
-        const lensTab = byId('ipTabLens');
+        const modeTab = byId('cameraControlTabCamera');
+        const lensTab = byId('cameraControlTabLens');
+        const imageTab = byId('cameraControlTabImage');
         const modePanel = byId('ipPanelMode');
         const lensPanel = byId('ipPanelLens');
         const showLens = activeTab === 'lens';
         if (modeTab) { modeTab.classList.toggle('active', !showLens); modeTab.setAttribute('aria-selected', String(!showLens)); }
         if (lensTab) { lensTab.classList.toggle('active', showLens); lensTab.setAttribute('aria-selected', String(showLens)); }
+        if (imageTab) { imageTab.classList.toggle('active', false); imageTab.setAttribute('aria-selected', 'false'); }
         if (modePanel) modePanel.hidden = showLens;
         if (lensPanel) lensPanel.hidden = !showLens;
         if (showLens && lens && !silent) lens.refresh(); // read when the tab is opened
@@ -269,7 +291,6 @@
     }
 
     function renderInfo(status) {
-        setText('ipInfoStream', status.profile === 'main' ? t('ipcamera.profile_main') : t('ipcamera.profile_sub'));
         setText('ipInfoResolution', status.resolution || '-');
         setText('ipInfoFps', status.fps ? status.fps + ' FPS' : '-');
         setText('ipInfoCodec', status.codec ? String(status.codec).toUpperCase() : '-');
@@ -277,13 +298,24 @@
         const helpers = window.MCIpCamera && window.MCIpCamera._helpers;
         let text = '-';
         if (helpers) text = helpers.isTerminal(status) ? t('ipcamera.state_error') : t(helpers.stateMessageKey(status));
+        if (status.ffmpeg_available === false && status.snapshot_fallback) text = t('ipcamera.snapshot_status'); // pictures, no live video
         setText('ipInfoState', text);
         const quality = byId('ipSnapshotQuality');
+        const wanted = localQuality || status.snapshot_quality || 'full';
         if (quality) {
-            const wanted = localQuality || status.snapshot_quality || 'full';
             if (localQuality && localQuality === status.snapshot_quality) localQuality = null;
             if (quality.value !== wanted) quality.value = wanted;
         }
+        setText('ipSnapshotHint', t(snapshotHintKey(status, wanted)));
+        const reconnect = byId('ipCameraReconnectBtn');
+        if (reconnect && helpers) reconnect.style.display = helpers.isTerminal(status) || status.state === 'reconnecting' ? '' : 'none';
+    }
+
+    // What Take picture will really do right now: the camera itself makes the picture (Reolink control), or it is
+    // cut from the running preview (so the preview has to run first).
+    function snapshotHintKey(status, quality) {
+        if (status.control_type === 'reolink') return quality === 'small' ? 'ipctl.snapshot_hint_api_small' : 'ipctl.snapshot_hint_api_full';
+        return status.state === 'live' ? 'ipctl.snapshot_hint_stream_running' : 'ipctl.snapshot_hint_stream_stopped';
     }
 
     // ---------- Mode: the picture ----------
@@ -400,6 +432,8 @@
     function hide() {
         const container = byId('ipCameraControls');
         if (container) container.hidden = true;
+        const lensTab = byId('cameraControlTabLens');
+        if (lensTab) lensTab.hidden = true;
         if (rereadTimer) { clearTimeout(rereadTimer); rereadTimer = null; }
     }
 
@@ -407,9 +441,12 @@
         const container = byId('ipCameraControls');
         if (!container) return;
         if (!status || status.source_type !== 'rtsp' || !status.source_id) {
+            const wasShown = Boolean(built);
             hide();
             built = null;
             lens = null;
+            // back to a local camera: the shared tab row returns to Mode
+            if (wasShown && typeof window.switchCameraControlTab === 'function') window.switchCameraControlTab('camera');
             return;
         }
         lastStatus = status;

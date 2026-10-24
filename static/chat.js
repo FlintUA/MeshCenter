@@ -12314,6 +12314,22 @@ function renderBme280Card(hardwareBme280Data, profileId) {
 function renderCameraManagerCards(cameraManagerData, profileId) {
     const eyebrow = escapeHtml(window.I18N.t('devices.active_profile', { id: deviceDashboardValue(profileId) }));
 
+    // Docker has no CSI/USB cameras: with nothing listed (not scanned yet, or scanned and empty) show ONE line
+    // instead of a "scan" / "rescan" button that can only find nothing. Network cameras listed by the manager still show.
+    const listedCameras = Array.isArray(cameraManagerData && cameraManagerData.cameras) ? cameraManagerData.cameras : [];
+    if (window.MC_RUNTIME && window.MC_RUNTIME.mode === 'container'
+        && (!cameraManagerData || !cameraManagerData.scanned || listedCameras.length === 0)) {
+        return `
+            <section class="peripheral-card">
+                <div class="peripheral-card-header">
+                    <div>
+                        <div class="device-card-eyebrow">${eyebrow}</div>
+                        <p class="mc-ipcam-note">${escapeHtml(window.I18N.t('devices.local_cameras_not_in_docker'))}</p>
+                    </div>
+                </div>
+            </section>`;
+    }
+
     if (!cameraManagerData || !cameraManagerData.scanned) {
         return `
             <section class="peripheral-card">
@@ -12468,6 +12484,8 @@ async function onCameraSourceSelectChange(driverId) {
         await loadCameraSourceSelector();
         if (isCameraTabVisible() && cameraActive) {
             if (window.MCIpCamera) await window.MCIpCamera.refresh();
+            // a local camera: the status line still shows the previous (network) camera's numbers until its own are read
+            if (typeof loadVideoSettings === 'function' && !(window.MCIpCamera && window.MCIpCamera.handles())) await loadVideoSettings();
             refreshVideoFeed();
         }
     } catch (error) {

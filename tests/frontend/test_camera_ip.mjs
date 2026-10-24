@@ -170,7 +170,14 @@ assert.match(catalog.ipcamera.error_h265, /Switch the stream to H\.264 in the ca
 // the form source: password input is a password field with new-password autocomplete, and is cleared after sending
 {
     const src = read('camera-sources.js');
-    assert.match(src, /id="ipcamPassword" name="password" type="password"/);
+    assert.match(src, /id="ipcamPassword" name="ipcam_secret" type="password"/);
+    // UX2: password managers must not attach to the camera's own name and user name, and the footer is the standard dialog footer
+    assert.match(src, /id="ipcamName" name="ipcam_label" type="text"[^`]*\$\{noMgr\}/);
+    assert.match(src, /id="ipcamUser" name="ipcam_login" type="text"[^`]*\$\{noMgr\}/);
+    assert.match(src, /const noMgr = 'autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other"'/);
+    assert.match(src, /class="mc-dialog-actions mc-ipcam-actions"/);
+    assert.match(src, /data-dialog-action="cancel" data-ipcam-form="cancel"/);
+    assert.match(src, /data-dialog-action="confirm" data-ipcam-form="save"/);
     assert.match(src, /autocomplete="new-password"/);
     assert.match(src, /ipcamPassword'\)\.value = ''/, 'the secret is wiped from the page right after the request');
     assert.doesNotMatch(src, /console\.(log|info|debug)\([^)]*password/i, 'never logs the password');
@@ -240,7 +247,7 @@ for (const loc of ['en', 'de', 'ru', 'uk']) {
 }
 
 // snapshot mode: no MediaSource, the camera can make pictures itself (CAM2 Phase 2)
-async function snapshotSession({ snapshotStatus = 200, snapshotBody = {}, capability = true, hidden = false } = {}) {
+async function snapshotSession({ snapshotStatus = 200, snapshotBody = {}, capability = true, hidden = false, statusExtra = {}, windowExtra = {} } = {}) {
     const shown = [];
     const urls = [];
     const labels = [];
@@ -249,6 +256,7 @@ async function snapshotSession({ snapshotStatus = 200, snapshotBody = {}, capabi
     const ctx = makeWindow({
         setCameraFeedLoading: (loading, text) => shown.push(text),
         URL: { createObjectURL: () => 'blob:snap' + (counter += 1), revokeObjectURL: (u) => revoked.push(u) },
+        ...windowExtra,
     });
     ctx.win.document.hidden = hidden;
     ctx.win.document.querySelector = () => ({ style: {}, appendChild: (node) => labels.push(node) });
@@ -257,7 +265,7 @@ async function snapshotSession({ snapshotStatus = 200, snapshotBody = {}, capabi
         if (url.startsWith('/api/camera/snapshot')) {
             return { ok: snapshotStatus === 200, status: snapshotStatus, blob: async () => ({ size: 3 }), json: async () => snapshotBody };
         }
-        return { ok: true, status: 200, json: async () => ({ source_type: 'rtsp', state: 'idle', profile: 'sub', codec: null, mjpeg_fallback: 'disabled_low_power', snapshot_fallback: capability }) };
+        return { ok: true, status: 200, json: async () => ({ source_type: 'rtsp', state: 'idle', profile: 'sub', codec: null, mjpeg_fallback: 'disabled_low_power', snapshot_fallback: capability, ...statusExtra }) };
     };
     const sources = [];
     const img = { classList: { add() {}, remove() {}, toggle() {} }, set src(v) { sources.push(v); } };
@@ -282,6 +290,21 @@ async function snapshotSession({ snapshotStatus = 200, snapshotBody = {}, capabi
     await new Promise((resolve) => setTimeout(resolve, 1200));
     assert.equal(run.snapshots(), 2, 'stop() ends the polling');
 }
+// switching from a network camera to a local one ends the player: no more pictures, no overlay left behind
+{
+    const run = await snapshotSession();
+    assert.equal(run.snapshots(), 1);
+    run.ctx.win.fetch = async (url) => {
+        run.urls.push(url);
+        return { ok: true, status: 200, json: async () => ({ source_type: 'usb' }) };
+    };
+    await run.ctx.win.MCIpCamera.refresh();
+    const before = run.snapshots();
+    await new Promise((resolve) => setTimeout(resolve, 1300));
+    assert.equal(run.snapshots(), before, 'the snapshot loop of the network camera is stopped');
+    assert.ok(!run.urls.slice(-3).some((u) => u.includes('/stream/fmp4')), 'no stream is reopened');
+    assert.equal(run.ctx.win.MCIpCamera.handles(), false);
+}
 {
     const run = await snapshotSession({ capability: false });
     assert.equal(run.snapshots(), 0, 'without the camera capability the message stays and nothing is polled');
@@ -294,6 +317,21 @@ async function snapshotSession({ snapshotStatus = 200, snapshotBody = {}, capabi
     await new Promise((resolve) => setTimeout(resolve, 1200));
     assert.equal(run.snapshots(), 1, 'a refused viewer stops asking');
     run.ctx.win.MCIpCamera.stop();
+}
+// Docker without ffmpeg: a camera with Reolink control shows snapshots (even in a browser WITH MediaSource), no stream is opened
+{
+    const mse = { MediaSource: function MediaSource() {} };
+    mse.MediaSource.isTypeSupported = () => true;
+    const run = await snapshotSession({ statusExtra: { ffmpeg_available: false, state: 'idle' }, windowExtra: mse });
+    assert.ok(!run.urls.some((u) => u.includes('/stream/fmp4')), 'no stream is opened without ffmpeg');
+    assert.equal(run.snapshots(), 1);
+    assert.equal(run.labels[0].textContent, 'ipcamera.snapshot_mode_label_ffmpeg', 'the label says live video needs ffmpeg');
+    run.ctx.win.MCIpCamera.stop();
+    // without the API there is nothing to show: the existing message path stays
+    const plain = await snapshotSession({ capability: false, statusExtra: { ffmpeg_available: false, state: 'ffmpeg_missing' }, windowExtra: mse });
+    assert.equal(plain.snapshots(), 0);
+    assert.ok(plain.shown.includes('ipcamera.error_ffmpeg_missing'));
+    plain.ctx.win.MCIpCamera.stop();
 }
 {
     const run = await snapshotSession({ hidden: true });

@@ -370,3 +370,15 @@ def test_the_quality_setting_rejects_anything_else(env):
         assert response.status_code == 400, body
     assert env["store"].get_source(env["id"])["control"]["snapshot_quality"] == "full"
     assert env["client"].put("/api/camera/sources/ip:nope/control/settings", json={"snapshot_quality": "full"}).status_code == 404
+
+
+# ---------------------------------------------------------------- ffmpeg availability in the status (UX2: Docker without ffmpeg)
+
+def test_the_status_says_whether_ffmpeg_exists_so_the_player_can_fall_back_to_snapshots(env, monkeypatch):
+    _post(env, "/probe")  # the camera can make pictures itself
+    env["driver"]._control_cache = (-1e9, {})
+    monkeypatch.setattr(rs, "ffmpeg_cmd", lambda: [])
+    status = env["client"].get("/api/camera/status").get_json()
+    assert status["ffmpeg_available"] is False and status["snapshot_fallback"] is True
+    monkeypatch.setattr(rs, "ffmpeg_cmd", lambda: ["/usr/bin/ffmpeg"])
+    assert env["client"].get("/api/camera/status").get_json()["ffmpeg_available"] is True

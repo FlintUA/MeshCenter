@@ -136,10 +136,17 @@ focus position), not from ability names alone.
   restart, two browsers open), not caused by this feature. Host: 7.5 to 21.5% of all 4 cores, 50 to 54 C, no
   throttling, no `[LISTENER EXITS]` in the journal.
 
+### View-only account (Step A, same day)
+
+With the account reduced to view-only rights: login works, `GetAbility`, `GetZoomFocus` (position 22 / 222, ranges
+0..28 and 0..238) and the snapshot all work (`probe` reports snapshot, zoom read and focus read, nothing denied,
+because the probe never writes). One `StartZoomFocus` to the CURRENT position (22, so the lens cannot move even
+if the right existed) was refused by the camera with `rspCode -26`; the client reports `permission_denied`,
+`right` = `lens_control`, command `StartZoomFocus`. Position after the attempt: zoom 22, focus 222, unchanged.
+This confirms the real error code (the code `-26` previously came only from third-party documentation).
+
 ## 10. Still to confirm
 
-* The error code and text a **view-only** account gets for `StartZoomFocus` (expected `-26` "ability error",
-  seen in third-party documentation) and for the other commands. Needs a view-only account; the account in
-  Step A is full-function, so no zoom command was sent.
-* How long the lens takes to settle after a move, and whether `ZoomPos` reads back exactly (Step B).
+* How long the lens takes to settle after a move, and whether `ZoomPos` reads back exactly (Step B, needs an
+  account with lens rights).
 * Focus writes: not implemented; only the position and range are read.

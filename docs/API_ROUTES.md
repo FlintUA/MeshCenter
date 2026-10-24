@@ -34,10 +34,10 @@ Auth/CSRF columns mirror `api/api_auth.py`'s own `_enforce_auth()`/`_enforce_csr
 | `/api/camera/screenshots` | GET | `api/api_camera.py:375` (`api_camera_screenshots_list`) | required | exempt |
 | `/api/camera/settings` | GET | `api/api_camera.py:273` (`api_camera_settings`) | required | exempt |
 | `/api/camera/settings` | POST | `api/api_camera.py:278` (`api_camera_update_settings`) | required | required |
-| `/api/camera/sources` | GET | `api/api_camera_sources.py:104` (`api_camera_sources_list`) | required | exempt |
-| `/api/camera/sources` | POST | `api/api_camera_sources.py:114` (`api_camera_sources_create`) | required | required |
-| `/api/camera/sources/<source_id>` | DELETE | `api/api_camera_sources.py:148` (`api_camera_sources_delete`) | required | required |
-| `/api/camera/sources/<source_id>` | PUT | `api/api_camera_sources.py:131` (`api_camera_sources_update`) | required | required |
+| `/api/camera/sources` | GET | `api/api_camera_sources.py:106` (`api_camera_sources_list`) | required | exempt |
+| `/api/camera/sources` | POST | `api/api_camera_sources.py:119` (`api_camera_sources_create`) | required | required |
+| `/api/camera/sources/<source_id>` | DELETE | `api/api_camera_sources.py:153` (`api_camera_sources_delete`) | required | required |
+| `/api/camera/sources/<source_id>` | PUT | `api/api_camera_sources.py:136` (`api_camera_sources_update`) | required | required |
 | `/api/camera/status` | GET | `api/api_camera.py:264` (`api_camera_status`) | required | exempt |
 | `/api/camera/stop` | POST | `api/api_camera.py:295` (`api_camera_stop`) | required | required |
 | `/api/camera/stream/fmp4` | GET | `api/api_camera.py:166` (`api_camera_stream_fmp4`) | required | exempt |

@@ -165,3 +165,27 @@ position; the focus is the camera's own autofocus (the client never writes it). 
 
 * Larger moves (several units) and the time they take; nothing larger than one unit was tried on purpose.
 * Focus writes: not implemented; only the position and range are read, and the camera's autofocus follows zoom by itself.
+
+## 11. Pictures into the Media gallery (Phase 3a, backend)
+
+`POST /api/camera/screenshot` with a network camera active (it used to answer 409) takes one picture and stores it
+in the existing gallery (`camera/ip_snapshot.py`, `camera/frame_grab.py`). Neither way opens a second RTSP session
+or touches the running preview.
+
+| Case | How | Notes |
+| --- | --- | --- |
+| Source with Reolink control | the camera's own `Snap` (a separate HTTP request), full resolution by default | the source setting `control.snapshot_quality` = `full` (default) or `small` (`snapType=sub`, 640x360, about 18 KB) |
+| No API, preview running | the init segment and the newest keyframe fragment are copied out of the existing relay into a one-shot ffmpeg on stdin (one frame, one JPEG) | never contacts the camera; one frame decode, noticeable for a 4K main stream on a Pi Zero (15 s timeout) |
+| No API, no preview | refused: `preview_not_running` ("start the preview first") | nothing is started for a picture |
+| API unreachable (timeout, connection, camera error) and the preview runs | falls back to the frame from the stream (`method: stream_frame`) | a wrong password, a missing right or an unconfirmed certificate are NOT hidden by the fallback |
+
+* Rate limit: one picture per 2 s per source (`429 rate_limited`, `retry_after_s`).
+* Storage: the gallery limits apply (500 MB / 30 days, `camera.cleanup_old_screenshots`, run before the save). Less than
+  50 MB (or three times the picture) free, or ENOSPC while writing, is `507 storage_full`; the picture is written under
+  a temporary name and renamed, so a failed save leaves no partial file.
+* Name: `MC_<ascii-slug-of-source-name>_YYYY-MM-DD_HH-MM-SS.jpg`; the real name is in the metadata.
+* Metadata: a sidecar `<name>.jpg.json` (source id and name, time, method, profile `full`/`small`/stream profile,
+  width and height). `GET /api/camera/screenshots` returns it as `meta`; deleting a picture, delete-all and the
+  gallery cleanup remove the sidecar with it. Pictures of CSI/USB cameras have none (`meta` is `{}`).
+* The live-view fallback (section 7) keeps its own shared 1 s cache and small picture; a gallery picture is always a
+  fresh fetch (`ReolinkControlManager.capture`).

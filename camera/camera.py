@@ -698,6 +698,37 @@ def iter_screenshot_files():
     return items
 
 
+SIDECAR_SUFFIX = ".json"
+SIDECAR_KEYS = ("source_id", "source_name", "taken_at", "method", "profile", "width", "height")
+
+
+def sidecar_path(image_path):
+    """Metadata file of a network-camera picture (CAM2 Phase 3): '<name>.jpg.json'. It is not a .jpg, so
+    the gallery listing never mistakes it for a picture; it goes away with its picture."""
+    return image_path + SIDECAR_SUFFIX
+
+
+def remove_screenshot_file(image_path):
+    """Remove a picture and its metadata file; raises OSError only when the picture itself cannot be removed."""
+    os.remove(image_path)
+    try:
+        os.remove(sidecar_path(image_path))
+    except OSError:
+        pass  # most pictures (CSI/USB) have none
+
+
+def read_screenshot_meta(image_path):
+    """The whitelisted metadata of a picture, or {} (no sidecar, unreadable, not an object)."""
+    try:
+        with open(sidecar_path(image_path), "r", encoding="utf-8") as handle:
+            data = json.loads(handle.read(8192))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {k: data[k] for k in SIDECAR_KEYS if isinstance(data.get(k), (str, int))}
+
+
 def safe_screenshot_path(filename):
     filename = filename.replace("\\", "/")
     base = os.path.abspath(SCREENSHOTS_DIR)
@@ -721,7 +752,7 @@ def cleanup_old_screenshots(max_mb=500, keep_days=30):
     for full_path, rel_path, stat in files:
         if now - stat.st_mtime > keep_seconds:
             try:
-                os.remove(full_path)
+                remove_screenshot_file(full_path)
             except OSError:
                 pass
 
@@ -738,7 +769,7 @@ def cleanup_old_screenshots(max_mb=500, keep_days=30):
             break
 
         try:
-            os.remove(full_path)
+            remove_screenshot_file(full_path)
             total_size -= stat.st_size
         except OSError:
             pass
@@ -798,6 +829,7 @@ def list_screenshots():
                 "modified": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(stat.st_mtime)),
                 "date": time.strftime("%Y-%m-%d", time.localtime(stat.st_mtime)),
                 "url": f"/api/camera/screenshot/{rel_path}",
+                "meta": read_screenshot_meta(full_path),
             })
 
         files.sort(key=lambda x: x["modified_ts"], reverse=True)
@@ -817,7 +849,7 @@ def delete_screenshot(filename):
     if filepath is None or not os.path.isfile(filepath):
         return {"ok": False, "error": "File not found"}, 404
 
-    os.remove(filepath)
+    remove_screenshot_file(filepath)
     return {"ok": True, "message": f"Deleted {filename}"}, 200
 
 
@@ -826,7 +858,7 @@ def delete_all_screenshots():
 
     for full_path, rel_path, stat in iter_screenshot_files():
         try:
-            os.remove(full_path)
+            remove_screenshot_file(full_path)
             count += 1
         except OSError as e:
             print(f"[GALLERY] Could not delete {rel_path}: {e}", flush=True)

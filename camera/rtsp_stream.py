@@ -187,6 +187,20 @@ class FragmentRelay:
             cursor.last = newer[-1].seq
             return out
 
+    def snapshot_input(self, extra_fragments: int = 2) -> bytes | None:
+        """Init segment + the newest keyframe fragment (+ a couple after it): everything a one-shot decoder needs
+        for ONE picture, copied out of the stream that is already running (CAM2 Phase 3a). None when there is no
+        init segment or no keyframe fragment yet. Never opens or wakes an upstream."""
+        with self._cond:
+            if self.init is None:
+                return None
+            frags = list(self._frags)
+            sync_at = [i for i, stored in enumerate(frags) if stored.fragment.sync]
+            if not sync_at:
+                return None
+            chosen = frags[sync_at[-1]:sync_at[-1] + 1 + max(0, extra_fragments)]
+            return self.init + b"".join(stored.fragment.data for stored in chosen)
+
     def stats(self) -> dict:
         with self._cond:
             return {"fragments": len(self._frags), "bytes": self._bytes}

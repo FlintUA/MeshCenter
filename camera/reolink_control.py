@@ -187,6 +187,12 @@ class ReolinkControlManager:
         self.forget(source_id)
         return {"pinned_sha256": seen}
 
+    def capture(self, source_id: str, small: bool = False) -> bytes:
+        """A FRESH picture for the gallery (full resolution unless `small`). Separate from the shared live-view
+        cache of snapshot(): a gallery picture must be new and of its own size. Same client and lock, so it also
+        waits for any command in flight."""
+        return self._client(self._source(source_id)).snapshot(sub=bool(small))
+
     def zoom_read(self, source_id: str) -> dict:
         return self._client(self._source(source_id)).get_zoom_focus()
 

@@ -2,6 +2,7 @@
 
     POST /api/camera/sources/<id>/control/probe    login + abilities + zoom/focus read + one snapshot (never writes)
     POST /api/camera/sources/<id>/control/trust    pin the certificate the camera presents (user-confirmed SHA-256)
+    PUT  /api/camera/sources/<id>/control/settings {"snapshot_quality": "full"|"small"} (no stream restart)
     GET  /api/camera/sources/<id>/control          what is stored: type, scheme, pin, last probe (no network)
     GET  /api/camera/sources/<id>/control/zoom     read the lens position and its valid range (device units)
     POST /api/camera/sources/<id>/control/zoom     {"pos": N}: range-checked, rate limited, read back
@@ -22,6 +23,7 @@ from flask import Response, jsonify, request
 
 from api.api_camera_sources import _RateLimiter
 from camera import reolink_client as rc
+from camera import source_store as store_module
 from camera.source_store import SourceNotFound
 
 PROBE_LIMIT, PROBE_WINDOW_S = 6, 60.0
@@ -62,6 +64,27 @@ def register_camera_control_routes(app, source_store, camera_manager_state, cont
         def action():
             return jsonify({"ok": True, "control": source_store.get_source(source_id)["control"]})
         return _guard(action)
+
+    settings_limiter = _RateLimiter(30, 60.0, clock)
+
+    @app.route("/api/camera/sources/<source_id>/control/settings", methods=["PUT"])
+    @handle_errors
+    def api_camera_control_settings(source_id):
+        """The snapshot quality (`full` / `small`) of a source. Does not restart the stream (it is not an edit of the source)."""
+        if not settings_limiter.allow():
+            return jsonify({"ok": False, "error": "Too many changes, try again in a minute.", "error_code": "rate_limited"}), 429
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict) or set(data) - {"snapshot_quality"} or "snapshot_quality" not in data:
+            return jsonify({"ok": False, "error": "Send {\"snapshot_quality\": \"full\" or \"small\"}.", "error_code": "invalid_body"}), 400
+        try:
+            source = source_store.set_snapshot_quality(source_id, data["snapshot_quality"])
+        except store_module.SourceValidationError as error:
+            return jsonify({"ok": False, "error": error.message, "error_code": error.code, "field": error.field}), 400
+        except SourceNotFound:
+            return jsonify({"ok": False, "error": "Unknown camera source.", "error_code": "source_not_found"}), 404
+        except store_module.SourceStorageError:
+            return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
+        return jsonify({"ok": True, "control": source["control"]})
 
     @app.route("/api/camera/sources/<source_id>/control/probe", methods=["POST"])
     @handle_errors

@@ -12429,7 +12429,7 @@ async function loadCameraSourceSelector() {
             ? data.cameras
             : [];
 
-        if (cameras.length < 2) {
+        if (cameras.length < 1) {
             select.style.display = 'none';
             select.innerHTML = '';
             return;

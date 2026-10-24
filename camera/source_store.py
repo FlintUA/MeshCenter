@@ -322,6 +322,23 @@ class CameraSourceStore:
             self._commit(new_sources, old_secrets, old_sources, old_secrets)
             return self._public(updated, old_secrets)
 
+    def set_snapshot_quality(self, source_id: str, quality: Any) -> dict:
+        """The gallery picture size of a source (`full` / `small`). A setting only: unlike an edit it does not touch
+        the saved source's other fields, so the caller needs no driver re-sync (the live stream keeps running)."""
+        if quality not in SNAPSHOT_QUALITIES:
+            raise SourceValidationError("invalid_field", "snapshot_quality must be 'full' or 'small'.", "snapshot_quality")
+        with self._lock:
+            old_sources, old_secrets = self._load()
+            index = next((i for i, s in enumerate(old_sources) if s["id"] == source_id), None)
+            if index is None:
+                raise SourceNotFound(source_id)
+            control = {**default_control(), **(old_sources[index].get("control") or {}), "snapshot_quality": quality}
+            updated = {**old_sources[index], "control": control}
+            new_sources = list(old_sources)
+            new_sources[index] = updated
+            self._commit(new_sources, old_secrets, old_sources, old_secrets)
+            return self._public(updated, old_secrets)
+
     def delete(self, source_id: str) -> None:
         with self._lock:
             old_sources, old_secrets = self._load()

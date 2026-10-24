@@ -5111,6 +5111,144 @@ video.camera-stream {
     font-weight: 600;
 }
 
+/* Network camera controls under the picture (CAM2 Phase 3b): Mode / Lens, see static/camera-ip-controls.js */
+.ip-camera-controls {
+    flex: 0 0 auto;
+    padding: 10px 14px 14px;
+    border-top: 1px solid var(--mc-border, #d8e1ec);
+    background: var(--mc-bg-subtle, #f5f7fa);
+}
+
+.ip-camera-controls[hidden] {
+    display: none;
+}
+
+.camera-ip-mode .ip-camera-controls {
+    max-height: 42vh;
+    min-width: 0;
+    box-sizing: border-box;
+    overflow-y: auto;
+}
+
+/* a network camera's card: one column that may shrink (the workspace is only about 440 px wide between the two
+   side panels at 1280 px), and a header that wraps its pickers below the title instead of squeezing it */
+.camera-ip-mode .video-panel {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.camera-ip-mode .video-header.mc-workspace-header {
+    height: auto;
+    min-height: 72px;
+    flex-wrap: wrap;
+    row-gap: 8px;
+}
+
+.ip-camera-tabs {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 10px;
+    overflow-x: auto;
+}
+
+.ip-panel[hidden] {
+    display: none;
+}
+
+.ip-info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(140px, 100%), 1fr));
+    gap: 6px 16px;
+    margin-bottom: 12px;
+}
+
+.ip-info-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 0.9em;
+}
+
+.ip-info-label,
+.ip-hint {
+    color: var(--mc-text-secondary, #6b7280);
+}
+
+.ip-info-value {
+    font-weight: 600;
+    text-align: right;
+}
+
+.ip-section {
+    padding-top: 10px;
+    border-top: 1px solid var(--mc-border-soft, #e5e8ec);
+}
+
+.ip-section-title {
+    margin-bottom: 8px;
+    font-weight: 600;
+}
+
+.ip-snapshot-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+}
+
+.ip-snapshot-btn {
+    min-height: 44px;
+}
+
+.ip-quality {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.9em;
+}
+
+.ip-select {
+    min-height: 36px;
+    padding: 0 8px;
+    border: 1px solid var(--mc-border, #cbd5e1);
+    border-radius: 7px;
+    background: var(--mc-surface, #fff);
+    color: var(--mc-text-primary, #111827);
+}
+
+.ip-hint {
+    margin-top: 8px;
+    font-size: 0.85em;
+}
+
+.ip-lens-value {
+    margin-bottom: 8px;
+    font-size: 1.1em;
+    font-weight: 600;
+}
+
+.ip-lens-slider {
+    width: 100%;
+    margin: 8px 0;
+}
+
+.ip-lens-slider:disabled {
+    opacity: 0.55;
+}
+
+.ip-lens-focus {
+    font-size: 0.9em;
+}
+
+.ip-lens-status {
+    min-height: 1.4em;
+    margin-top: 6px;
+    font-size: 0.9em;
+}
+
+.ip-lens-status.ip-lens-error {
+    color: var(--mc-danger, #b91c1c);
+}
+
 /* ============================================================
    MOB1: one screen at a time on a narrow viewport (<= 768 px)
    Everything here is inside the media query, so a wide viewport is untouched.
@@ -5309,5 +5447,75 @@ video.camera-stream {
     .files-header .workspace-page-actions .mc-refresh-btn {
         flex: 1 1 auto;
         min-height: 44px;
+    }
+
+    /* network camera controls: the card scrolls as a whole, tap-size targets, the lens slider thumb is 44 px */
+    .camera-ip-mode .video-panel {
+        display: flex !important;
+        flex-direction: column;
+        overflow-y: auto !important;
+    }
+
+    .camera-ip-mode .video-panel > * {
+        flex-shrink: 0;
+    }
+
+    /* the header is a column here (title, then the pickers): a wrapping column would start a second, clipped column */
+    .camera-ip-mode .video-header.mc-workspace-header {
+        flex: 0 0 auto;
+        flex-wrap: nowrap;
+    }
+
+    .camera-ip-mode .ip-camera-controls {
+        max-height: none;
+        overflow-y: visible;
+        padding: 10px 12px 14px;
+    }
+
+    .ip-camera-tabs .camera-control-tab {
+        min-height: 44px;
+    }
+
+    .ip-select {
+        min-height: 44px;
+    }
+
+    .ip-lens-slider {
+        -webkit-appearance: none;
+        appearance: none;
+        height: 44px;
+        background: transparent;
+    }
+
+    .ip-lens-slider::-webkit-slider-runnable-track {
+        height: 6px;
+        border-radius: 3px;
+        background: var(--mc-border, #cbd5e1);
+    }
+
+    .ip-lens-slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 44px;
+        height: 44px;
+        margin-top: -19px;
+        border: 3px solid var(--mc-surface, #fff);
+        border-radius: 50%;
+        background: var(--mc-primary, #2563eb);
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+    }
+
+    .ip-lens-slider::-moz-range-track {
+        height: 6px;
+        border-radius: 3px;
+        background: var(--mc-border, #cbd5e1);
+    }
+
+    .ip-lens-slider::-moz-range-thumb {
+        width: 38px;
+        height: 38px;
+        border: 3px solid var(--mc-surface, #fff);
+        border-radius: 50%;
+        background: var(--mc-primary, #2563eb);
     }
 }

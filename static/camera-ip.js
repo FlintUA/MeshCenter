@@ -151,6 +151,7 @@
     function applyModeClass() {
         const view = el('videoView');
         if (view) view.classList.toggle('camera-ip-mode', handles());
+        if (window.MCIpControls) window.MCIpControls.update(handles() ? status : null); // Mode / Lens under the picture
         const select = el('ipCameraProfile');
         if (select) {
             select.style.display = handles() ? '' : 'none';
@@ -411,7 +412,7 @@
             await refresh();
             renderStatus();
             if (response.status === 429) {
-                showMessage(t('ipcamera.error_viewer_limit'), false);
+                showMessage(t('ipcamera.error_viewer_limit'), false, true); // sticky: the status poll must not turn it back into "connecting"
                 return false;
             }
             return isTerminal(status) ? showTerminal() : scheduleRetry(gen, attempt + 1);

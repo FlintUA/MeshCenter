@@ -189,3 +189,26 @@ or touches the running preview.
   gallery cleanup remove the sidecar with it. Pictures of CSI/USB cameras have none (`meta` is `{}`).
 * The live-view fallback (section 7) keeps its own shared 1 s cache and small picture; a gallery picture is always a
   fresh fetch (`ReolinkControlManager.capture`).
+
+## 12. The Camera card for a network camera (Phase 3b, frontend)
+
+`static/camera-ip-controls.js` renders the panel below the picture (`#ipCameraControls`, shown only in network-camera
+mode; the CSI/USB mode and image controls stay hidden there, as before). Only text nodes are used (no `innerHTML`).
+
+* **Source selector** in the card header: visible whenever at least one camera exists (it used to need two); it uses the
+  existing `/api/devices/cameras` + `/api/camera/active` logic.
+* **Mode tab**: stream, resolution, frame rate, codec, bitrate and state (from `/api/camera/status`, refreshed by the
+  existing 2 s status poll without rebuilding the panel), the **Take picture** button (`POST /api/camera/screenshot`, section
+  11; clear messages for `rate_limited` with the seconds to wait, `storage_full`, `preview_not_running`, `camera_off`,
+  `ffmpeg_missing`, `frame_grab_failed`, control errors such as a missing right), the **picture quality** setting
+  (full / small, only for a camera with the API; `PUT /api/camera/sources/<id>/control/settings`, which does not restart the
+  stream) and the line "Image settings are changed in the camera app." There is no Image tab for a network camera: no image
+  parameter is read or written.
+* **Lens tab**: only when the saved probe reported zoom (`status.zoom_control`). The position is read when the tab is
+  opened and after each move (the move answer is the read-back), never polled; at most one extra reading 2.5 s after a move
+  whose lens had not arrived. The slider shows the camera's own range, the label follows the thumb while dragging and the
+  camera is asked on release. The slider is disabled while the lens moves; targets chosen meanwhile coalesce (the latest wins
+  and is sent when the move is over; never two moves at once). A permission error disables the slider and names the right.
+  Focus is shown read only ("set automatically by the camera"). 44 px thumb on a phone.
+* Layout: on a phone the whole card scrolls (the picture keeps its aspect box and never overlaps the controls); at 1280 px the
+  workspace between the two side panels is only about 440 px wide, so the header wraps its pickers below the title.

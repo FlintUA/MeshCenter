@@ -119,3 +119,46 @@ def test_api_camera_screenshot_file_serves_the_already_validated_path(api_env, m
     send_file_spy.assert_called_once()
     served_path = send_file_spy.call_args[0][0]
     assert served_path == camera_module.safe_screenshot_path("plain.jpg")
+
+
+def test_api_photo_save_omits_filepath(api_env):
+    """Verify that /api/photo/save response payload omits internal 'filepath' to avoid info disclosure."""
+    mock_driver = MagicMock()
+    mock_driver.capture_photo.return_value = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00`\x00`\x00\x00\xff\xd9"
+    mock_manager = MagicMock()
+    mock_manager.active.return_value = mock_driver
+
+    app = Flask(__name__)
+    camera_manager_state = {"manager": mock_manager}
+
+    register_camera_routes(
+        app,
+        camera_module,
+        camera_manager_state,
+        MagicMock(),
+        _handle_errors
+    )
+
+    client = app.test_client()
+    response = client.post("/api/photo/save")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data.get("ok") is True
+    assert "filepath" not in data
+    assert "filename" in data
+
+
+def test_capture_screenshot_omits_filepath(api_env, monkeypatch):
+    """Verify that capture_screenshot() response payload omits internal 'filepath'."""
+    from PIL import Image
+
+    img = Image.new("RGB", (10, 10), color="red")
+    fake_frame = MagicMock()
+    monkeypatch.setattr(Image, "fromarray", lambda frame: img)
+    monkeypatch.setattr(camera_module, "camera_started", True)
+    monkeypatch.setattr(camera_module, "get_camera_frame", lambda: fake_frame)
+
+    result = camera_module.capture_screenshot()
+    assert result.get("success") is True
+    assert "filepath" not in result
+    assert "filename" in result

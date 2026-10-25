@@ -93,7 +93,9 @@ class _GuardedStream:
     calls close() on a body that was never iterated (a client that left before the first byte), and the wrapped
     stream's close() - which frees its viewer slot - must run then too."""
 
-    def __init__(self, body, check, interval_s, clock):
+    def __init__(self, body, check, interval_s, clock, label="stream"):
+        self._label = label
+        self._opened = clock()
         self._body = body
         self._iterator = iter(body)
         self._check = check
@@ -110,6 +112,7 @@ class _GuardedStream:
         if now - self._last >= self._interval:
             self._last = now
             if not self._check():
+                print(f"[AUTH] open {self._label} ended after {now - self._opened:.0f} s: the session is no longer valid", flush=True)
                 self.close()
                 raise StopIteration
         return chunk
@@ -124,11 +127,11 @@ class _GuardedStream:
 
 
 def guard_stream(body: Iterable[bytes], check: Callable[[], bool] | None, interval_s: float | None = None,
-                 clock: Callable[[], float] = time.monotonic):
+                 clock: Callable[[], float] = time.monotonic, label: str = "stream"):
     """Wrap `body` so `check()` is asked at most every `interval_s` seconds between chunks; when it says the session
     is no longer valid the body is closed and the response ends. `check` None (nothing to guard) returns `body`
     itself. A body that is waiting for data (a camera that stopped sending) is not interrupted from here: the
     stream's own no-data limit ends it."""
     if check is None:
         return body
-    return _GuardedStream(body, check, DEFAULT_RECHECK_S if interval_s is None else interval_s, clock)
+    return _GuardedStream(body, check, DEFAULT_RECHECK_S if interval_s is None else interval_s, clock, label)

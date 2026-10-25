@@ -126,7 +126,7 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
                             "error": "MJPEG fallback is disabled on this low-power host"}), 503
 
         return Response(
-            session_guard.guard_stream(manager.mjpeg_multipart_stream(), _session_check()),
+            session_guard.guard_stream(manager.mjpeg_multipart_stream(), _session_check(), label="MJPEG stream"),
             mimetype='multipart/x-mixed-replace; boundary=frame'
         )
 
@@ -187,7 +187,7 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
             return jsonify({"ok": False, "error": "Stream not ready", "error_code": "stream_not_ready",
                             "state": error.state, "stream_error": error.error_code}), 503
         _harden_stream_socket()
-        response = Response(session_guard.guard_stream(stream, _session_check()), mimetype="video/mp4", direct_passthrough=True)
+        response = Response(session_guard.guard_stream(stream, _session_check(), label="fMP4 stream"), mimetype="video/mp4", direct_passthrough=True)
         response.headers["X-Codec"] = stream.mse_codec
         response.headers["Access-Control-Expose-Headers"] = "X-Codec"
         response.headers["Cache-Control"] = "no-store"

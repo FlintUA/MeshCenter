@@ -560,6 +560,7 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
         sid = session.get("sid")
         if sid:
             revoked.add(sid)
+        print(f"[AUTH] logout: this session is revoked ({'with' if sid else 'without'} a session id), other sessions stay", flush=True)
         session.clear()
         return jsonify({"ok": True})
 
@@ -575,6 +576,7 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
             new_state["auth_version"] = int(auth_state.get("auth_version") or 1) + 1
             if not _save(new_state):
                 return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
+        print(f"[AUTH] sign out everywhere: auth_version is now {new_state['auth_version']}, every session is refused from now on", flush=True)
         session.clear()
         return jsonify({"ok": True})
 

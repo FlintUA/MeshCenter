@@ -100,6 +100,15 @@ def test_a_stream_ends_when_the_check_fails_and_the_body_is_closed():
     assert verdicts == []
 
 
+def test_the_end_of_a_stream_is_logged_with_its_age(capsys):
+    now = [0.0]
+    body = _Body([b"a", b"b", b"c"])
+    for _chunk in sg.guard_stream(body, lambda: False, interval_s=3.0, clock=lambda: now[0], label="fMP4 stream"):
+        now[0] += 4.0
+    out = capsys.readouterr().out
+    assert "[AUTH] open fMP4 stream ended after 4 s" in out and "sid" not in out
+
+
 def test_the_check_is_not_asked_on_every_chunk():
     now = [0.0]
     asked = []

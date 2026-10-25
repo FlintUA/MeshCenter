@@ -47,7 +47,8 @@ DEFAULT_TIMEOUT_S = 6.0
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 MIN_ZOOM_INTERVAL_S = 0.5
 SETTLE_TIMEOUT_S = 6.0
-SETTLE_POLL_S = 0.4
+SETTLE_FIRST_POLL_S = 0.15  # most arrivals are close: look early, then every SETTLE_POLL_S
+SETTLE_POLL_S = 0.3
 TOKEN_MARGIN_S = 60.0
 DEFAULT_LEASE_S = 3600.0
 API_PATH = "/cgi-bin/api.cgi"
@@ -171,6 +172,11 @@ class ReolinkClient:
         self._token_until = 0.0
         self._zoom_range: tuple[int, int] | None = None
         self._last_zoom_at = -1e9
+        # LENS1: a newer zoom request supersedes an older one that is still waiting for the lens
+        self._zoom_gen = 0
+        self._zoom_gen_lock = threading.Lock()
+        self._zoom_cmd_lock = threading.Lock()  # one StartZoomFocus is sent at a time (the wait for the lens is outside it)
+        self._zoom_waiting = 0
 
     # -- transport ---------------------------------------------------------
 
@@ -420,33 +426,77 @@ class ReolinkClient:
 
     def set_zoom(self, position: Any) -> dict:
         """Move the lens to `position` (device units, validated against the range the camera reports), then
-        read it back. Returns {requested, position, settled, zoom_range}."""
+        read it back. Returns {requested, position, settled, zoom_range, timing_ms}.
+
+        LENS1: the wait for the lens does not hold the camera lock (a snapshot or a read can go in between) and
+        ends at once when a NEWER set_zoom arrives: this call then returns {superseded: True, settled: False}
+        and the newer one sends its own command (after the minimum interval) and reads ITS target back, so the
+        last target always gets the final read-back. A call that supersedes nothing keeps the old rule: a
+        command sooner than MIN_ZOOM_INTERVAL_S after the last one is refused (RATE_LIMITED)."""
         if isinstance(position, bool) or not isinstance(position, int):
             raise ReolinkError(ZOOM_OUT_OF_RANGE, "The zoom position must be a whole number in the camera's own units.")
-        with self._lock:
-            if self._zoom_range is None:
-                if self.get_zoom_focus()["zoom_range"] is None:
-                    raise ReolinkError(NOT_SUPPORTED, "The camera does not report a zoom range.", command="GetZoomFocus")
-            low, high = self._zoom_range
+        began = self._clock()
+        timing: dict[str, Any] = {"polls": []}
+        with self._zoom_gen_lock:
+            self._zoom_gen += 1
+            mine = self._zoom_gen
+            superseding = self._zoom_waiting > 0
+            self._zoom_waiting += 1
+        try:
+            return self._set_zoom_run(position, mine, superseding, began, timing)
+        finally:
+            with self._zoom_gen_lock:
+                self._zoom_waiting -= 1
+
+    def _stale(self, mine: int) -> bool:
+        with self._zoom_gen_lock:
+            return self._zoom_gen != mine
+
+    def _set_zoom_run(self, position: int, mine: int, superseding: bool, began: float, timing: dict) -> dict:
+        with self._zoom_cmd_lock:
+            with self._lock:
+                if self._zoom_range is None:
+                    if self.get_zoom_focus()["zoom_range"] is None:
+                        raise ReolinkError(NOT_SUPPORTED, "The camera does not report a zoom range.", command="GetZoomFocus")
+                low, high = self._zoom_range
             if not low <= position <= high:
                 raise ReolinkError(ZOOM_OUT_OF_RANGE, f"The zoom position must be between {low} and {high}.")
-            now = self._clock()
-            if now - self._last_zoom_at < MIN_ZOOM_INTERVAL_S:
-                raise ReolinkError(RATE_LIMITED, "Zoom commands are limited; try again in a moment.", command="StartZoomFocus")
-            self._last_zoom_at = now
+            if self._stale(mine):
+                return self._superseded(position, low, high, None, began, timing)
+            wait = MIN_ZOOM_INTERVAL_S - (self._clock() - self._last_zoom_at)
+            if wait > 0:
+                if not superseding:
+                    raise ReolinkError(RATE_LIMITED, "Zoom commands are limited; try again in a moment.", command="StartZoomFocus")
+                self._sleep(wait)  # a newer target replaces an older one: it waits out the interval instead of failing
+                if self._stale(mine):
+                    return self._superseded(position, low, high, None, began, timing)
+            self._last_zoom_at = self._clock()
+            sent = self._clock()
             self._command("StartZoomFocus", 0, {"ZoomFocus": {"channel": self.channel, "pos": position, "op": "ZoomPos"}})
-            deadline = self._clock() + SETTLE_TIMEOUT_S
-            actual = None
-            settled = False
-            while True:
-                self._sleep(SETTLE_POLL_S)
-                actual = self.get_zoom_focus()["zoom_pos"]
-                if actual == position:
-                    settled = True
-                    break
-                if self._clock() >= deadline:
-                    break
-            return {"requested": position, "position": actual, "settled": settled, "zoom_range": [low, high]}
+            timing["command_ms"] = round((self._clock() - sent) * 1000)
+        deadline = self._clock() + SETTLE_TIMEOUT_S
+        actual = None
+        settled = False
+        delay = SETTLE_FIRST_POLL_S
+        while True:
+            self._sleep(delay)
+            delay = SETTLE_POLL_S
+            if self._stale(mine):
+                return self._superseded(position, low, high, actual, began, timing)
+            polled = self._clock()
+            actual = self.get_zoom_focus()["zoom_pos"]
+            timing["polls"].append(round((self._clock() - polled) * 1000))
+            if actual == position:
+                settled = True
+                break
+            if self._clock() >= deadline:
+                break
+        timing["total_ms"] = round((self._clock() - began) * 1000)
+        return {"requested": position, "position": actual, "settled": settled, "zoom_range": [low, high], "timing_ms": timing}
+
+    def _superseded(self, position, low, high, actual, began, timing) -> dict:
+        timing["total_ms"] = round((self._clock() - began) * 1000)
+        return {"requested": position, "position": actual, "settled": False, "superseded": True, "zoom_range": [low, high], "timing_ms": timing}
 
     # -- capability probe ----------------------------------------------------
 

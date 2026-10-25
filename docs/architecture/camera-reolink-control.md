@@ -79,7 +79,11 @@ or an x-factor; a position outside the reported range is refused before anything
 
 * One command in flight per camera (a lock); zoom needs 0.5 s between commands (`rate_limited`); the
   probe and trust routes allow 6 requests a minute, zoom reads 60.
-* A zoom move is read back (up to 6 s) and the answer says whether the lens arrived (`settled`).
+* A zoom move is read back (up to 6 s) and the answer says whether the lens arrived (`settled`). **LENS1:** the wait for
+  the lens does not hold the camera lock, and a NEWER zoom target ends an older wait at once (`superseded: true`, ignored by the
+  UI); the newer call waits out the 0.5 s interval instead of failing, sends its command and reads ITS target back (first look
+  after 0.15 s, then every 0.3 s). A call that supersedes nothing still gets `rate_limited` when it comes too soon. The answer
+  carries `timing_ms` (`command_ms`, each read in `polls`, `total_ms`) so a slow chain can be measured on the real camera.
 
 ## 7. Snapshot fallback (browsers without MediaSource)
 
@@ -207,8 +211,9 @@ mode; the CSI/USB mode and image controls stay hidden there, as before). Only te
 * **Lens tab**: only when the saved probe reported zoom (`status.zoom_control`). The position is read when the tab is
   opened and after each move (the move answer is the read-back), never polled; at most one extra reading 2.5 s after a move
   whose lens had not arrived. The slider shows the camera's own range, the label follows the thumb while dragging and the
-  camera is asked on release. The slider is disabled while the lens moves; targets chosen meanwhile coalesce (the latest wins
-  and is sent when the move is over; never two moves at once). A permission error disables the slider and names the right.
+  camera is asked on release. The slider is disabled while the lens moves; targets chosen meanwhile coalesce (the latest wins and
+  is sent at most 0.5 s after the previous command, WITHOUT waiting for the old move to be read back; at most two moves are
+  in flight and the older one is answered `superseded`, only the last target's read-back is shown). A permission error disables the slider and names the right.
   Focus is shown read only ("set automatically by the camera"). 44 px thumb on a phone.
 * Layout: on a phone the whole card scrolls (the picture keeps its aspect box and never overlaps the controls); at 1280 px the
   workspace between the two side panels is only about 440 px wide, so the header wraps its pickers below the title.

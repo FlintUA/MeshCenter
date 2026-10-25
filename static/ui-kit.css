@@ -5492,7 +5492,6 @@ video.camera-stream {
         flex-wrap: nowrap;
         scrollbar-width: none;
         -webkit-overflow-scrolling: touch;
-        scroll-snap-type: x proximity;
     }
 
     .main-content-tabs::-webkit-scrollbar {
@@ -5506,7 +5505,6 @@ video.camera-stream {
         padding-left: 14px;
         padding-right: 14px;
         white-space: nowrap;
-        scroll-snap-align: center;
     }
 
     /* the dock buttons are the way to the Base and Nodes pages: make them targets */
@@ -5717,5 +5715,241 @@ video.camera-stream {
         border: 3px solid var(--mc-surface, #fff);
         border-radius: 50%;
         background: var(--mc-primary, #2563eb);
+    }
+
+    /* ======================================================================
+       MOB2-A: the dock menus (Workspace, Map layout, Notifications) are bottom sheets on a phone.
+       They used to be absolutely positioned children of the dock, which is 52 px high, overflow: hidden and
+       centred with transform: translateX(-50%): the menus were clipped to nothing and a tap on where they
+       should be went to the page behind (System, Settings and About could not be opened). A fixed element is
+       not clipped by an ancestor's overflow, but a transform on the dock would still make the dock its
+       containing block, so the transform goes (the dock is full width here anyway).
+       ====================================================================== */
+    .status-dock {
+        left: 0;
+        transform: none;
+    }
+
+    .workspace-popover,
+    .map-layout-popover,
+    .notification-popover-center {
+        position: fixed;
+        left: 50%;
+        right: auto;
+        transform: translateX(-50%);
+        bottom: calc(60px + env(safe-area-inset-bottom, 0px));
+        width: min(560px, calc(100% - 16px));
+        max-width: none;
+        max-height: min(72dvh, 620px);
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        z-index: 1100;
+        border-radius: 16px;
+        box-shadow: 0 -6px 30px rgba(15, 23, 42, 0.35);
+    }
+
+    .workspace-popover::after {
+        display: none;
+    }
+
+    .workspace-popover[hidden],
+    .map-layout-popover[hidden],
+    .notification-popover-center[hidden] {
+        display: none !important;
+    }
+
+    /* the page links first: System, Settings and About are what a phone user opens this menu for */
+    .workspace-popover:not([hidden]) {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .workspace-popover .workspace-popover-header {
+        order: -2;
+    }
+
+    .workspace-popover .workspace-application-section {
+        order: -1;
+    }
+
+    .workspace-popover-close {
+        min-width: 44px;
+        min-height: 44px;
+    }
+
+    .workspace-nav-btn {
+        min-height: 52px;
+    }
+
+    .workspace-setting-row {
+        min-height: 48px;
+        font-size: 14px;
+    }
+
+    .map-layout-option {
+        min-height: 48px;
+        font-size: 14px;
+    }
+
+    .map-layout-option input {
+        width: 20px;
+        height: 20px;
+    }
+
+    .notification-list {
+        max-height: calc(min(72dvh, 620px) - 70px);
+    }
+
+    /* a tap outside closes the sheet (static/mobile-layout.js adds the element and the body class) */
+    #mcSheetBackdrop {
+        display: none;
+    }
+
+    body.mc-sheet-open #mcSheetBackdrop {
+        display: block;
+        position: fixed;
+        inset: 0;
+        z-index: 800; /* below the dock (900) that holds the sheet, above the page */
+        background: rgba(15, 23, 42, 0.45);
+    }
+
+    /* ======================================================================
+       MOB2-B: dock and tab row sizes
+       ====================================================================== */
+    .status-dock {
+        height: calc(52px + env(safe-area-inset-bottom, 0px));
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+
+    .main-layout {
+        padding-bottom: calc(52px + env(safe-area-inset-bottom, 0px));
+    }
+
+    .dock-workspace-btn {
+        width: 44px;
+        height: 44px;
+        min-width: 44px;
+        padding: 0;
+        justify-content: center;
+        font-size: 18px;
+    }
+
+    .dock-workspace-btn > span:not(.dock-workspace-btn-icon) {
+        display: none; /* icon only: the label does not fit next to four 44 px buttons */
+    }
+
+    /* four 44 px buttons never scroll: the status button takes what is left (it truncates its text) */
+    .status-dock .dock-left {
+        flex: 0 0 auto;
+        overflow: visible;
+    }
+
+    .status-dock .dock-center {
+        flex: 1 1 0;
+        min-width: 0;
+    }
+
+    .dock-notification-status {
+        width: 100%;
+        min-width: 0;
+        height: 44px;
+        max-width: none;
+        font-size: 12px;
+        grid-template-columns: 12px minmax(0, 1fr) 20px;
+    }
+
+    .dock-notification-text {
+        font-size: 12px;
+    }
+
+    .dock-workspace-label {
+        display: none;
+    }
+
+    /* the tab row is as high as its tabs (it was a fixed 42 px with 6 px padding on top, so the 48 px tabs were
+       cut off at the top edge) */
+    .main-content-tabs {
+        height: auto;
+        min-height: 52px;
+        padding: 4px 6px 0;
+        align-items: stretch;
+    }
+
+    /* the message box may be narrower than its intrinsic width (size="20" of a text input), otherwise a larger
+       phone font pushes the Send button past the right edge */
+    .input-form input[type="text"] {
+        min-width: 0;
+    }
+
+    .input-form {
+        min-width: 0;
+        max-width: 100%;
+    }
+
+    .input-form button {
+        flex: 0 0 auto;
+    }
+
+    /* all five tabs fit the width (icon above the label): nothing to swipe, so nothing that can jerk or snap;
+       the fade below stays only as a fallback for a screen narrower than 320 px */
+    .main-content-tab {
+        flex: 1 1 0;
+        min-width: 0;
+        min-height: 48px;
+        padding: 5px 2px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 2px;
+        font-size: 11px;
+        line-height: 1.15;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .main-content-tab span {
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    /* Settings: a grid track that is 1fr grows to its widest child (364 px) and the cards were cut off at the right
+       edge; the card is allowed to be as narrow as the screen and its content wraps */
+    .settings-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .settings-card,
+    .map-settings-card,
+    .reference-location-card {
+        min-width: 0;
+        max-width: 100%;
+    }
+
+    /* option groups (USB / Bluetooth / TCP, units) wrap instead of running past the card */
+    .settings-segmented {
+        flex-wrap: wrap;
+    }
+
+    .settings-segmented button {
+        flex: 1 1 auto;
+        min-height: 44px;
+    }
+
+    /* the tab row scrolls sideways: a fade shows that there is more on that side */
+    .main-content-tabs.tabs-more-right {
+        -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent);
+        mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent);
+    }
+
+    .main-content-tabs.tabs-more-left {
+        -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 36px), transparent);
+        mask-image: linear-gradient(to left, #000 calc(100% - 36px), transparent);
+    }
+
+    .main-content-tabs.tabs-more-left.tabs-more-right {
+        -webkit-mask-image: linear-gradient(to right, transparent, #000 36px, #000 calc(100% - 36px), transparent);
+        mask-image: linear-gradient(to right, transparent, #000 36px, #000 calc(100% - 36px), transparent);
     }
 }

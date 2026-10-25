@@ -1707,6 +1707,7 @@
     "password_label": "Пароль",
     "login_error": "Неверный пароль.",
     "login_throttled": "Слишком много попыток. Повторите через {seconds} сек.",
+    "login_throttle_over": "Можно пробовать снова.",
     "login_submit": "Войти",
     "setup_title": "Добро пожаловать в MeshCenter",
     "setup_subtitle": "Это новая установка. Создайте пароль для её защиты, прежде чем продолжить.",

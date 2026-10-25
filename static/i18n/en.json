@@ -1707,6 +1707,7 @@
     "password_label": "Password",
     "login_error": "Incorrect password.",
     "login_throttled": "Too many attempts. Try again in {seconds} seconds.",
+    "login_throttle_over": "You can try again now.",
     "login_submit": "Sign in",
     "setup_title": "Welcome to MeshCenter",
     "setup_subtitle": "This is a new installation. Create a password to protect it before continuing.",

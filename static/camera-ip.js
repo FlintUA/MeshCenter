@@ -42,6 +42,8 @@
     let objectUrl = null;
     let mode = 'none'; // 'mse' | 'mjpeg' | 'snapshot' | 'none'
     let snapshotTimer = null;
+    let snapshotReason = ''; // 'ffmpeg' (the host has none) | 'browser' (it cannot play the stream)
+    let snapshotSize = null; // {width, height} of the latest picture
     let snapshotUrl = null;
 
     function t(key, params) {
@@ -99,6 +101,12 @@
     function infoLine(st) {
         if (!st) return '';
         const parts = [];
+        if (mode === 'snapshot') {
+            // pictures, not a stream: the picture's own size and how often it is renewed (no codec, fps or bitrate)
+            if (snapshotSize) parts.push(snapshotSize.width + 'x' + snapshotSize.height);
+            parts.push(t('ipcamera.snapshot_interval'));
+            return parts.join(' · ');
+        }
         if (st.resolution) parts.push(st.resolution);
         if (st.fps) parts.push(st.fps + ' FPS');
         if (st.codec) parts.push(String(st.codec).toUpperCase());
@@ -173,7 +181,12 @@
         const label = el('videoStatus');
         const reconnectBtn = el('ipCameraReconnectBtn');
         if (!st) return;
-        if (info) info.textContent = infoLine(st) || '-';
+        if (info) {
+            // nothing known yet: no placeholder dash, the empty part and its divider are hidden
+            const text = infoLine(st);
+            info.textContent = text;
+            setInfoVisible(Boolean(text));
+        }
         if (label) {
             // the status bar is one short line; the full explanation of a failure is the overlay text
             let text = isTerminal(st) ? t('ipcamera.state_error') : t(stateMessageKey(st));
@@ -185,6 +198,14 @@
             label.style.color = (st.state === 'live' || mode === 'snapshot') ? '#4caf50' : (isTerminal(st) ? '#f44336' : '#ff9800');
         }
         if (reconnectBtn) reconnectBtn.style.display = isTerminal(st) || st.state === 'reconnecting' ? '' : 'none';
+    }
+
+    function setInfoVisible(visible) {
+        const info = el('videoLiveInfo');
+        if (!info) return;
+        info.hidden = !visible;
+        const divider = info.nextElementSibling;
+        if (divider && divider.classList && divider.classList.contains('camera-status-divider')) divider.hidden = !visible;
     }
 
     function setSpinner(visible) {
@@ -259,6 +280,9 @@
     function stop() {
         generation += 1;
         mode = 'none';
+        snapshotSize = null;
+        snapshotReason = '';
+        setInfoVisible(true); // a local camera writes its own text there
         stopSnapshots();
         setAspect(0, 0);
         overlayActive = false;
@@ -326,23 +350,6 @@
 
     // ---------- snapshot mode ----------
 
-    function snapshotLabel(on, reason) {
-        let label = el('cameraSnapshotLabel');
-        if (!on) {
-            if (label && label.remove) label.remove();
-            return;
-        }
-        const wrap = document.querySelector('.video-frame-wrap');
-        if (!wrap) return;
-        if (!label) {
-            label = document.createElement('div');
-            label.id = 'cameraSnapshotLabel';
-            label.className = 'camera-snapshot-label';
-            wrap.appendChild(label);
-        }
-        label.textContent = t(reason === 'ffmpeg' ? 'ipcamera.snapshot_mode_label_ffmpeg' : 'ipcamera.snapshot_mode_label');
-    }
-
     function stopSnapshots() {
         if (snapshotTimer) clearTimeout(snapshotTimer);
         snapshotTimer = null;
@@ -350,15 +357,16 @@
             try { URL.revokeObjectURL(snapshotUrl); } catch (error) { /* ignore */ }
             snapshotUrl = null;
         }
-        snapshotLabel(false);
     }
 
     function startSnapshotMode(gen, reason) {
         const img = el('videoFeed');
         if (!img) return false;
         mode = 'snapshot';
+        snapshotReason = reason === 'ffmpeg' ? 'ffmpeg' : 'browser';
+        snapshotSize = null;
         setMjpegLayout(true);
-        snapshotLabel(true, reason);
+        if (window.MCIpControls && status) window.MCIpControls.update(status); // Mode switches to the snapshot facts
         let failures = 0;
         const next = (delay) => { if (gen === generation) snapshotTimer = setTimeout(tick, delay); };
         const tick = async () => {
@@ -378,6 +386,10 @@
                     img.onload = () => {
                         if (gen !== generation) return;
                         setAspect(img.naturalWidth, img.naturalHeight);
+                        if (!snapshotSize || snapshotSize.width !== img.naturalWidth || snapshotSize.height !== img.naturalHeight) {
+                            snapshotSize = { width: img.naturalWidth, height: img.naturalHeight };
+                            if (window.MCIpControls && status) window.MCIpControls.update(status);
+                        }
                         overlayActive = false;
                         if (typeof showCameraFeed === 'function') showCameraFeed();
                     };
@@ -674,6 +686,10 @@
 
     window.MCIpCamera = {
         handles, start, stop, refresh, reconnect, changeProfile,
+        // what the player is showing when it shows pictures (null for a stream): the Mode tab reads it
+        snapshotInfo: () => (mode === 'snapshot'
+            ? { reason: snapshotReason, width: snapshotSize ? snapshotSize.width : null, height: snapshotSize ? snapshotSize.height : null, intervalMs: SNAPSHOT_INTERVAL_MS }
+            : null),
         // exported for tests
         lastError: () => lastError,
         _helpers: { reopenStream, startUnsupported, startSnapshotMode, labelProfiles, setAspect, SNAPSHOT_INTERVAL_MS, progressText, mseSupports, liveEdgeTarget, stateMessageKey, isTerminal, infoLine, mseConstructor, TARGET_LEAD_S },

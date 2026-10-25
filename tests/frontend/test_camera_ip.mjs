@@ -281,12 +281,18 @@ async function snapshotSession({ snapshotStatus = 200, snapshotBody = {}, capabi
     assert.ok(!run.urls.some((u) => u.includes('/stream/fmp4')), 'no fMP4 stream is opened (no viewer slot, no ffmpeg)');
     assert.equal(run.snapshots(), 1);
     assert.deepEqual(run.sources, ['blob:snap1'], 'the picture is shown');
-    assert.equal(run.labels.length, 1);
-    assert.equal(run.labels[0].textContent, 'ipcamera.snapshot_mode_label', 'the mode is labelled');
+    assert.equal(run.labels.length, 0, 'UX4: nothing is drawn over the picture (the status line and the Mode tab say it)');
+    const helpers = run.ctx.win.MCIpCamera._helpers;
+    const snap = run.ctx.win.MCIpCamera.snapshotInfo();
+    assert.equal(snap.reason, 'browser');
+    assert.equal(snap.intervalMs, helpers.SNAPSHOT_INTERVAL_MS);
+    assert.equal(helpers.infoLine({ resolution: '3840x2160', fps: 15, codec: 'h264', bitrate_kbps: 90 }), 'ipcamera.snapshot_interval',
+        'pictures: the refresh interval only (no stream resolution, fps, codec or bitrate)');
     await new Promise((resolve) => setTimeout(resolve, 1150));
     assert.equal(run.snapshots(), 2, 'about one picture per second');
     assert.deepEqual(run.revoked, ['blob:snap1'], 'the previous picture is released');
     run.ctx.win.MCIpCamera.stop();
+    assert.equal(run.ctx.win.MCIpCamera.snapshotInfo(), null, 'a stopped player shows nothing');
     await new Promise((resolve) => setTimeout(resolve, 1200));
     assert.equal(run.snapshots(), 2, 'stop() ends the polling');
 }
@@ -325,7 +331,8 @@ async function snapshotSession({ snapshotStatus = 200, snapshotBody = {}, capabi
     const run = await snapshotSession({ statusExtra: { ffmpeg_available: false, state: 'idle' }, windowExtra: mse });
     assert.ok(!run.urls.some((u) => u.includes('/stream/fmp4')), 'no stream is opened without ffmpeg');
     assert.equal(run.snapshots(), 1);
-    assert.equal(run.labels[0].textContent, 'ipcamera.snapshot_mode_label_ffmpeg', 'the label says live video needs ffmpeg');
+    assert.equal(run.labels.length, 0, 'no label over the picture');
+    assert.equal(run.ctx.win.MCIpCamera.snapshotInfo().reason, 'ffmpeg', 'the Mode tab explains why there is no stream');
     run.ctx.win.MCIpCamera.stop();
     // without the API there is nothing to show: the existing message path stays
     const plain = await snapshotSession({ capability: false, statusExtra: { ffmpeg_available: false, state: 'ffmpeg_missing' }, windowExtra: mse });

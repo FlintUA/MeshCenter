@@ -30,13 +30,22 @@
     // ---------- pure logic ----------
 
     // Lens position state machine. `read()` -> {position, range:[min,max]|null, focus}; `move(target)` ->
-    // {position, settled}. Both may throw an object with `error_code` / `right`. A request made while the lens is
-    // moving (or being read) replaces any earlier waiting one: the latest target wins, and it is sent when the
-    // current move is over. A permission error ends the control (no more commands are sent).
+    // {position, settled, superseded}. Both may throw an object with `error_code` / `right`.
+    //
+    // LENS1: a request made while the lens is still moving does not wait for the old move to be read back. The
+    // latest target wins: it is sent at most `minGapMs` (the camera's own minimum interval) after the previous
+    // command, the server then ends the older wait at once (that answer is `superseded` and ignored here) and
+    // reads the NEW target back. At most two moves are in flight. A permission error ends the control.
     function createLensController(options) {
+        const minGapMs = options.minGapMs != null ? options.minGapMs : 500;
+        const now = options.now || Date.now;
         const state = { phase: 'idle', position: null, range: null, focus: null, target: null, settled: true, error: null, denied: false };
         let pending = null;
-        let busy = false;
+        let inflight = 0;
+        let moveSeq = 0;
+        let reading = false;
+        let lastSendAt = -Infinity;
+        let timer = null;
 
         function emit() {
             if (typeof options.onChange === 'function') options.onChange(Object.assign({}, state));
@@ -54,37 +63,51 @@
             if (result.position != null) state.position = result.position;
         }
 
-        async function drain() {
-            while (pending !== null && !busy && !state.denied) {
-                const target = pending;
-                pending = null;
-                if (state.range && (target < state.range[0] || target > state.range[1])) continue;
-                if (target === state.position && state.settled) continue;
-                busy = true;
-                state.phase = 'moving';
-                state.target = target;
-                state.error = null;
-                emit();
-                try {
-                    const result = await options.move(target);
+        async function send(target) {
+            const seq = ++moveSeq;
+            inflight += 1;
+            lastSendAt = now();
+            state.phase = 'moving';
+            state.target = target;
+            state.error = null;
+            emit();
+            try {
+                const result = await options.move(target);
+                if (result.range) state.range = result.range; // the range is true whichever answer carries it
+                if (seq === moveSeq && !result.superseded) {
                     apply(result);
                     state.settled = result.settled !== false;
                     state.phase = 'ready';
-                } catch (error) {
-                    fail(error);
                 }
-                busy = false;
-                state.target = null;
-                emit();
+            } catch (error) {
+                if (seq === moveSeq || (error && error.error_code === 'permission_denied')) fail(error);
             }
+            inflight -= 1;
+            if (seq === moveSeq) state.target = null;
+            emit();
+            drain();
+        }
+
+        function drain() {
+            if (pending === null || state.denied || reading || inflight >= 2) return;
+            const wait = lastSendAt + minGapMs - now();
+            if (wait > 0) {
+                if (!timer) timer = setTimeout(() => { timer = null; drain(); }, wait);
+                return;
+            }
+            const target = pending;
+            pending = null;
+            if (state.range && (target < state.range[0] || target > state.range[1])) return drain();
+            if (inflight === 0 && target === state.position && state.settled) return;
+            send(target);
         }
 
         return {
             state,
             // read the position (tab opened, or once more after a lens that had not arrived)
             async refresh() {
-                if (busy || state.denied) return;
-                busy = true;
+                if (inflight > 0 || reading || state.denied) return;
+                reading = true;
                 state.phase = 'reading';
                 state.error = null;
                 emit();
@@ -95,17 +118,18 @@
                 } catch (error) {
                     fail(error);
                 }
-                busy = false;
+                reading = false;
                 emit();
-                await drain();
+                drain();
             },
-            // the user chose a position (slider released)
+            // the user chose a position (slider released): the latest one wins
             request(target) {
                 if (!Number.isInteger(target) || state.denied) return Promise.resolve();
                 pending = target;
-                return busy ? Promise.resolve() : drain();
+                drain();
+                return Promise.resolve();
             },
-            busy() { return busy; },
+            busy() { return inflight > 0 || reading; },
         };
     }
 
@@ -173,7 +197,7 @@
     }
 
     function infoRow(labelKey, valueId) {
-        return el('div', { class: 'ip-info-row' }, [
+        return el('div', { class: 'ip-info-row', id: valueId.replace('ipInfo', 'ipRow') }, [
             el('span', { class: 'ip-info-label', text: t(labelKey) }),
             el('span', { class: 'ip-info-value', id: valueId, text: '-' }),
         ]);
@@ -190,7 +214,8 @@
         reconnect.style.display = 'none';
         return el('div', { class: 'ip-info-row' }, [
             el('span', { class: 'ip-info-label', text: t('ipctl.info_stream') }),
-            el('span', { class: 'ip-info-value ip-info-stream' }, [select, reconnect]),
+            el('span', { class: 'ip-info-value ip-info-stream' }, [select, reconnect,
+                el('span', { class: 'ip-hint ip-stream-hint', id: 'ipStreamHint', text: '' })]),
         ]);
     }
 
@@ -206,6 +231,7 @@
             el('div', { class: 'ip-info-grid' }, [
                 streamRow(),
                 infoRow('ipctl.info_resolution', 'ipInfoResolution'),
+                infoRow('ipctl.info_refresh', 'ipInfoRefresh'),
                 infoRow('ipctl.info_fps', 'ipInfoFps'),
                 infoRow('ipctl.info_codec', 'ipInfoCodec'),
                 infoRow('ipctl.info_bitrate', 'ipInfoBitrate'),
@@ -290,15 +316,37 @@
         if (node && node.textContent !== text) node.textContent = text;
     }
 
+    function setRowHidden(id, hidden) {
+        const row = byId(id);
+        if (row && row.hidden !== hidden) row.hidden = hidden;
+    }
+
     function renderInfo(status) {
-        setText('ipInfoResolution', status.resolution || '-');
-        setText('ipInfoFps', status.fps ? status.fps + ' FPS' : '-');
-        setText('ipInfoCodec', status.codec ? String(status.codec).toUpperCase() : '-');
-        setText('ipInfoBitrate', status.bitrate_kbps ? status.bitrate_kbps + ' kbps' : '-');
+        // pictures instead of a stream: the picture's own size and how often it is renewed; no codec, fps or bitrate
+        const snap = window.MCIpCamera && typeof window.MCIpCamera.snapshotInfo === 'function' ? window.MCIpCamera.snapshotInfo() : null;
+        setRowHidden('ipRowRefresh', !snap);
+        for (const id of ['ipRowFps', 'ipRowCodec', 'ipRowBitrate']) setRowHidden(id, Boolean(snap));
+        if (snap) {
+            setText('ipInfoResolution', snap.width ? snap.width + 'x' + snap.height : '-');
+            setText('ipInfoRefresh', t('ipctl.refresh_value'));
+        } else {
+            setText('ipInfoResolution', status.resolution || '-');
+            setText('ipInfoFps', status.fps ? status.fps + ' FPS' : '-');
+            setText('ipInfoCodec', status.codec ? String(status.codec).toUpperCase() : '-');
+            setText('ipInfoBitrate', status.bitrate_kbps ? status.bitrate_kbps + ' kbps' : '-');
+        }
+        // the sub / main choice means nothing for pictures (the camera makes them): locked, with one line why
+        const select = byId('ipCameraProfile');
+        if (select && select.disabled !== Boolean(snap)) select.disabled = Boolean(snap);
+        const hint = byId('ipStreamHint');
+        if (hint) {
+            hint.hidden = !snap;
+            setText('ipStreamHint', snap ? t(snap.reason === 'ffmpeg' ? 'ipctl.stream_hint_snapshot_ffmpeg' : 'ipctl.stream_hint_snapshot_browser') : '');
+        }
         const helpers = window.MCIpCamera && window.MCIpCamera._helpers;
         let text = '-';
         if (helpers) text = helpers.isTerminal(status) ? t('ipcamera.state_error') : t(helpers.stateMessageKey(status));
-        if (status.ffmpeg_available === false && status.snapshot_fallback) text = t('ipcamera.snapshot_status'); // pictures, no live video
+        if (snap || (status.ffmpeg_available === false && status.snapshot_fallback)) text = t('ipcamera.snapshot_status'); // pictures, no live video
         setText('ipInfoState', text);
         const quality = byId('ipSnapshotQuality');
         const wanted = localQuality || status.snapshot_quality || 'full';
@@ -383,7 +431,7 @@
         const body = await lensCall(SOURCES + encodeURIComponent(sourceId) + '/control/zoom', {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pos: target }),
         });
-        return { position: body.position, settled: body.settled, range: body.zoom_range };
+        return { position: body.position, settled: body.settled, range: body.zoom_range, superseded: Boolean(body.superseded) };
     }
 
     function renderLensValue(value, dragging) {

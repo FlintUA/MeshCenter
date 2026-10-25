@@ -210,6 +210,49 @@ def test_a_superseding_call_waits_out_the_minimum_interval_instead_of_failing(fa
     assert result["settled"] is True and fake.zoom_commands == [20, 21]
 
 
+def test_requests_share_one_kept_alive_connection_and_one_login():
+    server = FakeReolink(keepalive=True).start()
+    try:
+        client = make_client(server)
+        client.get_zoom_focus()
+        client.get_zoom_focus()
+        result = client.set_zoom(20)
+        assert server.connections == 1, "one TCP connection for the login, the reads, the command and the read-backs"
+        timing = result["timing_ms"]
+        assert timing["logins"] == 0 and timing["new_connections"] == 0, "this call neither logged in nor connected again"
+        assert len(timing["requests_ms"]) >= 2 and timing["stale_connections"] == 0
+    finally:
+        server.stop()
+
+
+def test_the_timing_says_when_a_call_had_to_log_in_and_connect():
+    server = FakeReolink(keepalive=True).start()
+    try:
+        timing = make_client(server).set_zoom(20)["timing_ms"]  # a fresh client: login + new connection inside the call
+        assert timing["logins"] == 1 and timing["new_connections"] == 1
+        assert timing["total_ms"] >= 0 and all(isinstance(ms, int) for ms in timing["requests_ms"])
+    finally:
+        server.stop()
+
+
+def test_a_connection_the_camera_closed_quietly_is_replaced_once():
+    server = FakeReolink(keepalive=True, silent_close_after=1).start()  # every connection dies after its first answer
+    try:
+        client = make_client(server)
+        assert client.get_zoom_focus()["zoom_pos"] == 10  # login on connection 1, read on connection 2 (the stale one was replaced)
+        assert client.get_zoom_focus()["zoom_pos"] == 10
+        assert server.connections >= 3
+    finally:
+        server.stop()
+
+
+def test_a_camera_that_says_connection_close_is_never_reused(fake):
+    client = make_client(fake)
+    client.get_zoom_focus()
+    client.get_zoom_focus()
+    assert fake.connections >= 3  # login + two reads, each on its own connection (the old behaviour is kept)
+
+
 def test_zoom_commands_are_rate_limited(fake):
     client = make_client(fake, clock=lambda: 100.0)  # time stands still: the second command is too soon
     client.set_zoom(12)
@@ -352,6 +395,20 @@ def test_a_pinned_certificate_is_trusted_and_the_login_goes_through(tls_camera):
     server, fingerprint, _tmp = tls_camera
     client = make_client(server, scheme="https", allow_http=False, pin=fingerprint.upper())  # case and colons do not matter
     assert client.get_zoom_focus()["zoom_pos"] == 10
+
+
+def test_a_pinned_https_camera_keeps_one_tls_connection_for_the_whole_zoom(tls_camera):
+    _server, fingerprint, _tmp = tls_camera
+    pair_server = _server
+    pair_server.keepalive = True
+    client = make_client(pair_server, scheme="https", allow_http=False, pin=fingerprint)
+    result = client.set_zoom(20)
+    assert pair_server.connections == 1  # one TLS handshake (checked against the pin) for login, command and read-backs
+    assert result["settled"] is True and result["timing_ms"]["new_connections"] == 1
+    import time as _t
+    _t.sleep(0.6)  # the camera's minimum interval between zoom commands
+    again = client.set_zoom(21)
+    assert pair_server.connections == 1 and again["timing_ms"]["new_connections"] == 0 and again["timing_ms"]["logins"] == 0
 
 
 def test_a_changed_fingerprint_fails_closed_before_the_password_is_sent(tls_camera):

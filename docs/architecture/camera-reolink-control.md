@@ -83,7 +83,12 @@ or an x-factor; a position outside the reported range is refused before anything
   the lens does not hold the camera lock, and a NEWER zoom target ends an older wait at once (`superseded: true`, ignored by the
   UI); the newer call waits out the 0.5 s interval instead of failing, sends its command and reads ITS target back (first look
   after 0.15 s, then every 0.3 s). A call that supersedes nothing still gets `rate_limited` when it comes too soon. The answer
-  carries `timing_ms` (`command_ms`, each read in `polls`, `total_ms`) so a slow chain can be measured on the real camera.
+  carries `timing_ms` (`command_ms`, each read in `polls`, `total_ms`, `logins`, `new_connections`, `stale_connections`,
+  `requests_ms`) so a slow chain can be measured on the real camera; the same numbers are printed as one `[REOLINK] zoom to N`
+  line per call (no token, password or address). The client keeps ONE HTTP(S) connection alive (idle longer than 15 s it is
+  dropped; a connection the camera closed quietly is replaced once; a camera that answers `Connection: close` is never
+  reused) and caches the login token, so a weak-Wi-Fi TLS handshake is paid once, not per request. The address policy and
+  the TLS pin are checked for every NEW connection.
 
 ## 7. Snapshot fallback (browsers without MediaSource)
 

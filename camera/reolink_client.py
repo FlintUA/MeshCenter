@@ -50,6 +50,8 @@ SETTLE_TIMEOUT_S = 6.0
 SETTLE_FIRST_POLL_S = 0.15  # most arrivals are close: look early, then every SETTLE_POLL_S
 SETTLE_POLL_S = 0.3
 TOKEN_MARGIN_S = 60.0
+KEEPALIVE_IDLE_S = 15.0  # a kept connection idle for longer is dropped, not reused (the camera closes idle ones)
+MAX_EVENTS = 200
 DEFAULT_LEASE_S = 3600.0
 API_PATH = "/cgi-bin/api.cgi"
 
@@ -177,6 +179,11 @@ class ReolinkClient:
         self._zoom_gen_lock = threading.Lock()
         self._zoom_cmd_lock = threading.Lock()  # one StartZoomFocus is sent at a time (the wait for the lens is outside it)
         self._zoom_waiting = 0
+        # one kept-alive connection (TLS handshakes are what a weak Wi-Fi camera is slow at) and a bounded trace of
+        # what the client did, so a slow zoom call can say where its time went (never any token or password)
+        self._conn: http.client.HTTPConnection | None = None
+        self._conn_used_at = 0.0
+        self._events: list[dict] = []
 
     # -- transport ---------------------------------------------------------
 
@@ -237,35 +244,83 @@ class ReolinkClient:
         except (ssl.SSLError, OSError):
             raise ReolinkError(TLS_ERROR, "The camera did not complete a TLS handshake.")
 
-    def _http(self, method: str, target: str, body: bytes | None = None) -> bytes:
-        """One request on a fresh connection. `target` may contain the token: it is never logged or reported."""
-        connection = self._connect()
-        try:
-            headers = {"Connection": "close"}
-            if body is not None:
-                headers["Content-Type"] = "application/json"
+    def _event(self, kind: str, **extra: Any) -> None:
+        self._events.append({"kind": kind, "t": self._clock(), **extra})
+        if len(self._events) > MAX_EVENTS:
+            del self._events[: len(self._events) - MAX_EVENTS]
+
+    def _drop_connection(self) -> None:
+        connection, self._conn = self._conn, None
+        if connection is not None:
             try:
-                connection.request(method, target, body=body, headers=headers)
-                response = connection.getresponse()
-                if 300 <= response.status < 400:
-                    raise ReolinkError(REDIRECT_REFUSED, "The camera answered with a redirect, which is not followed.")
-                length = response.getheader("Content-Length")
-                if length and length.isdigit() and int(length) > MAX_RESPONSE_BYTES:
-                    raise ReolinkError(BAD_RESPONSE, "The camera answer is too large.")
-                data = response.read(MAX_RESPONSE_BYTES + 1)
-            except ReolinkError:
-                raise
-            except socket.timeout:
-                raise ReolinkError(TIMEOUT, "The camera did not answer in time.")
-            except (OSError, http.client.HTTPException):
-                raise ReolinkError(UNREACHABLE, "The connection to the camera failed.")
-            if len(data) > MAX_RESPONSE_BYTES:
-                raise ReolinkError(BAD_RESPONSE, "The camera answer is too large.")
-            if response.status >= 400:
-                raise ReolinkError(BAD_RESPONSE, "The camera answered with an HTTP error.", rsp_code=None)
-            return data
-        finally:
-            connection.close()
+                connection.close()
+            except OSError:
+                pass
+
+    def _http(self, method: str, target: str, body: bytes | None = None) -> bytes:
+        """One request, on the kept-alive connection when there is a fresh one, else on a new one (the address policy
+        and the TLS pin are checked for every NEW connection). A reused connection that turns out to be dead is
+        replaced once. `target` may contain the token: it is never logged or reported."""
+        with self._lock:
+            for attempt in (0, 1):
+                reused = False
+                connection = self._conn
+                if connection is not None and (connection.sock is None or self._clock() - self._conn_used_at > KEEPALIVE_IDLE_S):
+                    self._drop_connection()
+                    connection = None
+                if connection is None:
+                    connection = self._connect()
+                    connection.auto_open = 0  # never reconnect behind our back (that would skip the checks)
+                    self._event("connect")
+                else:
+                    reused = True
+                began = self._clock()
+                try:
+                    headers = {}
+                    if body is not None:
+                        headers["Content-Type"] = "application/json"
+                    try:
+                        connection.request(method, target, body=body, headers=headers)
+                        response = connection.getresponse()
+                        if 300 <= response.status < 400:
+                            raise ReolinkError(REDIRECT_REFUSED, "The camera answered with a redirect, which is not followed.")
+                        length = response.getheader("Content-Length")
+                        if length and length.isdigit() and int(length) > MAX_RESPONSE_BYTES:
+                            raise ReolinkError(BAD_RESPONSE, "The camera answer is too large.")
+                        data = response.read(MAX_RESPONSE_BYTES + 1)
+                    except ReolinkError:
+                        raise
+                    except socket.timeout:
+                        raise ReolinkError(TIMEOUT, "The camera did not answer in time.")
+                    except (OSError, http.client.HTTPException):
+                        if reused and attempt == 0:
+                            self._event("stale")  # the camera had closed it: once more on a new connection
+                            self._conn = None
+                            try:
+                                connection.close()
+                            except OSError:
+                                pass
+                            continue
+                        raise ReolinkError(UNREACHABLE, "The connection to the camera failed.")
+                    if len(data) > MAX_RESPONSE_BYTES:
+                        raise ReolinkError(BAD_RESPONSE, "The camera answer is too large.")
+                    if response.status >= 400:
+                        raise ReolinkError(BAD_RESPONSE, "The camera answered with an HTTP error.", rsp_code=None)
+                except BaseException:
+                    self._conn = None
+                    try:
+                        connection.close()
+                    except OSError:
+                        pass
+                    raise
+                self._event("request", ms=round((self._clock() - began) * 1000), new_connection=not reused)
+                if response.will_close:
+                    self._conn = None
+                    connection.close()
+                else:
+                    self._conn, self._conn_used_at = connection, self._clock()
+                return data
+        raise ReolinkError(UNREACHABLE, "The connection to the camera failed.")  # unreachable
 
     def _post(self, target: str, commands: list) -> list:
         data = self._http("POST", target, json.dumps(commands).encode("utf-8"))
@@ -313,6 +368,7 @@ class ReolinkClient:
             if not isinstance(name, str) or not name:
                 raise ReolinkError(BAD_RESPONSE, "The camera answer is not valid.", command="Login")
             lease = float(lease) if isinstance(lease, (int, float)) and lease > 0 else DEFAULT_LEASE_S
+            self._event("login")
             self._token = name
             self._token_until = self._clock() + max(lease - TOKEN_MARGIN_S, 5.0)
 
@@ -320,12 +376,13 @@ class ReolinkClient:
         """Best effort; the token is dropped either way."""
         with self._lock:
             token, self._token = self._token, ""
-            if not token:
-                return
             try:
-                self._post(f"{API_PATH}?token={token}", [{"cmd": "Logout", "action": 0, "param": {}}])
+                if token:
+                    self._post(f"{API_PATH}?token={token}", [{"cmd": "Logout", "action": 0, "param": {}}])
             except ReolinkError:
                 pass
+            finally:
+                self._drop_connection()
 
     def _ensure_token(self) -> str:
         if not self._token or self._clock() >= self._token_until:
@@ -491,11 +548,24 @@ class ReolinkClient:
                 break
             if self._clock() >= deadline:
                 break
-        timing["total_ms"] = round((self._clock() - began) * 1000)
+        self._finish_timing(timing, began, position)
         return {"requested": position, "position": actual, "settled": settled, "zoom_range": [low, high], "timing_ms": timing}
 
-    def _superseded(self, position, low, high, actual, began, timing) -> dict:
+    def _finish_timing(self, timing: dict, began: float, position: int) -> None:
+        """total + where the time went: what this client did since the call began (the camera's other callers
+        included), as counts and per-request milliseconds. No token, no password, no address."""
+        window = [event for event in self._events if event["t"] >= began]
         timing["total_ms"] = round((self._clock() - began) * 1000)
+        timing["logins"] = sum(1 for event in window if event["kind"] == "login")
+        timing["new_connections"] = sum(1 for event in window if event["kind"] == "connect")
+        timing["stale_connections"] = sum(1 for event in window if event["kind"] == "stale")
+        timing["requests_ms"] = [event["ms"] for event in window if event["kind"] == "request"]
+        print(f"[REOLINK] zoom to {position}: total {timing['total_ms']} ms, command {timing.get('command_ms', '-')} ms, "
+              f"{len(timing['requests_ms'])} requests {timing['requests_ms']}, new connections {timing['new_connections']}, "
+              f"logins {timing['logins']}, stale {timing['stale_connections']}", flush=True)
+
+    def _superseded(self, position, low, high, actual, began, timing) -> dict:
+        self._finish_timing(timing, began, position)
         return {"requested": position, "position": actual, "settled": False, "superseded": True, "zoom_range": [low, high], "timing_ms": timing}
 
     # -- capability probe ----------------------------------------------------

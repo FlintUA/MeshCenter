@@ -601,6 +601,27 @@ a:focus-visible,
     scrollbar-gutter: stable;
 }
 
+/* The System page has two columns (about 760 px wide together). The centre workspace is only about 420 to 600 px wide
+   while the side panels are open, so the right column used to be cut off by overflow-x: hidden with no way to scroll to
+   it (the Security card with Sign out was unreachable). The columns stack when THEIR container is narrow, not when the
+   window is (the old rule looked at the window width). */
+.system-panel {
+    container-type: inline-size;
+}
+
+@container (max-width: 779px) {
+    .system-layout {
+        flex-direction: column;
+    }
+
+    .system-left-column,
+    .system-right-column {
+        width: 100%;
+        flex: 0 0 auto;
+        min-width: 0;
+    }
+}
+
 .system-layout::-webkit-scrollbar {
     width: 8px;
 }

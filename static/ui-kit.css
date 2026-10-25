@@ -5866,6 +5866,30 @@ video.camera-stream {
         display: none;
     }
 
+    /* the tab row is as high as its tabs (it was a fixed 42 px with 6 px padding on top, so the 48 px tabs were
+       cut off at the top edge) */
+    .main-content-tabs {
+        height: auto;
+        min-height: 52px;
+        padding: 4px 6px 0;
+        align-items: stretch;
+    }
+
+    /* the message box may be narrower than its intrinsic width (size="20" of a text input), otherwise a larger
+       phone font pushes the Send button past the right edge */
+    .input-form input[type="text"] {
+        min-width: 0;
+    }
+
+    .input-form {
+        min-width: 0;
+        max-width: 100%;
+    }
+
+    .input-form button {
+        flex: 0 0 auto;
+    }
+
     /* all five tabs fit the width (icon above the label): nothing to swipe, so nothing that can jerk or snap;
        the fade below stays only as a fallback for a screen narrower than 320 px */
     .main-content-tab {

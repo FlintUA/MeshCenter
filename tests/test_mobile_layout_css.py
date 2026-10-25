@@ -98,3 +98,14 @@ def test_mob2_settings_cards_are_not_wider_than_the_screen():
     assert "grid-template-columns: minmax(0, 1fr)" in _rule(block, "    .settings-grid {")
     assert "min-width: 0" in _rule(block, "    .settings-card,\n    .map-settings-card,")
     assert "flex-wrap: wrap" in _rule(block, "    .settings-segmented {")
+
+
+def test_mob2_tab_row_is_as_high_as_its_tabs_and_the_message_box_can_shrink():
+    """Reported live on an Android phone: the top of the tab cards was cut off (a fixed 42 px row with 6 px padding
+    held 48 px tabs) and the Send button ran past the right edge (a text input's intrinsic width stops it shrinking
+    when the phone font is larger)."""
+    block = _block()
+    row = _rule(block, "    .main-content-tabs {\n        height: auto;")
+    assert "min-height: 52px" in row and "align-items: stretch" in row
+    assert "min-width: 0" in _rule(block, '    .input-form input[type="text"] {')
+    assert "flex: 0 0 auto" in _rule(block, "    .input-form button {")

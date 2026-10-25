@@ -7312,7 +7312,8 @@ def resolve_ui_language():
 # Registered here (rather than alongside the other register_*_routes calls
 # near app = Flask(__name__)) because it needs state_lock/resolve_ui_language,
 # both defined above this point but not yet when app/auth_state were created.
-register_auth_routes(app, state_lock, auth_state, AUTH_FILE, handle_errors, resolve_ui_language=resolve_ui_language)
+register_auth_routes(app, state_lock, auth_state, AUTH_FILE, handle_errors, resolve_ui_language=resolve_ui_language,
+                     revoked_sessions_file=os.path.join(DATA_DIR, "revoked_sessions.json"))
 register_security_headers(app)
 
 # Each provider owns its own ui.language -> provider-language-code mapping

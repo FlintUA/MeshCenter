@@ -26,6 +26,7 @@ from urllib.parse import quote, urlsplit
 from flask import jsonify, redirect, request, render_template, session
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from meshsrv.session_guard import RevokedSessions, new_session_id
 from storage.json_store import safe_read_json, safe_write_json
 
 # P1 #6 stabilization follow-up: raised from 4 to the top of the 10-12
@@ -261,11 +262,38 @@ def needs_setup(auth_state):
     return bool(auth_state.get("enabled")) and not bool(str(auth_state.get("password_hash") or "").strip())
 
 
-def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, resolve_ui_language=None):
+def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, resolve_ui_language=None, revoked_sessions_file=None):
     # Closure-local, not module-level: a fresh dict per register_auth_routes()
     # call means each test (and each real app instance) starts with a clean
     # slate, same lifetime as auth_state itself.
     login_throttle = {}
+
+    # AUTH2: revoked session ids (a normal logout revokes only ITS session) and the guard a long-lived response
+    # (camera stream, MJPEG) asks every few seconds. See meshsrv/session_guard.py.
+    revoked = RevokedSessions(revoked_sessions_file, lifetime_s=app.permanent_session_lifetime.total_seconds())
+
+    def _stream_guard():
+        """Called inside a request: returns check() -> bool for the CURRENT session, usable after the request
+        context is gone (a streaming body runs outside it). True means keep streaming."""
+        with state_lock:
+            protected_at_start = is_protected(auth_state)
+        sid = session.get("sid")
+        version_at_start = session.get("auth_version", 1)
+
+        def check():
+            with state_lock:
+                protected_now = is_protected(auth_state)
+                current = int(auth_state.get("auth_version") or 1)
+            if not protected_now:
+                return True
+            if not protected_at_start:
+                return False  # opened while nothing needed a login; protection came on since: stop
+            if version_at_start != current:
+                return False  # password changed, protection re-enabled or "sign out everywhere"
+            return not revoked.is_revoked(sid)
+        return check
+
+    app.extensions["mc_session_guard"] = _stream_guard
 
     def _save(new_state):
         """F4.1 PR 2: persist-then-commit. Writes `new_state` (a COPY the
@@ -338,7 +366,13 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
             # that predates this feature stays valid until the next actual
             # change, exactly like the file it's checked against.
             if session.get("auth_version", 1) == current_auth_version:
-                return None
+                sid = session.get("sid")
+                if not sid:
+                    # a cookie made before AUTH2 stays valid; it gets an id now so a later logout can revoke it
+                    session["sid"] = new_session_id()
+                    return None
+                if not revoked.is_revoked(sid):
+                    return None
             session.clear()
 
         if path.startswith("/api/"):
@@ -430,6 +464,7 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
                 session.permanent = True
                 session["authenticated"] = True
                 session["auth_version"] = login_auth_version
+                session["sid"] = new_session_id()
                 # Rotate the CSRF token on every successful login (§2.3 point
                 # 3): a token minted before authentication (e.g. by the login
                 # page render, or carried over from an older session) is
@@ -491,6 +526,7 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
                     session.permanent = True
                     session["authenticated"] = True
                     session["auth_version"] = int(new_state.get("auth_version") or 1)
+                    session["sid"] = new_session_id()
                     session[_CSRF_SESSION_KEY] = _generate_csrf_token()
                     return redirect("/")
                 # Persist failed: auth_state is untouched (still needs
@@ -520,6 +556,25 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
     @app.route("/api/logout", methods=["POST"])
     @handle_errors
     def api_logout():
+        # AUTH2: only THIS session ends (its id is revoked, so a stream it has open ends too); other browsers stay in.
+        sid = session.get("sid")
+        if sid:
+            revoked.add(sid)
+        session.clear()
+        return jsonify({"ok": True})
+
+    @app.route("/api/auth/logout_all", methods=["POST"])
+    @handle_errors
+    def api_logout_all():
+        """Sign out everywhere: bump the global auth_version (every session, this one included, is refused from
+        the next request on, and open streams end at their next check)."""
+        with state_lock:
+            if not is_protected(auth_state):
+                return jsonify({"ok": False, "error": "Password protection is off", "error_code": "auth_not_enabled"}), 409
+            new_state = dict(auth_state)
+            new_state["auth_version"] = int(auth_state.get("auth_version") or 1) + 1
+            if not _save(new_state):
+                return jsonify({"ok": False, "error": "Could not save - storage write failed", "error_code": "storage_write_failed"}), 500
         session.clear()
         return jsonify({"ok": True})
 
@@ -650,6 +705,7 @@ def register_auth_routes(app, state_lock, auth_state, auth_file, handle_errors, 
             if grant_session:
                 session.permanent = True
                 session["authenticated"] = True
+                session.setdefault("sid", new_session_id())
             if session.get("authenticated"):
                 # Keep the session that just made this change in step with
                 # whatever auth_version was actually persisted - otherwise a

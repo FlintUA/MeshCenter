@@ -1068,7 +1068,13 @@
     "updates_preflight_tag_missing": "Release-Tag {tag} konnte nicht von GitHub geholt werden.",
     "updates_preflight_no_target": "Kein Release zum Aktualisieren - bitte zuerst \"Jetzt prüfen\" drücken.",
     "updates_manual_title": "Nach diesem Update ist ein manueller Schritt nötig",
-    "updates_manual_hint": "Dieses Update ändert Systemdateien, die MeshCenter nie selbst installiert (systemd-Unit, sudoers, udev-Regel oder ein privilegierter Helfer). Das Update wurde angewendet, nichts wurde blockiert. Führe den Befehl für jede Datei in einem Terminal auf dem Gerät aus:"
+    "updates_manual_hint": "Dieses Update ändert Systemdateien, die MeshCenter nie selbst installiert (systemd-Unit, sudoers, udev-Regel oder ein privilegierter Helfer). Das Update wurde angewendet, nichts wurde blockiert. Führe den Befehl für jede Datei in einem Terminal auf dem Gerät aus:",
+    "security_logout_all_btn": "Überall abmelden",
+    "security_logout_all_note": "Beendet jede angemeldete Browsersitzung, auch diese, und jeden offenen Kamerastream.",
+    "security_logout_all_title": "Überall abmelden?",
+    "security_logout_all_confirm": "Jeder bei MeshCenter angemeldete Browser, auch dieser, muss sich neu anmelden, und offene Kamerastreams werden beendet.",
+    "security_logout_all_not_enabled": "Der Passwortschutz ist aus, es gibt nichts abzumelden.",
+    "security_logout_all_failed": "Überall abmelden war nicht möglich."
   },
   "settings": {
     "title": "Einstellungen",

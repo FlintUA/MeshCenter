@@ -195,6 +195,36 @@ const tick = (ms = 5) => new Promise((resolve) => setTimeout(resolve, ms));
     assert.equal(plain.container.hidden, true, 'hidden for a camera that is not a network camera');
 }
 
+// UX4: snapshot mode - the picture's size and refresh instead of codec / fps / bitrate; the stream picker is locked with a hint
+{
+    const env = makeEnv({ fetchImpl: async () => json(200, { ok: true }) });
+    let snap = null;
+    env.win.MCIpCamera.snapshotInfo = () => snap;
+    env.api.update(STATUS);
+    assert.equal(env.registry.ipRowRefresh.hidden, true, 'a stream: no refresh row');
+    assert.equal(env.registry.ipRowFps.hidden, false);
+    assert.equal(env.registry.ipCameraProfile.disabled, false);
+    assert.equal(env.registry.ipStreamHint.hidden, true);
+    snap = { reason: 'ffmpeg', width: 1920, height: 1080, intervalMs: 1000 };
+    env.api.update(STATUS);
+    assert.equal(env.registry.ipInfoResolution.textContent, '1920x1080', 'the picture own size');
+    assert.equal(env.registry.ipInfoRefresh.textContent, 'ipctl.refresh_value');
+    assert.equal(env.registry.ipRowRefresh.hidden, false);
+    for (const row of ['ipRowFps', 'ipRowCodec', 'ipRowBitrate']) assert.equal(env.registry[row].hidden, true, row + ' is hidden for pictures');
+    assert.equal(env.registry.ipCameraProfile.disabled, true, 'the sub / main choice is locked');
+    assert.equal(env.registry.ipStreamHint.hidden, false);
+    assert.equal(env.registry.ipStreamHint.textContent, 'ipctl.stream_hint_snapshot_ffmpeg');
+    assert.equal(env.registry.ipInfoState.textContent, 'ipcamera.snapshot_status');
+    snap = { reason: 'browser', width: null, height: null, intervalMs: 1000 };
+    env.api.update(STATUS);
+    assert.equal(env.registry.ipStreamHint.textContent, 'ipctl.stream_hint_snapshot_browser');
+    assert.equal(env.registry.ipInfoResolution.textContent, '-', 'no picture yet: no invented size');
+    snap = null;
+    env.api.update(STATUS);
+    assert.equal(env.registry.ipCameraProfile.disabled, false, 'a stream again: the choice is back');
+    assert.equal(env.registry.ipRowFps.hidden, false);
+}
+
 // the Lens tab: read on open, send on release only
 {
     let position = 22;

@@ -197,7 +197,7 @@
     }
 
     function infoRow(labelKey, valueId) {
-        return el('div', { class: 'ip-info-row' }, [
+        return el('div', { class: 'ip-info-row', id: valueId.replace('ipInfo', 'ipRow') }, [
             el('span', { class: 'ip-info-label', text: t(labelKey) }),
             el('span', { class: 'ip-info-value', id: valueId, text: '-' }),
         ]);
@@ -214,7 +214,8 @@
         reconnect.style.display = 'none';
         return el('div', { class: 'ip-info-row' }, [
             el('span', { class: 'ip-info-label', text: t('ipctl.info_stream') }),
-            el('span', { class: 'ip-info-value ip-info-stream' }, [select, reconnect]),
+            el('span', { class: 'ip-info-value ip-info-stream' }, [select, reconnect,
+                el('span', { class: 'ip-hint ip-stream-hint', id: 'ipStreamHint', text: '' })]),
         ]);
     }
 
@@ -230,6 +231,7 @@
             el('div', { class: 'ip-info-grid' }, [
                 streamRow(),
                 infoRow('ipctl.info_resolution', 'ipInfoResolution'),
+                infoRow('ipctl.info_refresh', 'ipInfoRefresh'),
                 infoRow('ipctl.info_fps', 'ipInfoFps'),
                 infoRow('ipctl.info_codec', 'ipInfoCodec'),
                 infoRow('ipctl.info_bitrate', 'ipInfoBitrate'),
@@ -314,15 +316,37 @@
         if (node && node.textContent !== text) node.textContent = text;
     }
 
+    function setRowHidden(id, hidden) {
+        const row = byId(id);
+        if (row && row.hidden !== hidden) row.hidden = hidden;
+    }
+
     function renderInfo(status) {
-        setText('ipInfoResolution', status.resolution || '-');
-        setText('ipInfoFps', status.fps ? status.fps + ' FPS' : '-');
-        setText('ipInfoCodec', status.codec ? String(status.codec).toUpperCase() : '-');
-        setText('ipInfoBitrate', status.bitrate_kbps ? status.bitrate_kbps + ' kbps' : '-');
+        // pictures instead of a stream: the picture's own size and how often it is renewed; no codec, fps or bitrate
+        const snap = window.MCIpCamera && typeof window.MCIpCamera.snapshotInfo === 'function' ? window.MCIpCamera.snapshotInfo() : null;
+        setRowHidden('ipRowRefresh', !snap);
+        for (const id of ['ipRowFps', 'ipRowCodec', 'ipRowBitrate']) setRowHidden(id, Boolean(snap));
+        if (snap) {
+            setText('ipInfoResolution', snap.width ? snap.width + 'x' + snap.height : '-');
+            setText('ipInfoRefresh', t('ipctl.refresh_value'));
+        } else {
+            setText('ipInfoResolution', status.resolution || '-');
+            setText('ipInfoFps', status.fps ? status.fps + ' FPS' : '-');
+            setText('ipInfoCodec', status.codec ? String(status.codec).toUpperCase() : '-');
+            setText('ipInfoBitrate', status.bitrate_kbps ? status.bitrate_kbps + ' kbps' : '-');
+        }
+        // the sub / main choice means nothing for pictures (the camera makes them): locked, with one line why
+        const select = byId('ipCameraProfile');
+        if (select && select.disabled !== Boolean(snap)) select.disabled = Boolean(snap);
+        const hint = byId('ipStreamHint');
+        if (hint) {
+            hint.hidden = !snap;
+            setText('ipStreamHint', snap ? t(snap.reason === 'ffmpeg' ? 'ipctl.stream_hint_snapshot_ffmpeg' : 'ipctl.stream_hint_snapshot_browser') : '');
+        }
         const helpers = window.MCIpCamera && window.MCIpCamera._helpers;
         let text = '-';
         if (helpers) text = helpers.isTerminal(status) ? t('ipcamera.state_error') : t(helpers.stateMessageKey(status));
-        if (status.ffmpeg_available === false && status.snapshot_fallback) text = t('ipcamera.snapshot_status'); // pictures, no live video
+        if (snap || (status.ffmpeg_available === false && status.snapshot_fallback)) text = t('ipcamera.snapshot_status'); // pictures, no live video
         setText('ipInfoState', text);
         const quality = byId('ipSnapshotQuality');
         const wanted = localQuality || status.snapshot_quality || 'full';

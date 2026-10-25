@@ -11,7 +11,7 @@ from camera import mjpeg_fallback
 from camera.ip_snapshot import SnapshotError
 from camera.camera_manager import build_camera_manager, network_drivers_from_state
 from camera.rtsp_driver import StreamNotReady, ViewerLimitReached
-from meshsrv import error_reporting
+from meshsrv import error_reporting, session_guard
 from storage.json_store import safe_read_json, safe_write_json
 
 
@@ -126,9 +126,14 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
                             "error": "MJPEG fallback is disabled on this low-power host"}), 503
 
         return Response(
-            manager.mjpeg_multipart_stream(),
+            session_guard.guard_stream(manager.mjpeg_multipart_stream(), _session_check(), label="MJPEG stream"),
             mimetype='multipart/x-mixed-replace; boundary=frame'
         )
+
+    def _session_check():
+        """AUTH2: the check a long-lived response asks every few seconds (None when nothing guards sessions)."""
+        factory = app.extensions.get("mc_session_guard")
+        return factory() if factory else None
 
     def _active_ip_driver():
         driver = _active_driver()
@@ -182,7 +187,7 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
             return jsonify({"ok": False, "error": "Stream not ready", "error_code": "stream_not_ready",
                             "state": error.state, "stream_error": error.error_code}), 503
         _harden_stream_socket()
-        response = Response(stream, mimetype="video/mp4", direct_passthrough=True)
+        response = Response(session_guard.guard_stream(stream, _session_check(), label="fMP4 stream"), mimetype="video/mp4", direct_passthrough=True)
         response.headers["X-Codec"] = stream.mse_codec
         response.headers["Access-Control-Expose-Headers"] = "X-Codec"
         response.headers["Cache-Control"] = "no-store"

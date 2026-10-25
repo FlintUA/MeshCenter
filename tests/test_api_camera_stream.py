@@ -82,6 +82,32 @@ def test_stream_returns_init_first_then_fragments_with_codec_header(env):
     assert env["limiter"].count() == 0  # slot released on close
 
 
+def test_an_open_stream_ends_when_the_session_is_no_longer_valid(env, monkeypatch):
+    """AUTH2: the stream is authorised once; a logout or a password change ends it at the next look."""
+    import meshsrv.session_guard as sg
+    monkeypatch.setattr(sg, "DEFAULT_RECHECK_S", 0.05)
+    valid = {"ok": True}
+    app = Flask(__name__)
+    register_camera_routes(app, camera_module, env["state"], MagicMock(), _handle_errors)
+    app.extensions["mc_session_guard"] = lambda: (lambda: valid["ok"])
+    response = app.test_client().get("/api/camera/stream/fmp4", buffered=False)
+    assert response.status_code == 200
+    iterator = iter(response.response)
+    assert next(iterator)[4:8] == b"ftyp"
+    valid["ok"] = False  # the session was revoked
+    ended = False
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        try:
+            next(iterator)
+        except StopIteration:
+            ended = True
+            break
+    assert ended, "the response must end by itself, not wait for the 10 minute cap"
+    response.close()
+    assert env["limiter"].count() == 0  # and its viewer slot is free
+
+
 def test_fifth_viewer_of_one_source_is_refused_and_slots_are_released(env):
     responses = [_open(env["client"]) for _ in range(4)]
     assert [r.status_code for r in responses] == [200] * 4

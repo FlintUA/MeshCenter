@@ -112,6 +112,16 @@
             cursor: pointer;
         }
         .login-submit:hover { filter: brightness(1.05); }
+        /* locked while the server's wait after wrong passwords runs (the form shows the countdown) */
+        .login-submit:disabled { opacity: .55; cursor: not-allowed; filter: none; }
+        .login-info {
+            margin-top: 14px;
+            padding: 10px 12px;
+            border-radius: 8px;
+            background: color-mix(in srgb, var(--primary-color, #1769e0) 12%, var(--card-bg, #fff));
+            color: var(--text-primary, #172033);
+            font-size: 13px;
+        }
     </style>
 </head>
 <body>
@@ -153,13 +163,34 @@
             } catch (error) { /* default light theme */ }
         })();
     </script>
-    <script src="/static/i18n.js?v=20261001-f41-storage-write-failed"></script>
+    <script src="/static/i18n.js?v=20261025-login"></script>
     <script>
         window.I18N.init("{{ ui_language }}").then(function () {
             window.I18N.applyStaticDom();
             var throttledError = document.getElementById('loginError');
-            if (throttledError && throttledError.dataset.retryAfter) {
-                throttledError.textContent = window.I18N.t('auth.login_throttled', { seconds: throttledError.dataset.retryAfter });
+            var wait = throttledError ? parseInt(throttledError.dataset.retryAfter, 10) : NaN;
+            if (throttledError && wait > 0) {
+                // Count the wait down on the page (the server sends the number once): the button stays locked until
+                // it is over, then the note says it can be tried again. Deadline based, so a slow tab does not drift.
+                var submit = document.querySelector('.login-submit');
+                var until = Date.now() + wait * 1000;
+                var timer = null;
+                var tick = function () {
+                    var left = Math.ceil((until - Date.now()) / 1000);
+                    if (left > 0) {
+                        throttledError.textContent = window.I18N.t('auth.login_throttled', { seconds: left });
+                        return;
+                    }
+                    clearInterval(timer);
+                    throttledError.className = 'login-info';
+                    throttledError.textContent = window.I18N.t('auth.login_throttle_over');
+                    if (submit) submit.disabled = false;
+                    var field = document.getElementById('loginPassword');
+                    if (field) field.focus();
+                };
+                if (submit) submit.disabled = true;
+                tick();
+                timer = setInterval(tick, 500);
             }
         });
     </script>

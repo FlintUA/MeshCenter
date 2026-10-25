@@ -1068,7 +1068,13 @@
     "updates_preflight_tag_missing": "Release tag {tag} could not be fetched from GitHub.",
     "updates_preflight_no_target": "No release to update to - press Check now first.",
     "updates_manual_title": "Manual step needed after this update",
-    "updates_manual_hint": "This update changes host files that MeshCenter never installs by itself (systemd unit, sudoers, udev rule or a privileged helper). The update was applied and nothing was blocked. Run the command for each file in a terminal on the device:"
+    "updates_manual_hint": "This update changes host files that MeshCenter never installs by itself (systemd unit, sudoers, udev rule or a privileged helper). The update was applied and nothing was blocked. Run the command for each file in a terminal on the device:",
+    "security_logout_all_btn": "Sign out everywhere",
+    "security_logout_all_note": "Ends every signed-in browser, this one included, and any open camera stream.",
+    "security_logout_all_title": "Sign out everywhere?",
+    "security_logout_all_confirm": "Every browser that is signed in to MeshCenter, including this one, has to sign in again, and open camera streams stop.",
+    "security_logout_all_not_enabled": "Password protection is off, so there is nothing to sign out of.",
+    "security_logout_all_failed": "Could not sign out everywhere."
   },
   "settings": {
     "title": "Settings",
@@ -1707,6 +1713,7 @@
     "password_label": "Password",
     "login_error": "Incorrect password.",
     "login_throttled": "Too many attempts. Try again in {seconds} seconds.",
+    "login_throttle_over": "You can try again now.",
     "login_submit": "Sign in",
     "setup_title": "Welcome to MeshCenter",
     "setup_subtitle": "This is a new installation. Create a password to protect it before continuing.",

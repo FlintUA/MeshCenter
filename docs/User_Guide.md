@@ -896,7 +896,16 @@ MeshCenter is intended for a trusted local network, and uses unencrypted HTTP by
 **Password protection**: the first time you open MeshCenter (or if protection is ever re-enabled), a setup wizard requires you to create a password of at least 12 characters before anything else is usable. Once set:
 - Every page and every `/api/` request requires a logged-in session (`Settings > Security` to change the password or disable protection - disabling requires your current password).
 - Changing the password immediately invalidates every *other* open session (on any device/browser) - only the session that made the change stays logged in. This is deliberate: it's how you recover if a device with a saved session is lost or compromised.
-- Repeated failed login attempts are throttled with an increasing delay (capped at 5 minutes) - this slows down password guessing, it does not lock the account.
+- Repeated failed login attempts are throttled with an increasing delay (capped at 5 minutes) - this slows down password guessing, it does not lock the account. The login page counts the remaining wait down and unlocks **Sign in** when it is over.
+- **Sign out** (`Settings > Security`) ends only the session of the browser you press it in: other browsers and phones stay signed in, a copy of that browser's cookie stops working, and a camera stream that session had open ends within a few seconds (the page then goes to the login page). **Sign out everywhere** ends every session on every device, including this one, and every open camera stream. Use it when a phone or a shared computer may still be signed in. A page that finds its session ended (from another tab or device) goes to the login page by itself.
+- **If you forgot the password**: it is stored only as a hash and cannot be shown, but you can reset it from the device. As the MeshCenter user on the device (SSH or a terminal on the Pi):
+
+  ```bash
+  cd ~/meshcenter/data && cp auth.json auth.json.bak && python3 -c 'import json;d=json.load(open("auth.json"));d["enabled"]=True;d["password_hash"]="";d["auth_version"]=int(d.get("auth_version") or 1)+1;json.dump(d,open("auth.json","w"))'
+  sudo systemctl restart meshcenter.service
+  ```
+
+  Open MeshCenter in a browser: it shows the create-your-password screen (`/setup`). The same step ends the sessions of every device (the `auth_version` number goes up). `auth.json.bak` keeps the old hash in case you remember the password after all; delete it afterwards. In Docker (for example on a NAS) the file is `auth.json` in the folder mounted as `/data`; edit it the same way and restart the container (`docker compose restart`). Anyone who can read and write `data/` on the device can do this, which is why `data/` must stay owner-only.
 - Every state-changing `/api/` request also requires a CSRF token (issued at login, rotated on each new login) in an `X-CSRF-Token` header, checked with a constant-time comparison - this stops a malicious page in another tab from silently using your logged-in session against you.
 
 **What this does not cover**: HTTP is unencrypted by default, so your password and session cookie travel in plaintext on the local network - password protection stops a stranger from using the interface, not someone already capturing LAN traffic. It's still not meant to be exposed directly to the Internet.

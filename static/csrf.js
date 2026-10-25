@@ -293,6 +293,30 @@
         }
     }
 
+    // AUTH2: a session that was signed out (this browser's logout in another tab, "sign out everywhere", a password
+    // change) gets 401 auth_required from every /api/ call. Without this the page stays open and dead (a blank picture,
+    // stale numbers, polling forever). Once per page: go to the login page and come back to this page afterwards.
+    // setup_required (a fresh install) goes to the setup wizard. With protection off the server never answers 401.
+    var signedOutRedirecting = false;
+
+    function redirectIfSignedOut(response) {
+        if (!response || response.status !== 401 || signedOutRedirecting || typeof Response === 'undefined') return response;
+        var original = response;
+        try {
+            return original.clone().json().then(function (body) {
+                var code = body && body.error_code;
+                if ((code !== 'auth_required' && code !== 'setup_required') || signedOutRedirecting) return original;
+                signedOutRedirecting = true;
+                var here = (window.location.pathname || '/') + (window.location.search || '');
+                var target = code === 'setup_required' ? '/setup' : '/login?next=' + encodeURIComponent(here);
+                window.location.assign(target);
+                return original;
+            }).catch(function () { return original; });
+        } catch (e) {
+            return original;
+        }
+    }
+
     function wrappedFetch(input, init) {
         // needsToken() (same-origin mutating /api/) decides BOTH whether the
         // token is added and whether a 403 is inspected for csrf_invalid. The
@@ -346,7 +370,7 @@
         }
 
         if (isApiRequest(input)) {
-            promise = promise.then(localizeInternalError);
+            promise = promise.then(localizeInternalError).then(redirectIfSignedOut);
         }
 
         return promise;
@@ -354,7 +378,7 @@
 
     window.fetch = wrappedFetch;
     window.MeshCenterCSRF = {
-        version: '4',
+        version: '5',
         refreshToken: refreshToken,
         getToken: getToken,
         needsToken: needsToken,

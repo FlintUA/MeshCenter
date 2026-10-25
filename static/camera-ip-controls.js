@@ -30,13 +30,22 @@
     // ---------- pure logic ----------
 
     // Lens position state machine. `read()` -> {position, range:[min,max]|null, focus}; `move(target)` ->
-    // {position, settled}. Both may throw an object with `error_code` / `right`. A request made while the lens is
-    // moving (or being read) replaces any earlier waiting one: the latest target wins, and it is sent when the
-    // current move is over. A permission error ends the control (no more commands are sent).
+    // {position, settled, superseded}. Both may throw an object with `error_code` / `right`.
+    //
+    // LENS1: a request made while the lens is still moving does not wait for the old move to be read back. The
+    // latest target wins: it is sent at most `minGapMs` (the camera's own minimum interval) after the previous
+    // command, the server then ends the older wait at once (that answer is `superseded` and ignored here) and
+    // reads the NEW target back. At most two moves are in flight. A permission error ends the control.
     function createLensController(options) {
+        const minGapMs = options.minGapMs != null ? options.minGapMs : 500;
+        const now = options.now || Date.now;
         const state = { phase: 'idle', position: null, range: null, focus: null, target: null, settled: true, error: null, denied: false };
         let pending = null;
-        let busy = false;
+        let inflight = 0;
+        let moveSeq = 0;
+        let reading = false;
+        let lastSendAt = -Infinity;
+        let timer = null;
 
         function emit() {
             if (typeof options.onChange === 'function') options.onChange(Object.assign({}, state));
@@ -54,37 +63,51 @@
             if (result.position != null) state.position = result.position;
         }
 
-        async function drain() {
-            while (pending !== null && !busy && !state.denied) {
-                const target = pending;
-                pending = null;
-                if (state.range && (target < state.range[0] || target > state.range[1])) continue;
-                if (target === state.position && state.settled) continue;
-                busy = true;
-                state.phase = 'moving';
-                state.target = target;
-                state.error = null;
-                emit();
-                try {
-                    const result = await options.move(target);
+        async function send(target) {
+            const seq = ++moveSeq;
+            inflight += 1;
+            lastSendAt = now();
+            state.phase = 'moving';
+            state.target = target;
+            state.error = null;
+            emit();
+            try {
+                const result = await options.move(target);
+                if (result.range) state.range = result.range; // the range is true whichever answer carries it
+                if (seq === moveSeq && !result.superseded) {
                     apply(result);
                     state.settled = result.settled !== false;
                     state.phase = 'ready';
-                } catch (error) {
-                    fail(error);
                 }
-                busy = false;
-                state.target = null;
-                emit();
+            } catch (error) {
+                if (seq === moveSeq || (error && error.error_code === 'permission_denied')) fail(error);
             }
+            inflight -= 1;
+            if (seq === moveSeq) state.target = null;
+            emit();
+            drain();
+        }
+
+        function drain() {
+            if (pending === null || state.denied || reading || inflight >= 2) return;
+            const wait = lastSendAt + minGapMs - now();
+            if (wait > 0) {
+                if (!timer) timer = setTimeout(() => { timer = null; drain(); }, wait);
+                return;
+            }
+            const target = pending;
+            pending = null;
+            if (state.range && (target < state.range[0] || target > state.range[1])) return drain();
+            if (inflight === 0 && target === state.position && state.settled) return;
+            send(target);
         }
 
         return {
             state,
             // read the position (tab opened, or once more after a lens that had not arrived)
             async refresh() {
-                if (busy || state.denied) return;
-                busy = true;
+                if (inflight > 0 || reading || state.denied) return;
+                reading = true;
                 state.phase = 'reading';
                 state.error = null;
                 emit();
@@ -95,17 +118,18 @@
                 } catch (error) {
                     fail(error);
                 }
-                busy = false;
+                reading = false;
                 emit();
-                await drain();
+                drain();
             },
-            // the user chose a position (slider released)
+            // the user chose a position (slider released): the latest one wins
             request(target) {
                 if (!Number.isInteger(target) || state.denied) return Promise.resolve();
                 pending = target;
-                return busy ? Promise.resolve() : drain();
+                drain();
+                return Promise.resolve();
             },
-            busy() { return busy; },
+            busy() { return inflight > 0 || reading; },
         };
     }
 
@@ -383,7 +407,7 @@
         const body = await lensCall(SOURCES + encodeURIComponent(sourceId) + '/control/zoom', {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pos: target }),
         });
-        return { position: body.position, settled: body.settled, range: body.zoom_range };
+        return { position: body.position, settled: body.settled, range: body.zoom_range, superseded: Boolean(body.superseded) };
     }
 
     function renderLensValue(value, dragging) {

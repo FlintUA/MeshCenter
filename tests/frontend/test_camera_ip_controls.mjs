@@ -60,7 +60,7 @@ const json = (status, body) => ({ ok: status >= 200 && status < 300, status, jso
 const STATUS = { source_type: 'rtsp', source_id: 'ip:1', state: 'live', profile: 'sub', resolution: '640x360', fps: 15.1, codec: 'h264', bitrate_kbps: 139, control_type: 'reolink', snapshot_quality: 'full', zoom_control: true };
 const tick = (ms = 5) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// ---------------------------------------------------------------- the lens controller (coalescing, latest wins)
+// ---------------------------------------------------------------- the lens controller (LENS1: latest wins, no waiting for the old move)
 {
     const env = makeEnv();
     const log = [];
@@ -68,12 +68,14 @@ const tick = (ms = 5) => new Promise((resolve) => setTimeout(resolve, ms));
     let maxParallel = 0;
     const gates = [];
     const lens = env.api.createLensController({
+        minGapMs: 20,
         read: async () => ({ position: 22, range: [0, 28], focus: 222 }),
         move: (target) => new Promise((resolve) => {
             running += 1;
             maxParallel = Math.max(maxParallel, running);
             log.push(target);
-            gates.push(() => { running -= 1; resolve({ position: target, settled: true }); });
+            // the server ends the older wait when a newer target arrives: that answer is `superseded`
+            gates.push((superseded) => { running -= 1; resolve(superseded ? { position: null, settled: false, superseded: true } : { position: target, settled: true }); });
         }),
         onChange: () => {},
     });
@@ -81,25 +83,27 @@ const tick = (ms = 5) => new Promise((resolve) => setTimeout(resolve, ms));
     assert.equal(lens.state.position, 22);
     assert.equal(JSON.stringify(lens.state.range), '[0,28]');
     assert.equal(lens.state.focus, 222);
-    lens.request(10); // starts moving to 10
+    lens.request(10); // sent at once
     await tick();
     assert.equal(lens.state.phase, 'moving');
+    assert.equal(JSON.stringify(log), '[10]');
     lens.request(11);
     lens.request(12);
-    lens.request(15); // dragged again while the lens moves: only the latest survives
-    gates.shift()(); // the move to 10 finishes
+    lens.request(15); // dragged again while the lens moves: only the latest survives, and it does NOT wait for the move to 10
+    await tick(60);
+    assert.equal(JSON.stringify(log), '[10,15]', 'the newer target is sent while the older one is still in flight');
+    assert.equal(maxParallel, 2, 'at most two moves in flight');
+    gates.shift()(true); // the server answers the older one as superseded
     await tick();
-    await tick();
-    assert.equal(JSON.stringify(log), '[10,15]', 'the waiting targets were coalesced, 15 won');
-    gates.shift()();
-    await tick();
+    assert.equal(lens.state.phase, 'moving', 'the superseded answer ends nothing: the latest target is still being read back');
+    assert.equal(lens.state.position, 22, 'and it is not shown as a position');
+    gates.shift()(false); // the read-back of the last target
     await tick();
     assert.equal(lens.state.position, 15);
     assert.equal(lens.state.phase, 'ready');
-    assert.equal(maxParallel, 1, 'never two moves at once');
     lens.request(15); // already there: nothing is sent
     lens.request(99); // outside the range: nothing is sent
-    await tick();
+    await tick(60);
     assert.equal(JSON.stringify(log), '[10,15]');
 }
 
@@ -108,26 +112,32 @@ const tick = (ms = 5) => new Promise((resolve) => setTimeout(resolve, ms));
     const env = makeEnv();
     let calls = 0;
     const lens = env.api.createLensController({
+        minGapMs: 0,
         read: async () => ({ position: 5, range: [0, 28], focus: 1 }),
         move: async () => { calls += 1; throw { error_code: 'permission_denied', right: 'lens_control', status: 403 }; },
     });
     await lens.refresh();
-    await lens.request(8);
+    lens.request(8);
+    await tick();
     assert.equal(lens.state.denied, true);
     assert.equal(lens.state.error.right, 'lens_control');
-    await lens.request(9);
+    lens.request(9);
+    await tick();
     await lens.refresh();
     assert.equal(calls, 1, 'no more commands after a permission error');
 
     const other = env.api.createLensController({
+        minGapMs: 0,
         read: async () => ({ position: 5, range: [0, 28] }),
         move: async (target) => { if (target === 8) throw { error_code: 'unreachable' }; return { position: target, settled: true }; },
     });
     await other.refresh();
-    await other.request(8);
+    other.request(8);
+    await tick();
     assert.equal(other.state.phase, 'error');
     assert.equal(other.state.denied, false);
-    await other.request(9);
+    other.request(9);
+    await tick();
     assert.equal(other.state.phase, 'ready');
     assert.equal(other.state.position, 9);
 }

@@ -85,6 +85,58 @@
         }
     }
 
+    // ---- MOB2-A: the dock menus are bottom sheets on a phone; a backdrop and Escape close them ----
+    var SHEET_IDS = ['workspacePopover', 'mapLayoutPopover', 'notificationPopover'];
+
+    function sheetOpen() {
+        return SHEET_IDS.some(function (id) {
+            var element = document.getElementById(id);
+            return Boolean(element && !element.hidden);
+        });
+    }
+
+    // Each menu has its own closer in chat.js (it also resets the button state): call those, never just hide
+    function closeSheets() {
+        if (typeof window.setWorkspacePopover === 'function') window.setWorkspacePopover(false);
+        if (typeof window.setMapLayoutPopover === 'function') window.setMapLayoutPopover(false);
+        if (typeof window.closeNotificationCenter === 'function') window.closeNotificationCenter();
+    }
+
+    function syncSheetState() {
+        var open = isMobile() && sheetOpen();
+        if (document.body && document.body.classList) document.body.classList.toggle('mc-sheet-open', open);
+    }
+
+    function initSheets() {
+        if (!document.body || typeof document.createElement !== 'function') return;
+        if (!document.getElementById('mcSheetBackdrop')) {
+            var backdrop = document.createElement('div');
+            backdrop.id = 'mcSheetBackdrop';
+            backdrop.setAttribute('aria-hidden', 'true');
+            backdrop.addEventListener('click', closeSheets);
+            document.body.appendChild(backdrop);
+        }
+        if (typeof MutationObserver === 'function') {
+            var watcher = new MutationObserver(syncSheetState);
+            SHEET_IDS.forEach(function (id) {
+                var element = document.getElementById(id);
+                if (element) watcher.observe(element, { attributes: true, attributeFilter: ['hidden'] });
+            });
+        }
+        document.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape' && isMobile() && sheetOpen()) closeSheets();
+        });
+    }
+
+    // ---- MOB2-B: the tab row scrolls sideways; say so with a fade on the side that has more ----
+    function updateTabsCue() {
+        var tabs = document.querySelector('.main-content-tabs');
+        if (!tabs || !tabs.classList) return;
+        var more = isMobile() && tabs.scrollWidth > tabs.clientWidth + 2;
+        tabs.classList.toggle('tabs-more-left', more && tabs.scrollLeft > 4);
+        tabs.classList.toggle('tabs-more-right', more && tabs.scrollLeft + tabs.clientWidth < tabs.scrollWidth - 4);
+    }
+
     document.addEventListener('click', function (event) {
         var target = event.target && event.target.closest ? event.target.closest('button') : null;
         if (!target) return;
@@ -117,15 +169,19 @@
     }
 
     if (mq) {
-        var onChange = function () { apply(); };
+        var onChange = function () { apply(); syncSheetState(); updateTabsCue(); };
         if (typeof mq.addEventListener === 'function') mq.addEventListener('change', onChange);
         else if (typeof mq.addListener === 'function') mq.addListener(onChange);
     }
 
     function init() {
         apply();
+        initSheets();
         // switchMainTab() also runs from code (deep links, "close" buttons), not only from a tab click
         var tabs = document.querySelector('.main-content-tabs');
+        if (tabs && typeof tabs.addEventListener === 'function') tabs.addEventListener('scroll', updateTabsCue, { passive: true });
+        window.addEventListener('resize', updateTabsCue);
+        updateTabsCue();
         if (tabs && typeof MutationObserver === 'function') {
             new MutationObserver(function () { if (isMobile()) revealActiveTab(); })
                 .observe(tabs, { attributes: true, attributeFilter: ['class'], subtree: true });
@@ -140,11 +196,11 @@
             });
         }
         // Workspace.apply() (desktop button state) runs after load: set ours again once it has
-        window.addEventListener('load', function () { apply(); revealActiveTab(); });
+        window.addEventListener('load', function () { apply(); revealActiveTab(); updateTabsCue(); });
         wrapOpenChat();
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
     else init();
 
-    window.MCMobileLayout = { nextPane: nextPane, isMobile: isMobile, setPane: setPane, getPane: function () { return pane; }, QUERY: QUERY, _wrapOpenChat: wrapOpenChat };
+    window.MCMobileLayout = { closeSheets: closeSheets, syncSheetState: syncSheetState, updateTabsCue: updateTabsCue, nextPane: nextPane, isMobile: isMobile, setPane: setPane, getPane: function () { return pane; }, QUERY: QUERY, _wrapOpenChat: wrapOpenChat };
 })();

@@ -5718,4 +5718,173 @@ video.camera-stream {
         border-radius: 50%;
         background: var(--mc-primary, #2563eb);
     }
+
+    /* ======================================================================
+       MOB2-A: the dock menus (Workspace, Map layout, Notifications) are bottom sheets on a phone.
+       They used to be absolutely positioned children of the dock, which is 52 px high, overflow: hidden and
+       centred with transform: translateX(-50%): the menus were clipped to nothing and a tap on where they
+       should be went to the page behind (System, Settings and About could not be opened). A fixed element is
+       not clipped by an ancestor's overflow, but a transform on the dock would still make the dock its
+       containing block, so the transform goes (the dock is full width here anyway).
+       ====================================================================== */
+    .status-dock {
+        left: 0;
+        transform: none;
+    }
+
+    .workspace-popover,
+    .map-layout-popover,
+    .notification-popover-center {
+        position: fixed;
+        left: 50%;
+        right: auto;
+        transform: translateX(-50%);
+        bottom: calc(60px + env(safe-area-inset-bottom, 0px));
+        width: min(560px, calc(100% - 16px));
+        max-width: none;
+        max-height: min(72dvh, 620px);
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        z-index: 1100;
+        border-radius: 16px;
+        box-shadow: 0 -6px 30px rgba(15, 23, 42, 0.35);
+    }
+
+    .workspace-popover::after {
+        display: none;
+    }
+
+    .workspace-popover[hidden],
+    .map-layout-popover[hidden],
+    .notification-popover-center[hidden] {
+        display: none !important;
+    }
+
+    /* the page links first: System, Settings and About are what a phone user opens this menu for */
+    .workspace-popover:not([hidden]) {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .workspace-popover .workspace-popover-header {
+        order: -2;
+    }
+
+    .workspace-popover .workspace-application-section {
+        order: -1;
+    }
+
+    .workspace-popover-close {
+        min-width: 44px;
+        min-height: 44px;
+    }
+
+    .workspace-nav-btn {
+        min-height: 52px;
+    }
+
+    .workspace-setting-row {
+        min-height: 48px;
+        font-size: 14px;
+    }
+
+    .map-layout-option {
+        min-height: 48px;
+        font-size: 14px;
+    }
+
+    .map-layout-option input {
+        width: 20px;
+        height: 20px;
+    }
+
+    .notification-list {
+        max-height: calc(min(72dvh, 620px) - 70px);
+    }
+
+    /* a tap outside closes the sheet (static/mobile-layout.js adds the element and the body class) */
+    #mcSheetBackdrop {
+        display: none;
+    }
+
+    body.mc-sheet-open #mcSheetBackdrop {
+        display: block;
+        position: fixed;
+        inset: 0;
+        z-index: 800; /* below the dock (900) that holds the sheet, above the page */
+        background: rgba(15, 23, 42, 0.45);
+    }
+
+    /* ======================================================================
+       MOB2-B: dock and tab row sizes
+       ====================================================================== */
+    .status-dock {
+        height: calc(52px + env(safe-area-inset-bottom, 0px));
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+
+    .main-layout {
+        padding-bottom: calc(52px + env(safe-area-inset-bottom, 0px));
+    }
+
+    .dock-workspace-btn {
+        width: 44px;
+        height: 44px;
+        min-width: 44px;
+        padding: 0;
+        justify-content: center;
+        font-size: 18px;
+    }
+
+    .dock-workspace-btn > span:not(.dock-workspace-btn-icon) {
+        display: none; /* icon only: the label does not fit next to four 44 px buttons */
+    }
+
+    /* four 44 px buttons never scroll: the status button takes what is left (it truncates its text) */
+    .status-dock .dock-left {
+        flex: 0 0 auto;
+        overflow: visible;
+    }
+
+    .status-dock .dock-center {
+        flex: 1 1 0;
+        min-width: 0;
+    }
+
+    .dock-notification-status {
+        width: 100%;
+        min-width: 0;
+        height: 44px;
+        max-width: none;
+        font-size: 12px;
+        grid-template-columns: 12px minmax(0, 1fr) 20px;
+    }
+
+    .dock-notification-text {
+        font-size: 12px;
+    }
+
+    .dock-workspace-label {
+        display: none;
+    }
+
+    .main-content-tab {
+        font-size: 13px;
+    }
+
+    /* the tab row scrolls sideways: a fade shows that there is more on that side */
+    .main-content-tabs.tabs-more-right {
+        -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent);
+        mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent);
+    }
+
+    .main-content-tabs.tabs-more-left {
+        -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 36px), transparent);
+        mask-image: linear-gradient(to left, #000 calc(100% - 36px), transparent);
+    }
+
+    .main-content-tabs.tabs-more-left.tabs-more-right {
+        -webkit-mask-image: linear-gradient(to right, transparent, #000 36px, #000 calc(100% - 36px), transparent);
+        mask-image: linear-gradient(to right, transparent, #000 36px, #000 calc(100% - 36px), transparent);
+    }
 }

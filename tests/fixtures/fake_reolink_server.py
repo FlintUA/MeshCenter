@@ -63,13 +63,17 @@ class _QuietServer(ThreadingHTTPServer):
 
 class FakeReolink:
     def __init__(self, *, users=None, tls=None, zoom_range=(0, 32), zoom_pos=10, settle_reads=2, snapshot=True,
-                 lease_s=3600, redirect=False, snap_denied=("guest",), zoom_denied=("guest",), login_status=200):
+                 lease_s=3600, redirect=False, snap_denied=("guest",), zoom_denied=("guest",), login_status=200,
+                 keepalive=False, silent_close_after=None):
         self.users = users or {"admin": ("pw-admin-test", "admin"), "guest": ("pw-guest-test", "guest")}
         self.tls = tls  # (cert, key) or None
         self.zoom_range, self.zoom_pos, self.settle_reads = zoom_range, zoom_pos, settle_reads
         self.snapshot, self.lease_s, self.redirect = snapshot, lease_s, redirect
         self.snap_denied, self.zoom_denied = set(snap_denied), set(zoom_denied)
         self.login_status = login_status
+        self.keepalive = keepalive  # False: every answer says Connection: close (the old behaviour)
+        self.silent_close_after = silent_close_after  # close a connection after N answers WITHOUT saying so (a camera's idle close)
+        self.connections = 0  # TCP connections accepted
         self.tokens: dict[str, str] = {}
         self.target = None
         self.reads_left = 0
@@ -102,11 +106,21 @@ class FakeReolink:
             def log_message(self, *_args):  # quiet
                 pass
 
+            def setup(self):
+                super().setup()
+                self._served = 0
+                with fake._lock:
+                    fake.connections += 1
+
             def _send(self, status, body: bytes, content_type="application/json", extra=None):
                 self.send_response(status)
                 self.send_header("Content-Type", content_type)
                 self.send_header("Content-Length", str(len(body)))
-                self.send_header("Connection", "close")
+                self._served += 1
+                if fake.silent_close_after and self._served >= fake.silent_close_after:
+                    self.close_connection = True  # no header: the client finds out on its next request
+                elif not fake.keepalive:
+                    self.send_header("Connection", "close")
                 for key, value in (extra or {}).items():
                     self.send_header(key, value)
                 self.end_headers()

@@ -47,8 +47,11 @@ DEFAULT_TIMEOUT_S = 6.0
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 MIN_ZOOM_INTERVAL_S = 0.5
 SETTLE_TIMEOUT_S = 6.0
-SETTLE_POLL_S = 0.4
+SETTLE_FIRST_POLL_S = 0.15  # most arrivals are close: look early, then every SETTLE_POLL_S
+SETTLE_POLL_S = 0.3
 TOKEN_MARGIN_S = 60.0
+KEEPALIVE_IDLE_S = 15.0  # a kept connection idle for longer is dropped, not reused (the camera closes idle ones)
+MAX_EVENTS = 200
 DEFAULT_LEASE_S = 3600.0
 API_PATH = "/cgi-bin/api.cgi"
 
@@ -171,6 +174,16 @@ class ReolinkClient:
         self._token_until = 0.0
         self._zoom_range: tuple[int, int] | None = None
         self._last_zoom_at = -1e9
+        # LENS1: a newer zoom request supersedes an older one that is still waiting for the lens
+        self._zoom_gen = 0
+        self._zoom_gen_lock = threading.Lock()
+        self._zoom_cmd_lock = threading.Lock()  # one StartZoomFocus is sent at a time (the wait for the lens is outside it)
+        self._zoom_waiting = 0
+        # one kept-alive connection (TLS handshakes are what a weak Wi-Fi camera is slow at) and a bounded trace of
+        # what the client did, so a slow zoom call can say where its time went (never any token or password)
+        self._conn: http.client.HTTPConnection | None = None
+        self._conn_used_at = 0.0
+        self._events: list[dict] = []
 
     # -- transport ---------------------------------------------------------
 
@@ -231,35 +244,83 @@ class ReolinkClient:
         except (ssl.SSLError, OSError):
             raise ReolinkError(TLS_ERROR, "The camera did not complete a TLS handshake.")
 
-    def _http(self, method: str, target: str, body: bytes | None = None) -> bytes:
-        """One request on a fresh connection. `target` may contain the token: it is never logged or reported."""
-        connection = self._connect()
-        try:
-            headers = {"Connection": "close"}
-            if body is not None:
-                headers["Content-Type"] = "application/json"
+    def _event(self, kind: str, **extra: Any) -> None:
+        self._events.append({"kind": kind, "t": self._clock(), **extra})
+        if len(self._events) > MAX_EVENTS:
+            del self._events[: len(self._events) - MAX_EVENTS]
+
+    def _drop_connection(self) -> None:
+        connection, self._conn = self._conn, None
+        if connection is not None:
             try:
-                connection.request(method, target, body=body, headers=headers)
-                response = connection.getresponse()
-                if 300 <= response.status < 400:
-                    raise ReolinkError(REDIRECT_REFUSED, "The camera answered with a redirect, which is not followed.")
-                length = response.getheader("Content-Length")
-                if length and length.isdigit() and int(length) > MAX_RESPONSE_BYTES:
-                    raise ReolinkError(BAD_RESPONSE, "The camera answer is too large.")
-                data = response.read(MAX_RESPONSE_BYTES + 1)
-            except ReolinkError:
-                raise
-            except socket.timeout:
-                raise ReolinkError(TIMEOUT, "The camera did not answer in time.")
-            except (OSError, http.client.HTTPException):
-                raise ReolinkError(UNREACHABLE, "The connection to the camera failed.")
-            if len(data) > MAX_RESPONSE_BYTES:
-                raise ReolinkError(BAD_RESPONSE, "The camera answer is too large.")
-            if response.status >= 400:
-                raise ReolinkError(BAD_RESPONSE, "The camera answered with an HTTP error.", rsp_code=None)
-            return data
-        finally:
-            connection.close()
+                connection.close()
+            except OSError:
+                pass
+
+    def _http(self, method: str, target: str, body: bytes | None = None) -> bytes:
+        """One request, on the kept-alive connection when there is a fresh one, else on a new one (the address policy
+        and the TLS pin are checked for every NEW connection). A reused connection that turns out to be dead is
+        replaced once. `target` may contain the token: it is never logged or reported."""
+        with self._lock:
+            for attempt in (0, 1):
+                reused = False
+                connection = self._conn
+                if connection is not None and (connection.sock is None or self._clock() - self._conn_used_at > KEEPALIVE_IDLE_S):
+                    self._drop_connection()
+                    connection = None
+                if connection is None:
+                    connection = self._connect()
+                    connection.auto_open = 0  # never reconnect behind our back (that would skip the checks)
+                    self._event("connect")
+                else:
+                    reused = True
+                began = self._clock()
+                try:
+                    headers = {}
+                    if body is not None:
+                        headers["Content-Type"] = "application/json"
+                    try:
+                        connection.request(method, target, body=body, headers=headers)
+                        response = connection.getresponse()
+                        if 300 <= response.status < 400:
+                            raise ReolinkError(REDIRECT_REFUSED, "The camera answered with a redirect, which is not followed.")
+                        length = response.getheader("Content-Length")
+                        if length and length.isdigit() and int(length) > MAX_RESPONSE_BYTES:
+                            raise ReolinkError(BAD_RESPONSE, "The camera answer is too large.")
+                        data = response.read(MAX_RESPONSE_BYTES + 1)
+                    except ReolinkError:
+                        raise
+                    except socket.timeout:
+                        raise ReolinkError(TIMEOUT, "The camera did not answer in time.")
+                    except (OSError, http.client.HTTPException):
+                        if reused and attempt == 0:
+                            self._event("stale")  # the camera had closed it: once more on a new connection
+                            self._conn = None
+                            try:
+                                connection.close()
+                            except OSError:
+                                pass
+                            continue
+                        raise ReolinkError(UNREACHABLE, "The connection to the camera failed.")
+                    if len(data) > MAX_RESPONSE_BYTES:
+                        raise ReolinkError(BAD_RESPONSE, "The camera answer is too large.")
+                    if response.status >= 400:
+                        raise ReolinkError(BAD_RESPONSE, "The camera answered with an HTTP error.", rsp_code=None)
+                except BaseException:
+                    self._conn = None
+                    try:
+                        connection.close()
+                    except OSError:
+                        pass
+                    raise
+                self._event("request", ms=round((self._clock() - began) * 1000), new_connection=not reused)
+                if response.will_close:
+                    self._conn = None
+                    connection.close()
+                else:
+                    self._conn, self._conn_used_at = connection, self._clock()
+                return data
+        raise ReolinkError(UNREACHABLE, "The connection to the camera failed.")  # unreachable
 
     def _post(self, target: str, commands: list) -> list:
         data = self._http("POST", target, json.dumps(commands).encode("utf-8"))
@@ -307,6 +368,7 @@ class ReolinkClient:
             if not isinstance(name, str) or not name:
                 raise ReolinkError(BAD_RESPONSE, "The camera answer is not valid.", command="Login")
             lease = float(lease) if isinstance(lease, (int, float)) and lease > 0 else DEFAULT_LEASE_S
+            self._event("login")
             self._token = name
             self._token_until = self._clock() + max(lease - TOKEN_MARGIN_S, 5.0)
 
@@ -314,12 +376,13 @@ class ReolinkClient:
         """Best effort; the token is dropped either way."""
         with self._lock:
             token, self._token = self._token, ""
-            if not token:
-                return
             try:
-                self._post(f"{API_PATH}?token={token}", [{"cmd": "Logout", "action": 0, "param": {}}])
+                if token:
+                    self._post(f"{API_PATH}?token={token}", [{"cmd": "Logout", "action": 0, "param": {}}])
             except ReolinkError:
                 pass
+            finally:
+                self._drop_connection()
 
     def _ensure_token(self) -> str:
         if not self._token or self._clock() >= self._token_until:
@@ -420,33 +483,90 @@ class ReolinkClient:
 
     def set_zoom(self, position: Any) -> dict:
         """Move the lens to `position` (device units, validated against the range the camera reports), then
-        read it back. Returns {requested, position, settled, zoom_range}."""
+        read it back. Returns {requested, position, settled, zoom_range, timing_ms}.
+
+        LENS1: the wait for the lens does not hold the camera lock (a snapshot or a read can go in between) and
+        ends at once when a NEWER set_zoom arrives: this call then returns {superseded: True, settled: False}
+        and the newer one sends its own command (after the minimum interval) and reads ITS target back, so the
+        last target always gets the final read-back. A call that supersedes nothing keeps the old rule: a
+        command sooner than MIN_ZOOM_INTERVAL_S after the last one is refused (RATE_LIMITED)."""
         if isinstance(position, bool) or not isinstance(position, int):
             raise ReolinkError(ZOOM_OUT_OF_RANGE, "The zoom position must be a whole number in the camera's own units.")
-        with self._lock:
-            if self._zoom_range is None:
-                if self.get_zoom_focus()["zoom_range"] is None:
-                    raise ReolinkError(NOT_SUPPORTED, "The camera does not report a zoom range.", command="GetZoomFocus")
-            low, high = self._zoom_range
+        began = self._clock()
+        timing: dict[str, Any] = {"polls": []}
+        with self._zoom_gen_lock:
+            self._zoom_gen += 1
+            mine = self._zoom_gen
+            superseding = self._zoom_waiting > 0
+            self._zoom_waiting += 1
+        try:
+            return self._set_zoom_run(position, mine, superseding, began, timing)
+        finally:
+            with self._zoom_gen_lock:
+                self._zoom_waiting -= 1
+
+    def _stale(self, mine: int) -> bool:
+        with self._zoom_gen_lock:
+            return self._zoom_gen != mine
+
+    def _set_zoom_run(self, position: int, mine: int, superseding: bool, began: float, timing: dict) -> dict:
+        with self._zoom_cmd_lock:
+            with self._lock:
+                if self._zoom_range is None:
+                    if self.get_zoom_focus()["zoom_range"] is None:
+                        raise ReolinkError(NOT_SUPPORTED, "The camera does not report a zoom range.", command="GetZoomFocus")
+                low, high = self._zoom_range
             if not low <= position <= high:
                 raise ReolinkError(ZOOM_OUT_OF_RANGE, f"The zoom position must be between {low} and {high}.")
-            now = self._clock()
-            if now - self._last_zoom_at < MIN_ZOOM_INTERVAL_S:
-                raise ReolinkError(RATE_LIMITED, "Zoom commands are limited; try again in a moment.", command="StartZoomFocus")
-            self._last_zoom_at = now
+            if self._stale(mine):
+                return self._superseded(position, low, high, None, began, timing)
+            wait = MIN_ZOOM_INTERVAL_S - (self._clock() - self._last_zoom_at)
+            if wait > 0:
+                if not superseding:
+                    raise ReolinkError(RATE_LIMITED, "Zoom commands are limited; try again in a moment.", command="StartZoomFocus")
+                self._sleep(wait)  # a newer target replaces an older one: it waits out the interval instead of failing
+                if self._stale(mine):
+                    return self._superseded(position, low, high, None, began, timing)
+            self._last_zoom_at = self._clock()
+            sent = self._clock()
             self._command("StartZoomFocus", 0, {"ZoomFocus": {"channel": self.channel, "pos": position, "op": "ZoomPos"}})
-            deadline = self._clock() + SETTLE_TIMEOUT_S
-            actual = None
-            settled = False
-            while True:
-                self._sleep(SETTLE_POLL_S)
-                actual = self.get_zoom_focus()["zoom_pos"]
-                if actual == position:
-                    settled = True
-                    break
-                if self._clock() >= deadline:
-                    break
-            return {"requested": position, "position": actual, "settled": settled, "zoom_range": [low, high]}
+            timing["command_ms"] = round((self._clock() - sent) * 1000)
+        deadline = self._clock() + SETTLE_TIMEOUT_S
+        actual = None
+        settled = False
+        delay = SETTLE_FIRST_POLL_S
+        while True:
+            self._sleep(delay)
+            delay = SETTLE_POLL_S
+            if self._stale(mine):
+                return self._superseded(position, low, high, actual, began, timing)
+            polled = self._clock()
+            actual = self.get_zoom_focus()["zoom_pos"]
+            timing["polls"].append(round((self._clock() - polled) * 1000))
+            if actual == position:
+                settled = True
+                break
+            if self._clock() >= deadline:
+                break
+        self._finish_timing(timing, began, position)
+        return {"requested": position, "position": actual, "settled": settled, "zoom_range": [low, high], "timing_ms": timing}
+
+    def _finish_timing(self, timing: dict, began: float, position: int) -> None:
+        """total + where the time went: what this client did since the call began (the camera's other callers
+        included), as counts and per-request milliseconds. No token, no password, no address."""
+        window = [event for event in self._events if event["t"] >= began]
+        timing["total_ms"] = round((self._clock() - began) * 1000)
+        timing["logins"] = sum(1 for event in window if event["kind"] == "login")
+        timing["new_connections"] = sum(1 for event in window if event["kind"] == "connect")
+        timing["stale_connections"] = sum(1 for event in window if event["kind"] == "stale")
+        timing["requests_ms"] = [event["ms"] for event in window if event["kind"] == "request"]
+        print(f"[REOLINK] zoom to {position}: total {timing['total_ms']} ms, command {timing.get('command_ms', '-')} ms, "
+              f"{len(timing['requests_ms'])} requests {timing['requests_ms']}, new connections {timing['new_connections']}, "
+              f"logins {timing['logins']}, stale {timing['stale_connections']}", flush=True)
+
+    def _superseded(self, position, low, high, actual, began, timing) -> dict:
+        self._finish_timing(timing, began, position)
+        return {"requested": position, "position": actual, "settled": False, "superseded": True, "zoom_range": [low, high], "timing_ms": timing}
 
     # -- capability probe ----------------------------------------------------
 

@@ -5492,7 +5492,6 @@ video.camera-stream {
         flex-wrap: nowrap;
         scrollbar-width: none;
         -webkit-overflow-scrolling: touch;
-        scroll-snap-type: x proximity;
     }
 
     .main-content-tabs::-webkit-scrollbar {
@@ -5506,7 +5505,6 @@ video.camera-stream {
         padding-left: 14px;
         padding-right: 14px;
         white-space: nowrap;
-        scroll-snap-align: center;
     }
 
     /* the dock buttons are the way to the Base and Nodes pages: make them targets */
@@ -5868,8 +5866,51 @@ video.camera-stream {
         display: none;
     }
 
+    /* all five tabs fit the width (icon above the label): nothing to swipe, so nothing that can jerk or snap;
+       the fade below stays only as a fallback for a screen narrower than 320 px */
     .main-content-tab {
-        font-size: 13px;
+        flex: 1 1 0;
+        min-width: 0;
+        min-height: 48px;
+        padding: 5px 2px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 2px;
+        font-size: 11px;
+        line-height: 1.15;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .main-content-tab span {
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    /* Settings: a grid track that is 1fr grows to its widest child (364 px) and the cards were cut off at the right
+       edge; the card is allowed to be as narrow as the screen and its content wraps */
+    .settings-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .settings-card,
+    .map-settings-card,
+    .reference-location-card {
+        min-width: 0;
+        max-width: 100%;
+    }
+
+    /* option groups (USB / Bluetooth / TCP, units) wrap instead of running past the card */
+    .settings-segmented {
+        flex-wrap: wrap;
+    }
+
+    .settings-segmented button {
+        flex: 1 1 auto;
+        min-height: 44px;
     }
 
     /* the tab row scrolls sideways: a fade shows that there is more on that side */

@@ -81,3 +81,20 @@ def test_mob2b_dock_buttons_never_scroll_the_status_button_takes_the_rest():
     left = _rule(block, "    .status-dock .dock-left {\n        flex: 0 0 auto;")
     assert "overflow: visible" in left, "four 44 px buttons fit at 320 px: no sideways scroll, nothing clipped"
     assert "flex: 1 1 0" in _rule(block, "    .status-dock .dock-center {\n        flex: 1 1 0;")
+
+
+def test_mob2_tabs_fit_the_width_without_snapping():
+    """Reported live on an Android phone: swiping the tab row jerked (scroll-snap) and only a tap placed it. The five
+    tabs now share the width (icon above the label), so there is nothing to swipe and nothing to snap."""
+    block = _block()
+    assert "scroll-snap" not in block, "no scroll snapping on the tab row"
+    tab = _rule(block, "    .main-content-tab {\n        flex: 1 1 0;")
+    assert "min-width: 0" in tab and "flex-direction: column" in tab and "min-height: 48px" in tab
+
+
+def test_mob2_settings_cards_are_not_wider_than_the_screen():
+    """A 1fr grid track grows to its widest child (364 px): the Settings cards were cut off at the right edge."""
+    block = _block()
+    assert "grid-template-columns: minmax(0, 1fr)" in _rule(block, "    .settings-grid {")
+    assert "min-width: 0" in _rule(block, "    .settings-card,\n    .map-settings-card,")
+    assert "flex-wrap: wrap" in _rule(block, "    .settings-segmented {")

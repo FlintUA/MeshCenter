@@ -232,7 +232,18 @@ MeshCenter's core functionality (messaging, camera, telemetry, node management) 
 
 ## Security
 
-A setup wizard requires a password (at least 12 characters) before the interface is usable at all; every page and `/api/` request is then session-authenticated. Changing the password immediately logs out every *other* open session. Every state-changing `/api/` request requires a CSRF token. Repeated failed logins are throttled.
+A setup wizard requires a password (at least 12 characters) before the interface is usable at all; every page and `/api/` request is then session-authenticated. Changing the password immediately logs out every *other* open session. Every state-changing `/api/` request requires a CSRF token. Repeated failed logins are throttled (the login page counts the wait down).
+
+**Sign out** (Settings > Security) ends only that browser's session; open camera streams of that session end within a few seconds and the page goes back to the login page. **Sign out everywhere** ends every session on every device, this one included.
+
+**Forgot the password?** The password is stored only as a hash, so it cannot be shown, but it can be reset from the device itself. On the Raspberry Pi (or any native install), as the MeshCenter user:
+
+```bash
+cd ~/meshcenter/data && cp auth.json auth.json.bak && python3 -c 'import json;d=json.load(open("auth.json"));d["enabled"]=True;d["password_hash"]="";d["auth_version"]=int(d.get("auth_version") or 1)+1;json.dump(d,open("auth.json","w"))'
+sudo systemctl restart meshcenter.service
+```
+
+Then open MeshCenter in a browser: it shows the setup wizard (`/setup`) where you choose a new password. The old sessions of every device are ended by the same step. In Docker, edit `auth.json` in the mounted data folder the same way and restart the container. Details: [User Guide, security notes](docs/User_Guide.md#18-security-notes).
 
 MeshCenter is served over plain HTTP by default and is intended for a trusted local network - password protection stops unauthorized use of the interface, but doesn't encrypt the connection itself. Use a VPN or a TLS-terminating reverse proxy for genuine remote access rather than exposing the service directly to the Internet.
 

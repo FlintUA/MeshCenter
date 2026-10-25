@@ -22,7 +22,7 @@ Auth/CSRF columns mirror `api/api_auth.py`'s own `_enforce_auth()`/`_enforce_csr
 | `/api/attachments/<attachment_id>/revoke` | POST | `api/api_attachments.py:1083` (`revoke_attachment`) | required | required |
 | `/api/attachments/<attachment_id>/save` | POST | `api/api_attachments.py:1077` (`save_attachment`) | required | required |
 | `/api/auth/csrf` | GET | `api/api_auth.py:544` (`api_auth_csrf`) | required | exempt |
-| `/api/auth/logout_all` | POST | `api/api_auth.py:566` (`api_logout_all`) | required | required |
+| `/api/auth/logout_all` | POST | `api/api_auth.py:567` (`api_logout_all`) | required | required |
 | `/api/base_status` | GET | `server.py:8574` (`api_base_status`) | required | exempt |
 | `/api/camera/active` | POST | `api/api_camera_manager.py:87` (`api_camera_active`) | required | required |
 | `/api/camera/mode/<mode>` | POST | `api/api_camera.py:333` (`api_camera_set_mode`) | required | required |
@@ -144,8 +144,8 @@ Auth/CSRF columns mirror `api/api_auth.py`'s own `_enforce_auth()`/`_enforce_csr
 | `/api/schedules/<sid>` | DELETE | `api/api_system.py:567` (`api_delete_schedule`) | required | required |
 | `/api/schedules/<sid>` | PUT | `api/api_system.py:546` (`api_update_schedule`) | required | required |
 | `/api/schedules/<sid>/toggle` | PATCH | `api/api_system.py:558` (`api_toggle_schedule`) | required | required |
-| `/api/security` | GET | `api/api_auth.py:581` (`api_get_security`) | required | exempt |
-| `/api/security` | POST | `api/api_auth.py:591` (`api_update_security`) | required | required |
+| `/api/security` | GET | `api/api_auth.py:583` (`api_get_security`) | required | exempt |
+| `/api/security` | POST | `api/api_auth.py:593` (`api_update_security`) | required | required |
 | `/api/send` | POST | `api/api_chat.py:626` (`api_send`) | required | required |
 | `/api/send/retry` | POST | `api/api_chat.py:775` (`api_send_retry`) | required | required |
 | `/api/sensors` | GET | `server.py:7395` (`api_sensors`) | required | exempt |

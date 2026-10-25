@@ -1864,7 +1864,7 @@
     "control_err_rate_limited": "Zu viele Prüfungen. In einer Minute erneut versuchen.",
     "control_err_generic": "Die Kamera-Steuerung ist fehlgeschlagen (Code {code}).",
     "control_feature_zoom_range": "Zoom (Bereich {min} bis {max})",
-    "snapshot_mode_label_ffmpeg": "Live-Video braucht ffmpeg, es werden Schnappschüsse gezeigt (etwa 1 Bild/s)"
+    "snapshot_interval": "etwa 1 Bild/s"
   },
   "camdiag": {
     "title": "Kamera-Diagnose",
@@ -1911,6 +1911,10 @@
     "snapshot_hint_api_small": "Kleines Bild von der Kamera selbst, in Medien gespeichert.",
     "snapshot_hint_stream_running": "Das Bild wird aus der laufenden Vorschau aufgenommen und in Medien gespeichert.",
     "snapshot_hint_stream_stopped": "Zuerst die Vorschau starten: Das Bild wird aus der laufenden Vorschau aufgenommen.",
-    "info_reconnect": "Neu verbinden"
+    "info_reconnect": "Neu verbinden",
+    "info_refresh": "Aktualisierung",
+    "refresh_value": "1 pro Sekunde",
+    "stream_hint_snapshot_ffmpeg": "Live-Video braucht ffmpeg, das dieses System noch nicht hat: Die Kamera macht die Bilder selbst, ein Stream ist daher nicht wählbar.",
+    "stream_hint_snapshot_browser": "Dieser Browser kann kein Live-Video abspielen: Die Kamera macht die Bilder selbst, ein Stream ist daher nicht wählbar."
   }
 }

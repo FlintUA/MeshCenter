@@ -1864,7 +1864,7 @@
     "control_err_rate_limited": "Too many checks. Try again in a minute.",
     "control_err_generic": "Camera control failed (code {code}).",
     "control_feature_zoom_range": "zoom (range {min} to {max})",
-    "snapshot_mode_label_ffmpeg": "Live video needs ffmpeg, showing snapshots (about 1 frame/s)"
+    "snapshot_interval": "about 1 frame/s"
   },
   "camdiag": {
     "title": "Camera diagnostics",
@@ -1911,6 +1911,10 @@
     "snapshot_hint_api_small": "Small picture from the camera itself, saved to Media.",
     "snapshot_hint_stream_running": "The picture is taken from the running preview and saved to Media.",
     "snapshot_hint_stream_stopped": "Start the preview first: the picture is taken from the running preview.",
-    "info_reconnect": "Reconnect"
+    "info_reconnect": "Reconnect",
+    "info_refresh": "Refresh",
+    "refresh_value": "1 per second",
+    "stream_hint_snapshot_ffmpeg": "Live video needs ffmpeg, which this system does not have yet: the camera makes the pictures itself, so the stream cannot be chosen.",
+    "stream_hint_snapshot_browser": "This browser cannot play live video: the camera makes the pictures itself, so the stream cannot be chosen."
   }
 }

@@ -9796,8 +9796,12 @@ async function loadBaseStatus() {
         const uptimeEl = document.getElementById('baseUptimeBadge');
         if (nameEl) nameEl.textContent = data.node_name || 'Flint Base';
         if (uptimeEl) {
-            const uptime = data.uptime_seconds !== null ? formatUptime(data.uptime_seconds) : '--';
-            uptimeEl.textContent = window.I18N.t('node_panel.uptime_label', { value: uptime });
+            // no uptime reported (a radio over TCP before its first telemetry): nothing is shown, not "Uptime --"
+            const known = data.uptime_seconds !== null && data.uptime_seconds !== undefined;
+            uptimeEl.hidden = !known;
+            const separator = document.getElementById('baseUptimeSeparator');
+            if (separator) separator.hidden = !known;
+            if (known) uptimeEl.textContent = window.I18N.t('node_panel.uptime_label', { value: formatUptime(data.uptime_seconds) });
         }
 
         const percent = data.real_battery !== null ? Number(data.real_battery) :

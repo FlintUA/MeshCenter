@@ -33,6 +33,10 @@ let contextChatMode = false;
 let contextBaseTab = null;
 let radioHealthTimer = null;
 let radioCommandRunning = false;
+// SIG4: the active radio's transport type ("serial"/"tcp"/"bluetooth"), for the message menu's Trace route item
+let activeTransportType = '';
+let activeTransportCheckedAt = 0;
+const traceRouteBlockedUntil = {};   // node id -> epoch ms, the 60 s repeat block (the server enforces it too)
 let nodeToolResultTimer = null;
 let nodeToolResults = {};
 let activeNodeTabs = {}; // Active tab per node.
@@ -2776,6 +2780,8 @@ async function loadMeshtasticConnectionStatus(syncButtons = true) {
         if (!response.ok || !data.ok) throw new Error(data.error || 'Request failed');
 
         const connection = data.connection || {};
+        activeTransportType = String(connection.type || '');
+        activeTransportCheckedAt = Date.now();
         _meshtasticRenderConnectionStatus(connection);
         // syncButtons=false: refresh the status text only, leave the
         // segmented buttons/Connect-form sections exactly as they are -
@@ -6161,6 +6167,8 @@ function openMessageActions(messageId, anchorElement, pointerEvent = null) {
     }
 
     updateSignalReplyMenuItem(message);
+    updateTracerouteMenuItem(message);
+    refreshTransportTypeForMenu();
 
     positionMessageActionsMenu(anchorElement || messageElement, pointerEvent);
 }
@@ -6504,6 +6512,103 @@ function updateSignalReplyMenuItem(message) {
     else item.removeAttribute('title');
 }
 
+// SIG4: "Trace route to sender" - serial radios only (the traceroute runs through the CLI); the reason is on the
+// disabled item. The transport type is cached; a stale value is refreshed in the background when the menu opens.
+function tracerouteState(message) {
+    const left = (traceRouteBlockedUntil[message && message.node_id] || 0) - Date.now();
+    return window.MCViews.tracerouteMenuState(message, {
+        isOwn: messageBelongsToActiveRadio(message),
+        transportType: activeTransportType,
+        released: Boolean(radioReleasedInfo),
+        busy: radioCommandRunning,
+        cooldownLeftS: left > 0 ? left / 1000 : 0,
+    });
+}
+
+function tracerouteReasonText(state) {
+    if (state.reasonKey === 'cooldown') return window.I18N.t('chat.traceroute_reason_cooldown', { seconds: state.retryS });
+    return state.reasonKey ? window.I18N.t(`chat.traceroute_reason_${state.reasonKey}`) : '';
+}
+
+function updateTracerouteMenuItem(message) {
+    const item = document.getElementById('messageActionTraceroute');
+    if (!item) return;
+    const state = tracerouteState(message);
+    item.hidden = !state.visible;
+    item.disabled = state.disabled;
+    item.setAttribute('aria-disabled', state.disabled ? 'true' : 'false');
+    if (state.disabled) item.title = tracerouteReasonText(state);
+    else item.removeAttribute('title');
+}
+
+async function refreshTransportTypeForMenu() {
+    if (activeTransportType && Date.now() - activeTransportCheckedAt < 30000) return;
+    try {
+        const response = await fetch('/api/meshtastic/connection', { cache: 'no-store' });
+        const data = await response.json();
+        if (response.ok && data.ok && data.connection) {
+            activeTransportType = String(data.connection.type || '');
+            activeTransportCheckedAt = Date.now();
+            if (messageActionTarget) updateTracerouteMenuItem(messageActionTarget);
+        }
+    } catch (error) {
+        console.warn('[TRACEROUTE] Could not read the connection type:', error);
+    }
+}
+
+function closeTraceRouteModal() {
+    const modal = document.getElementById('messageTraceModal');
+    if (modal) modal.style.display = 'none';
+}
+
+async function traceRouteToSender() {
+    const message = messageActionTarget;
+    closeMessageActionsMenu();
+    if (!message) return;
+    const state = tracerouteState(message);
+    if (!state.visible || state.disabled) return;
+
+    const nodeId = String(message.node_id);
+    const name = message.sender || nodeId;
+    const content = document.getElementById('messageTraceContent');
+    const title = document.getElementById('messageTraceTitle');
+    const modal = document.getElementById('messageTraceModal');
+    if (!content || !modal) return;
+    if (title) title.textContent = window.I18N.t('nodes.traceroute_to', { name });
+    content.textContent = window.I18N.t('nodes.checking_route_to', { name });
+    modal.style.display = 'flex';
+
+    traceRouteBlockedUntil[nodeId] = Date.now() + 60000;
+    setNodeToolsBusy(true);
+    try {
+        const response = await fetch('/api/node_tools', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'traceroute', node_id: nodeId })
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) {
+            if (response.status === 429 && data.retry_after) {
+                traceRouteBlockedUntil[nodeId] = Date.now() + Number(data.retry_after) * 1000;
+            } else if (response.status === 409 || response.status === 503) {
+                delete traceRouteBlockedUntil[nodeId];   // nothing was sent
+            }
+            content.textContent = data.error_code === 'traceroute_cooldown'
+                ? window.I18N.t('chat.traceroute_reason_cooldown', { seconds: data.retry_after })
+                : (data.error_code === 'traceroute_not_available'
+                    ? window.I18N.t('chat.traceroute_reason_tcp')
+                    : `❌ ${window.I18N.t('nodes.traceroute_failed')}: ${data.error || `HTTP ${response.status}`}`);
+            return;
+        }
+        content.innerHTML = tracerouteDetailsHtml(parseTracerouteOutput(data.output));
+    } catch (error) {
+        console.error('[TRACEROUTE] Failed:', error);
+        content.textContent = `❌ ${window.I18N.t('nodes.traceroute_failed')}`;
+    } finally {
+        setNodeToolsBusy(false);
+    }
+}
+
 async function replyWithSignal() {
     const message = messageActionTarget;
     closeMessageActionsMenu();
@@ -6534,6 +6639,19 @@ function cancelReply() {
     updateReplyComposer();
 }
 
+// SIG4: "name (0x84)" for a resolved or direct relay, "possibly: A, B (0x84)" when several nodes share the byte
+function relayInfoText(rx) {
+    const info = window.MCViews.relayInfo(rx);
+    if (info.kind === 'none') return '';
+    if (info.kind === 'direct') return window.I18N.t('chat.relay_direct', { name: info.names[0] || '', hex: info.hex });
+    if (info.kind === 'resolved') return window.I18N.t('chat.relay_resolved', { name: info.names[0] || '', hex: info.hex });
+    if (info.kind === 'ambiguous' && info.names.length) {
+        const more = Math.max(0, info.count - info.names.length);
+        return window.I18N.t('chat.relay_possibly', { names: info.names.join(', ') + (more ? ` +${more}` : ''), hex: info.hex });
+    }
+    return window.I18N.t('chat.relay_unknown', { hex: info.hex });
+}
+
 function showMessageInfo() {
     const message = messageActionTarget;
     closeMessageActionsMenu();
@@ -6555,6 +6673,8 @@ function showMessageInfo() {
         if (Number(message.rx.hop_start) > 0 && Number.isFinite(Number(message.rx.hop_limit))) {
             fields.push([window.I18N.t('chat.info_hops'), String(Number(message.rx.hop_start) - Number(message.rx.hop_limit))]);
         }
+        const relayText = relayInfoText(message.rx);
+        if (relayText) fields.push([window.I18N.t('chat.info_relay'), relayText]);
     }
 
     const content = document.getElementById('messageInfoContent');
@@ -8953,6 +9073,35 @@ function parseTracerouteOutput(output) {
 }
 
 
+// The forward/return cards of one traceroute (Nodes panel result and the message menu's Trace route window)
+function tracerouteDetailsHtml(route) {
+    return `
+            <div class="route-grid">
+
+                <div class="route-card route-card-forward">
+                    <div class="route-card-header">
+                        <span class="route-badge route-forward">
+                            ${escapeHtml(window.I18N.t('nodes.route_forward'))}
+                        </span>
+                    </div>
+
+                    ${renderTracerouteChain(route.forward)}
+                </div>
+
+                <div class="route-card route-card-return">
+                    <div class="route-card-header">
+                        <span class="route-badge route-return">
+                            ${escapeHtml(window.I18N.t('nodes.route_return'))}
+                        </span>
+                    </div>
+
+                    ${renderTracerouteChain(route.returnRoute)}
+                </div>
+
+            </div>
+        `;
+}
+
 function renderTracerouteChain(route) {
     if (!route || !Array.isArray(route.nodes) || !route.nodes.length) {
         return `
@@ -9283,31 +9432,7 @@ async function runNodeTool(action, nodeId, nodeName, button) {
         if (action === 'traceroute') {
             const route = parseTracerouteOutput(data.output);
 
-            const routeDetails = `
-            <div class="route-grid">
-
-                <div class="route-card route-card-forward">
-                    <div class="route-card-header">
-                        <span class="route-badge route-forward">
-                            ${escapeHtml(window.I18N.t('nodes.route_forward'))}
-                        </span>
-                    </div>
-
-                    ${renderTracerouteChain(route.forward)}
-                </div>
-
-                <div class="route-card route-card-return">
-                    <div class="route-card-header">
-                        <span class="route-badge route-return">
-                            ${escapeHtml(window.I18N.t('nodes.route_return'))}
-                        </span>
-                    </div>
-
-                    ${renderTracerouteChain(route.returnRoute)}
-                </div>
-
-            </div>
-        `;
+            const routeDetails = tracerouteDetailsHtml(route);
 
             renderNodeToolResult(
                 nodeId,
@@ -14575,6 +14700,8 @@ window.updateListenerRecoverySettings = updateListenerRecoverySettings;
 window.toggleNodeToolsMenu = toggleNodeToolsMenu;
 window.closeNodeToolsMenu = closeNodeToolsMenu;
 window.runNodeTool = runNodeTool;
+window.traceRouteToSender = traceRouteToSender;
+window.closeTraceRouteModal = closeTraceRouteModal;
 window.closeNodeToolResult = closeNodeToolResult;
 window.openNodeMap = openNodeMap;
 window.setMapProvider = setMapProvider;

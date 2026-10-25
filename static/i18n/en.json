@@ -574,7 +574,16 @@
     "node_ignored_hidden": "Node ignored - hidden from the list",
     "info_snr": "SNR",
     "info_rssi": "RSSI",
-    "info_hops": "Hops"
+    "info_hops": "Hops",
+    "info_relay": "Relay",
+    "relay_direct": "{name} (direct, {hex})",
+    "relay_resolved": "{name} ({hex})",
+    "relay_possibly": "possibly: {names} ({hex})",
+    "relay_unknown": "unknown ({hex})",
+    "traceroute_reason_tcp": "Trace route needs a serial radio connection",
+    "traceroute_reason_released": "The radio is released",
+    "traceroute_reason_busy": "Another radio command is running",
+    "traceroute_reason_cooldown": "This node was traced a moment ago, try again in {seconds} s"
   },
   "camera": {
     "live_camera": "Live Camera",
@@ -1253,7 +1262,8 @@
     "reply": "Reply",
     "copy": "Copy",
     "sender_node": "Sender's node",
-    "reply_with_signal": "Reply with signal"
+    "reply_with_signal": "Reply with signal",
+    "trace_route_to_sender": "Trace route to sender"
   },
   "waypoints": {
     "delete_selected_confirm": {

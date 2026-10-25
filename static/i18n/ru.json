@@ -574,7 +574,16 @@
     "node_ignored_hidden": "Узел игнорируется - скрыт из списка",
     "info_snr": "SNR",
     "info_rssi": "RSSI",
-    "info_hops": "Хопы"
+    "info_hops": "Хопы",
+    "info_relay": "Ретранслятор",
+    "relay_direct": "{name} (напрямую, {hex})",
+    "relay_resolved": "{name} ({hex})",
+    "relay_possibly": "возможно: {names} ({hex})",
+    "relay_unknown": "неизвестно ({hex})",
+    "traceroute_reason_tcp": "Для трассировки нужно последовательное подключение радио",
+    "traceroute_reason_released": "Радио освобождено",
+    "traceroute_reason_busy": "Выполняется другая команда радио",
+    "traceroute_reason_cooldown": "Этот узел только что проверяли, повторите через {seconds} с"
   },
   "camera": {
     "live_camera": "Камера в реальном времени",
@@ -1253,7 +1262,8 @@
     "reply": "Ответить",
     "copy": "Копировать",
     "sender_node": "Узел отправителя",
-    "reply_with_signal": "Ответ с сигналом"
+    "reply_with_signal": "Ответ с сигналом",
+    "trace_route_to_sender": "Трассировка до отправителя"
   },
   "waypoints": {
     "delete_selected_confirm": {

@@ -574,7 +574,16 @@
     "node_ignored_hidden": "Node ignoriert - aus der Liste ausgeblendet",
     "info_snr": "SNR",
     "info_rssi": "RSSI",
-    "info_hops": "Hops"
+    "info_hops": "Hops",
+    "info_relay": "Relay",
+    "relay_direct": "{name} (direkt, {hex})",
+    "relay_resolved": "{name} ({hex})",
+    "relay_possibly": "möglicherweise: {names} ({hex})",
+    "relay_unknown": "unbekannt ({hex})",
+    "traceroute_reason_tcp": "Traceroute braucht eine serielle Funkverbindung",
+    "traceroute_reason_released": "Das Funkgerät ist freigegeben",
+    "traceroute_reason_busy": "Ein anderer Funkbefehl läuft gerade",
+    "traceroute_reason_cooldown": "Dieser Knoten wurde gerade verfolgt, bitte in {seconds} s erneut versuchen"
   },
   "camera": {
     "live_camera": "Live-Kamera",
@@ -1253,7 +1262,8 @@
     "reply": "Antworten",
     "copy": "Kopieren",
     "sender_node": "Node des Absenders",
-    "reply_with_signal": "Antwort mit Signal"
+    "reply_with_signal": "Antwort mit Signal",
+    "trace_route_to_sender": "Route zum Absender verfolgen"
   },
   "waypoints": {
     "delete_selected_confirm": {

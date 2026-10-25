@@ -8,6 +8,7 @@ import threading
 import time
 
 from meshsrv import error_reporting
+from meshsrv.repeat_block import RepeatBlock
 from meshsrv.action_engine import (
     ActionContext,
     ActionDefinition,
@@ -16,6 +17,8 @@ from meshsrv.action_engine import (
     ActionRunner,
 )
 
+
+TRACEROUTE_REPEAT_BLOCK_S = 60
 
 _POSITION_RE = re.compile(
     r"Position received:\s*"
@@ -340,6 +343,7 @@ def register_node_tools_routes(
     RadioBusyError,
     log_system_event,
     is_radio_available,
+    current_transport=None,
 ):
     """Register Node Tools through the shared MeshCenter action engine.
 
@@ -358,6 +362,8 @@ def register_node_tools_routes(
 
     node_tools_lock = threading.Lock()
     registry = ActionRegistry()
+    # SIG4: the same traceroute target at most once a minute (airtime on a shared mesh)
+    traceroute_block = RepeatBlock(TRACEROUTE_REPEAT_BLOCK_S)
 
     def build_command(action_id, node_id, resolved_port):
         port_args = ["--port", resolved_port] if resolved_port else []
@@ -705,6 +711,22 @@ def register_node_tools_routes(
                 "error_code": "radio_released",
             }), 409
 
+        # SIG4: a traceroute runs through the serial CLI (--port); a TCP/Bluetooth radio has no such path
+        if definition.action_id == "traceroute" and current_transport is not None:
+            transport = current_transport()
+            if transport != "serial":
+                return jsonify({
+                    "ok": False,
+                    "status": "unavailable",
+                    "state": "unavailable",
+                    "action": definition.action_id,
+                    "action_title": definition.title,
+                    "node_id": node_id,
+                    "transport": transport,
+                    "error": "Traceroute needs a serial radio connection",
+                    "error_code": "traceroute_not_available",
+                }), 409
+
         if not node_tools_lock.acquire(blocking=False):
             return jsonify({
                 "ok": False,
@@ -718,6 +740,23 @@ def register_node_tools_routes(
             }), 409
 
         try:
+            if definition.action_id == "traceroute":
+                wait_s = traceroute_block.retry_after(node_id)
+                if wait_s > 0:
+                    return jsonify({
+                        "ok": False,
+                        "status": "cooldown",
+                        "state": "cooldown",
+                        "action": definition.action_id,
+                        "action_title": definition.title,
+                        "node_id": node_id,
+                        "retry_after": wait_s,
+                        "error": f"This node was traced a moment ago, try again in {wait_s} s",
+                        "error_code": "traceroute_cooldown",
+                        "error_params": {"seconds": wait_s},
+                    }), 429, {"Retry-After": str(wait_s)}
+                traceroute_block.mark(node_id)
+
             with state_lock:
                 node = dict(nodes.get(node_id, {}))
             node_name = node.get("name") or node.get("clean_name") or node_id

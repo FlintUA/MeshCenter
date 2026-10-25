@@ -446,8 +446,10 @@ Use the action button on a message to:
 
 - Reply with Meshtastic reply metadata
 - **Reply with signal** (received messages that carry radio metrics): one click sends a native reply, at once and into the same chat, that tells the sender how you heard them, for example `Rx 16:28:06`, `SNR -5.5 dB | RSSI -87 dBm`, `Hops 3` on three lines (`Hops 0 (direct)` when heard directly; a value the radio did not report is left out). The item is hidden for your own messages, for messages without SNR/RSSI (including messages stored before this feature existed) and is disabled while the radio is released
+- **Trace route to sender** (received messages from a node): runs a traceroute to the sender and shows the route there and back in a window. Needs a serial radio connection (the item is disabled with the reason on TCP and while the radio is released or busy); the same node can be traced once a minute, because every trace uses airtime on the shared mesh
+
 - Copy the message
-- View message information
+- View message information (for a received text also SNR, RSSI, hops and the last relay: `Relay: name (0x84)` when one node matches the radio's one-byte hint, `possibly: A, B` when several do, `unknown` when none does)
 - Delete the message from local MeshCenter history
 
 Some stations send the two characters backslash and n instead of a real line break. MeshCenter shows those as line breaks in chat bubbles, reply quotes and the node card (and as " · " in one-line previews such as the chat list); the stored text is not changed and Copy copies the original. Since v1.12.3 a USB (serial) radio stores received texts exactly like a TCP radio does (real line breaks, single backslashes); the conversion remains for older stored messages, and a backslash followed by the letter n that someone typed on purpose is also shown as a line break.

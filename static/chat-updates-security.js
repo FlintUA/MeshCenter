@@ -331,6 +331,40 @@ async function saveSecurityPassword() {
     }
 }
 
+// AUTH2: ends every session (the global auth_version is bumped) and any open camera stream; this browser too
+async function securityLogoutAll() {
+    const proceed = await appConfirm({
+        title: window.I18N.t('system.security_logout_all_title'),
+        message: window.I18N.t('system.security_logout_all_confirm'),
+        confirmLabel: window.I18N.t('system.security_logout_all_btn'),
+        danger: true,
+    });
+    if (!proceed) return;
+    try {
+        const response = await fetch('/api/auth/logout_all', { method: 'POST' });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.ok) {
+            showToast(data.error_code === 'auth_not_enabled'
+                ? window.I18N.t('system.security_logout_all_not_enabled')
+                : window.I18N.t('system.security_logout_all_failed'), 'error', { duration: 10000 });
+            return;
+        }
+    } catch (error) {
+        showToast(window.I18N.t('system.security_logout_all_failed'), 'error', { duration: 10000 });
+        return;
+    }
+    window.location.href = '/login';
+}
+
+(function wireSecurityLogoutAll() {
+    const wire = () => {
+        const button = document.getElementById('securityLogoutAllBtn');
+        if (button && typeof button.addEventListener === 'function') button.addEventListener('click', securityLogoutAll);
+    };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire);
+    else wire();
+})();
+
 async function securityLogout() {
     try {
         await fetch('/api/logout', { method: 'POST' });

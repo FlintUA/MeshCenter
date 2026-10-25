@@ -582,6 +582,56 @@ async function test_other_errors_and_cross_origin_are_untouched() {
     console.log('PASS: test_other_errors_and_cross_origin_are_untouched');
 }
 
+async function test_signed_out_session_goes_to_the_login_page_once() {
+    const { window } = loadCSRF({
+        token: 'tok123',
+        fetchImpl: async () => fakeResponse(401, { ok: false, error: 'Authentication required', error_code: 'auth_required' }),
+    });
+    const visits = [];
+    window.location.assign = (url) => visits.push(url);
+    window.location.pathname = '/';
+    window.location.search = '?tab=camera';
+    const response = await window.fetch('/api/camera/status');
+    assert.equal(response.status, 401, 'the caller still gets its response');
+    await Promise.all([window.fetch('/api/a'), window.fetch('/api/b', { method: 'POST' })]);
+    assert.deepEqual(visits, ['/login?next=' + encodeURIComponent('/?tab=camera')], 'one redirect, back to this page after login');
+    console.log('PASS: test_signed_out_session_goes_to_the_login_page_once');
+}
+
+async function test_setup_required_goes_to_the_wizard() {
+    const { window } = loadCSRF({
+        fetchImpl: async () => fakeResponse(401, { ok: false, error: 'Setup required', error_code: 'setup_required' }),
+    });
+    const visits = [];
+    window.location.assign = (url) => visits.push(url);
+    await window.fetch('/api/x');
+    assert.deepEqual(visits, ['/setup']);
+    console.log('PASS: test_setup_required_goes_to_the_wizard');
+}
+
+async function test_other_401_and_non_api_requests_do_not_redirect() {
+    for (const [url, status, body] of [
+        ['/api/x', 401, { ok: false, error: 'nope', error_code: 'something_else' }],
+        ['/api/x', 401, { ok: false }],
+        ['/api/x', 403, { ok: false, error_code: 'auth_required' }],
+        ['http://other.example/api/x', 401, { ok: false, error_code: 'auth_required' }],
+        ['/video_feed', 401, { ok: false, error_code: 'auth_required' }],
+    ]) {
+        const { window } = loadCSRF({ fetchImpl: async () => fakeResponse(status, body) });
+        const visits = [];
+        window.location.assign = (target) => visits.push(target);
+        await window.fetch(url);
+        assert.deepEqual(visits, [], url + ' ' + status + ' ' + JSON.stringify(body));
+    }
+    // a normal answer is never touched
+    const { window } = loadCSRF({ fetchImpl: async () => fakeResponse(200, { ok: true }) });
+    const visits = [];
+    window.location.assign = (target) => visits.push(target);
+    assert.equal((await window.fetch('/api/x')).status, 200);
+    assert.deepEqual(visits, []);
+    console.log('PASS: test_other_401_and_non_api_requests_do_not_redirect');
+}
+
 async function main() {
     await test_needsToken_classification();
     await test_addTokenHeader_preserves_and_does_not_mutate();
@@ -607,6 +657,9 @@ async function main() {
     await test_safe_and_cross_origin_requests_never_refresh();
     await test_internal_error_body_is_localized_with_error_id();
     await test_other_errors_and_cross_origin_are_untouched();
+    await test_signed_out_session_goes_to_the_login_page_once();
+    await test_setup_required_goes_to_the_wizard();
+    await test_other_401_and_non_api_requests_do_not_redirect();
     console.log('All CSRF frontend tests passed.');
 }
 

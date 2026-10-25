@@ -58,6 +58,8 @@ def test_headers_added_to_every_response(header_client):
     assert h["X-Content-Type-Options"] == "nosniff"
     assert h["X-Frame-Options"] == "SAMEORIGIN"
     assert h["Referrer-Policy"] == "strict-origin-when-cross-origin"
+    assert h["X-XSS-Protection"] == "1; mode=block"
+    assert h["Permissions-Policy"] == "geolocation=(), camera=(), microphone=()"
     assert "Content-Security-Policy" not in h
 
 

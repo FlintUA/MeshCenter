@@ -512,7 +512,6 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
             "success": True,
             "filename": rel_path,
             "display_name": filename,
-            "filepath": filepath,
             "size": os.path.getsize(filepath),
             "width": width,
             "height": height,

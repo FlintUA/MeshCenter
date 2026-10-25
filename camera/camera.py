@@ -806,7 +806,6 @@ def capture_screenshot():
             "success": True,
             "filename": rel_path,
             "display_name": filename,
-            "filepath": filepath,
             "size": os.path.getsize(filepath),
         }
 

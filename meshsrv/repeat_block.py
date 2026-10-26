@@ -27,6 +27,11 @@ class RepeatBlock:
             left = self.window_s - (self._clock() - started)
             return int(left) + (1 if left > int(left) else 0) if left > 0 else 0
 
+    def clear(self, key: str) -> None:
+        """Forget a run that never reached the air (the radio was busy), so the retry is not blocked."""
+        with self._lock:
+            self._started.pop(key, None)
+
     def mark(self, key: str) -> None:
         """Record a run that starts now."""
         with self._lock:

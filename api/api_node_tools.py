@@ -768,6 +768,10 @@ def register_node_tools_routes(
                 request_data=data,
             )
 
+            if (definition.action_id == "traceroute" and not result.ok
+                    and result.error_code in ("radio_busy", "radio_released")):
+                traceroute_block.clear(node_id)  # nothing was transmitted: no repeat block
+
             payload = dict(result.data)
             payload.update({
                 "ok": result.ok,

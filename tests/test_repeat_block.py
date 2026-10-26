@@ -26,6 +26,14 @@ def test_a_marked_key_waits_the_rest_of_the_window():
     assert block.retry_after("!aabbccdd") == 0
 
 
+def test_clear_frees_the_key():
+    block = RepeatBlock(60, Clock())
+    block.mark("a")
+    block.clear("a")
+    block.clear("never-marked")
+    assert block.retry_after("a") == 0
+
+
 def test_marking_again_restarts_the_window():
     clock = Clock()
     block = RepeatBlock(60, clock)

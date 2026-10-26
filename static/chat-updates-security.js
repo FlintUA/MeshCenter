@@ -74,6 +74,7 @@ function renderUpdatesLastUpdate(status) {
     const lastEl = document.getElementById('updatesLastUpdate');
     const rollbackBtn = document.getElementById('updatesRollbackBtn');
     const rollbackRow = document.getElementById('updatesRollbackRow');
+    const rollbackSection = document.getElementById('updatesRollbackSection');
     const commandEl = document.getElementById('updatesRollbackCommand');
     const last = status.last_update;
 
@@ -93,7 +94,9 @@ function renderUpdatesLastUpdate(status) {
 
     const command = status.rollback_available ? updatesRollbackCommand(status) : '';
     if (rollbackBtn) rollbackBtn.style.display = status.rollback_available ? 'inline-block' : 'none';
-    if (rollbackRow) rollbackRow.style.display = command ? 'flex' : 'none';
+    // UX1: Roll back and its manual command live in their own section, the command collapsed in a <details>
+    if (rollbackSection) rollbackSection.style.display = status.rollback_available ? 'block' : 'none';
+    if (rollbackRow) rollbackRow.style.display = command ? 'block' : 'none';
     if (commandEl) commandEl.textContent = command;
 }
 
@@ -489,12 +492,28 @@ async function pollAfterUpdateRestart(expectedVersion, startedAt) {
     tick();
 }
 
+// UX1: the preflight before the confirm dialog is a git fetch (several seconds): say so at once, on the status
+// line and the button, and put both back as soon as it is over (refused, cancelled, failed or confirmed).
+function _setUpdatesChecking(button, on, originalLabel) {
+    const statusText = document.getElementById('updatesStatusText');
+    if (on) {
+        if (statusText) statusText.textContent = window.I18N.t('system.updates_checking');
+        if (button) button.textContent = window.I18N.t('system.updates_checking');
+        return;
+    }
+    if (button && originalLabel) button.textContent = originalLabel;
+    if (_lastUpdatesStatus) renderUpdatesStatus(_lastUpdatesStatus);
+}
+
 async function applyUpdate(button) {
+    const originalLabel = button ? button.textContent : '';
     if (button) button.disabled = true;
+    _setUpdatesChecking(button, true);
 
     try {
         const preflightResponse = await fetch('/api/updates/preflight');
         const preflight = await preflightResponse.json();
+        _setUpdatesChecking(button, false, originalLabel);
 
         if (!preflight.ok) {
             const message = updatesRefusalMessage(preflight);
@@ -550,6 +569,7 @@ async function applyUpdate(button) {
         const expectedVersion = _lastUpdatesStatus?.latest_version || '';
         pollAfterUpdateRestart(expectedVersion, Date.now());
     } catch (error) {
+        _setUpdatesChecking(button, false, originalLabel);
         showToast(`❌ ${error.message}`, 'error');
         if (button) button.disabled = false;
     }

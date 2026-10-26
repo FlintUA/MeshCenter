@@ -84,7 +84,8 @@ const rolledStatus = {
     assert.match(env.get('updatesLastUpdate').textContent, /^Last update: 1\.12\.0 → 1\.12\.1 \(/);
     assert.equal(env.get('updatesLastUpdate').style.display, 'block');
     assert.equal(env.get('updatesRollbackBtn').style.display, 'inline-block');
-    assert.equal(env.get('updatesRollbackRow').style.display, 'flex');
+    assert.equal(env.get('updatesRollbackSection').style.display, 'block', 'UX1: Roll back lives in its own section');
+    assert.equal(env.get('updatesRollbackRow').style.display, 'block', 'UX1: the manual command is a collapsed <details>');
     assert.equal(env.get('updatesRollbackCommand').textContent, 'git reset --keep abc1234def && sudo systemctl restart meshcenter.service');
     env.run('copyUpdatesRollbackCommand()');
     assert.equal(env.sandbox.copied, 'git reset --keep abc1234def && sudo systemctl restart meshcenter.service');
@@ -105,6 +106,7 @@ const rolledStatus = {
     assert.match(env.get('updatesLastUpdate').textContent, /^Last update failed: 1\.12\.0 → 1\.12\.1/);
     assert.equal(env.get('updatesRollbackBtn').style.display, 'none');
     assert.equal(env.get('updatesRollbackRow').style.display, 'none');
+    assert.equal(env.get('updatesRollbackSection').style.display, 'none');
 
     const none = makeEnv({ status: { current_version: '1.12.0' }, fetchImpl: async () => ({}) });
     none.run('renderUpdatesLastUpdate(_lastUpdatesStatus)');

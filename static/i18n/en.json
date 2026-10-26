@@ -1093,7 +1093,9 @@
     "security_logout_all_confirm": "Every browser that is signed in to MeshCenter, including this one, has to sign in again, and open camera streams stop.",
     "security_logout_all_not_enabled": "Password protection is off, so there is nothing to sign out of.",
     "security_logout_all_failed": "Could not sign out everywhere.",
-    "security_current_password_required": "Enter your current password first, then switch protection off."
+    "security_current_password_required": "Enter your current password first, then switch protection off.",
+    "updates_rollback_heading": "Rollback",
+    "updates_manual_command": "Manual command"
   },
   "settings": {
     "title": "Settings",

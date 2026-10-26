@@ -1093,7 +1093,9 @@
     "security_logout_all_confirm": "Все браузеры, в которых выполнен вход в MeshCenter, включая этот, должны будут войти заново, а открытые потоки камеры остановятся.",
     "security_logout_all_not_enabled": "Защита паролем выключена, выходить не из чего.",
     "security_logout_all_failed": "Не удалось выйти везде.",
-    "security_current_password_required": "Сначала введите текущий пароль, затем отключите защиту."
+    "security_current_password_required": "Сначала введите текущий пароль, затем отключите защиту.",
+    "updates_rollback_heading": "Откат",
+    "updates_manual_command": "Команда вручную"
   },
   "settings": {
     "title": "Настройки",

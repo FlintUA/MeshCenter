@@ -78,10 +78,13 @@ const run = (sandbox, code) => vm.runInContext(code, sandbox);
 
 // ------------------------------------------------------------ Updates: apply
 {
-    const source = extractFunction(read('chat-updates-security.js'), 'applyUpdate');
+    const updatesSource = read('chat-updates-security.js');
+    const source = extractFunction(updatesSource, '_setUpdatesChecking') + ' ' + extractFunction(updatesSource, 'applyUpdate');
     for (const accept of [false, true]) {
         const sandbox = makeSandbox({
             _lastUpdatesStatus: { current_version: '1.11.0', latest_version: '1.12.0' },
+            document: { getElementById: () => ({ textContent: '' }) },
+            renderUpdatesStatus: () => {},
             escapeHtml: (v) => String(v),
             renderUpdatesResult: () => {},
             pollAfterUpdateRestart: () => { sandbox.polled = true; },

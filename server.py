@@ -6585,6 +6585,22 @@ tcp_link_supervisor = tcp_link_supervisor_module.TcpLinkSupervisor(
 )
 
 
+def live_serial_health_override(*, stored_status, transport, released, busy_reason, is_paused, listener_running,
+                                packet_age, planned_restart_active):
+    """BUSY1: the stored health is refreshed only every 30 s, so after a radio command the chip kept saying a plain
+    "Busy" (PAUSED) or "Starting" for up to ~14 s although the listener is back. A stale PAUSED/STARTING of a serial
+    radio whose listener is running, that is not paused, released, busy or restarting, is recomputed from the live
+    state. Returns (status, level, reason, recommendation) or None to leave the stored value alone."""
+    if stored_status not in ("PAUSED", "STARTING") or transport != "serial":
+        return None
+    if released or busy_reason or is_paused or planned_restart_active or not listener_running:
+        return None
+    return compute_radio_health_status(
+        active_transport="serial", is_released=False, is_paused=False, listener_running=True,
+        packet_age=packet_age, transport_state={},
+    )
+
+
 def compute_radio_health_status(
     *,
     active_transport,
@@ -9530,6 +9546,15 @@ def api_radio_health():
         status["status"], status["level"] = "PAUSED", "WARNING"
         status["status_reason"] = "Radio busy: " + busy_reason.replace("_", " ")
         status["recommendation"] = "Wait until the radio command is completed"
+
+    # BUSY1: a stale PAUSED/STARTING is recomputed from the live state (see live_serial_health_override)
+    live = live_serial_health_override(
+        stored_status=status.get("status"), transport=status["transport"], released=status["released"] is not None,
+        busy_reason=busy_reason, is_paused=pause_listen.is_set(), listener_running=bool(status.get("listener_running")),
+        packet_age=status.get("packet_age"), planned_restart_active=planned_restart.active(),
+    )
+    if live:
+        status["status"], status["level"], status["status_reason"], status["recommendation"] = live
 
     # Inbound receive counters (counts and states only - never message content).
     try:

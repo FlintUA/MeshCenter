@@ -1583,7 +1583,8 @@
     "clear_reference": "Сбросить опорную точку",
     "change_reference_point": "Изменить опорную точку",
     "reference_cleared": "Опорная точка сброшена",
-    "coordinates_label": "Координаты"
+    "coordinates_label": "Координаты",
+    "show_more": "Показать ещё {count} (скрыто {hidden})"
   },
   "activity": {
     "card_title": "Активность",

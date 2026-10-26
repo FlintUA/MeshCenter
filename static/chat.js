@@ -7,6 +7,9 @@ let currentChatName = null;
 let currentChatType = null;
 let lastMessagesSignature = '';
 let nodeSearchTerm = '';
+// MOB2-D: on a phone only the first batch of the node list is rendered; "Show more" adds the next one
+const PHONE_NODE_BATCH = 60;
+let phoneNodeLimit = PHONE_NODE_BATCH;
 let directMessageTarget = null;
 let chatListCache = [];              // <-- ЭТО ОБЯЗАТЕЛЬНО!
 let messagePollInterval = null;
@@ -5064,6 +5067,14 @@ function scrollChatItemIntoView(nodeId) {
 }
 
 function scrollNodeCardIntoView(nodeId, forceCenter = false) {
+    // MOB2-D: a node beyond the phone window gets rendered first (focus from a message, a chat opened)
+    if (phoneNodeCapActive() && !document.querySelector(`#nodesList .node-card[data-node-id="${CSS.escape(String(nodeId))}"]`)) {
+        const phoneWindow = phoneNodeWindowFor(computeFilteredNodeCards(), [nodeId]);
+        if (phoneWindow.nodes.length > phoneNodeLimit) {
+            phoneNodeLimit = phoneWindow.nodes.length;
+            renderSidebarNodeCards();
+        }
+    }
     const nodeCard = findElementByDataValue(
         '#nodesList .node-card',
         'nodeId',
@@ -5581,7 +5592,39 @@ const NODE_FILTER_LABEL_KEYS = {
     knownKeyOnly: 'nodes.filter_known_key_only',
 };
 
+// The cap applies on a phone while no search is typed (a search shows every match)
+function phoneNodeCapActive() {
+    return Boolean(window.MCMobileLayout && window.MCMobileLayout.isMobile() && !nodeSearchTerm);
+}
+
+function phoneNodeWindowFor(nodes, mustInclude) {
+    return window.MCViews.phoneNodeWindow(nodes, {
+        limit: phoneNodeLimit,
+        sort: loadNodeFilterState().sort,
+        localNodeId: activeLocalNodeId,
+        mustInclude: mustInclude || [],
+    });
+}
+
+function showMoreNodesOnPhone() {
+    phoneNodeLimit += PHONE_NODE_BATCH;
+    renderSidebarNodeCards();
+}
+
+function renderNodesShowMore(nodesList, hidden) {
+    const old = nodesList.querySelector(':scope > .nodes-show-more');
+    if (old) old.remove();
+    if (!hidden) return;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'nodes-show-more';
+    button.textContent = window.I18N.t('nodes.show_more', { count: Math.min(PHONE_NODE_BATCH, hidden), hidden });
+    button.addEventListener('click', showMoreNodesOnPhone);
+    nodesList.appendChild(button);
+}
+
 function refreshNodeListAfterFilterChange() {
+    phoneNodeLimit = PHONE_NODE_BATCH;
     saveNodeFilterState();
     renderNodeFilterControls();
     // Re-render from the already-loaded node cache (no refetch): the cards and
@@ -5752,9 +5795,17 @@ function renderSidebarNodeCards() {
     const nodesList = document.getElementById('nodesList');
     if (!nodesList) return;
 
-    const filteredNodes = computeFilteredNodeCards();
+    let filteredNodes = computeFilteredNodeCards();
     const eff = effectiveSelectedTarget();
     const selectedNodeId = (eff && eff.kind === 'node') ? eff.id : null;
+    let hiddenOnPhone = 0;
+    if (phoneNodeCapActive()) {
+        const phoneWindow = phoneNodeWindowFor(filteredNodes, selectedNodeId ? [selectedNodeId] : []);
+        filteredNodes = phoneWindow.nodes;
+        hiddenOnPhone = phoneWindow.hidden;
+    }
+    const staleMore = nodesList.querySelector(':scope > .nodes-show-more');
+    if (staleMore) staleMore.remove();
 
     if (filteredNodes.length === 0) {
         const slot = getNodeDetailSlot();
@@ -5837,6 +5888,7 @@ function renderSidebarNodeCards() {
         }
     });
 
+    renderNodesShowMore(nodesList, hiddenOnPhone);
     syncSelectedNodeCard();
     positionNodeDetailSlot();
 }
@@ -9612,6 +9664,7 @@ async function runNodeTool(action, nodeId, nodeName, button) {
 
 function clearNodeSearch() {
     nodeSearchTerm = '';
+    phoneNodeLimit = PHONE_NODE_BATCH;
     const searchInput = document.getElementById('nodeSearchInput');
     if (searchInput) searchInput.value = '';
     loadMessages();
@@ -10531,6 +10584,7 @@ initializeWorkspace();
 
 document.getElementById('nodeSearchInput')?.addEventListener('input', (e) => {
     nodeSearchTerm = e.target.value;
+    phoneNodeLimit = PHONE_NODE_BATCH;
     loadMessages();
 });
 

@@ -109,3 +109,29 @@ def test_mob2_tab_row_is_as_high_as_its_tabs_and_the_message_box_can_shrink():
     assert "min-height: 52px" in row and "align-items: stretch" in row
     assert "min-width: 0" in _rule(block, '    .input-form input[type="text"] {')
     assert "flex: 0 0 auto" in _rule(block, "    .input-form button {")
+
+
+def test_mob2c_chats_are_two_pages_on_a_phone():
+    """MOB2-C: the list takes the whole height or the conversation does (body[data-mobile-chat]); the list rows
+    and the actions button are 44 px targets; short messages no longer wrap early."""
+    block = _block()
+    hide = _rule(block, '    body[data-mobile-chat="list"] .chat-panels > .messages-view,')
+    assert "display: none !important" in hide
+    page = _rule(block, '    body[data-mobile-chat="list"] .chat-panels > .split-chat-list-container {')
+    assert "flex: 1 1 auto !important" in page and "height: 100% !important" in page
+    assert "min-height: 56px" in _rule(block, "    .chat-panels > .split-chat-list-container .chat-item {")
+    trigger = _rule(block, "    .message-actions-trigger {")
+    assert "width: 44px" in trigger and "height: 44px" in trigger
+    bubble = _rule(block, "    .message .bubble {")
+    assert "padding-right: 12px" in bubble, "no 38 px strip reserved down the whole bubble"
+    assert "max-width: 100%" in bubble, "the 85 % cap of style-part1 cut short bubbles to 85 % of their content"
+    back = _rule(block, "    .chat-back-btn {")
+    assert "min-height: 44px" in back and "min-width: 44px" in back
+    assert "display: none" in _rule(block, "    .chat-back-btn[hidden] {")
+
+
+def test_mob2c_back_button_is_in_the_template_hidden_by_default():
+    html = (Path(__file__).resolve().parent.parent / "templates" / "index.html").read_text(encoding="utf-8")
+    assert 'id="chatBackBtn" hidden' in html
+    assert html.index('id="chatBackBtn"') < html.index('class="chat-header-info"'), "Back comes first in the header"
+

@@ -5952,4 +5952,105 @@ video.camera-stream {
         -webkit-mask-image: linear-gradient(to right, transparent, #000 36px, #000 calc(100% - 36px), transparent);
         mask-image: linear-gradient(to right, transparent, #000 36px, #000 calc(100% - 36px), transparent);
     }
+
+    /* ======================================================================
+       MOB2-C: Chats are two pages on a phone - the list of conversations (the whole height, every row at least
+       44 px) and one conversation (Back in the header, the whole height for messages and the composer). They used
+       to share the screen: a strip of about 35 % showed one and a half rows. static/mobile-layout.js keeps
+       body[data-mobile-chat] = list | conversation (set when a chat is opened / the list is shown again).
+       ====================================================================== */
+    .chat-back-btn[hidden] {
+        display: none;
+    }
+
+    .chat-back-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 2px;
+        min-width: 44px;
+        min-height: 44px;
+        padding: 0 10px 0 4px;
+        border: 0;
+        border-radius: 10px;
+        background: transparent;
+        color: var(--mc-primary, #1f6fdb);
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
+    }
+
+    .chat-back-btn > span:first-child {
+        font-size: 26px;
+        line-height: 1;
+    }
+
+    .chat-header .chat-actions-btn {
+        min-width: 44px;
+        min-height: 44px;
+        font-size: 20px;
+    }
+
+    body[data-mobile-chat="list"] .chat-panels > .messages-view,
+    body[data-mobile-chat="conversation"] .chat-panels > .split-chat-list-container {
+        display: none !important;
+    }
+
+    body[data-mobile-chat="list"] .chat-panels > .split-chat-list-container {
+        flex: 1 1 auto !important;
+        width: 100%;
+        min-width: 0;
+        height: 100% !important;
+        border-bottom: 0;
+    }
+
+    body[data-mobile-chat="conversation"] .chat-panels > .messages-view {
+        flex: 1 1 auto;
+        width: 100%;
+        min-width: 0;
+    }
+
+    /* the list page: channels on top (capped, they scroll), then the direct messages take the rest */
+    body[data-mobile-chat="list"] .chat-panels > .split-chat-list-container > .channels-section {
+        max-height: 34dvh !important;
+    }
+
+    body[data-mobile-chat="list"] .chat-panels > .split-chat-list-container .channels-list {
+        max-height: calc(34dvh - 32px) !important;
+    }
+
+    .chat-panels > .split-chat-list-container .chat-item {
+        min-height: 56px;
+    }
+
+    .chat-time,
+    .chat-subtitle {
+        font-size: 12px;
+    }
+
+    /* messages: the 44 px target of the actions button grows out of the bubble corner (transparent, over the
+       sender line) instead of a 38 px strip reserved down the whole bubble, so short messages stop wrapping early */
+    .message {
+        max-width: 92%;
+    }
+
+    /* style-part1 caps .bubble at 85 % of its own shrink-to-fit .message: a short bubble was cut to 85 % of its
+       content and wrapped early ("Direct / message 12", a sender name broken mid-word) */
+    .message .bubble {
+        max-width: 100%;
+        padding-right: 12px;
+    }
+
+    .message .bubble .sender {
+        padding-right: 30px; /* the actions button sits at the corner: a name never runs under it */
+        min-height: 18px;
+    }
+
+    .message-actions-trigger {
+        width: 44px;
+        height: 44px;
+        top: -9px;
+        right: -4px;
+        opacity: 0.7;
+        font-size: 22px;
+    }
 }

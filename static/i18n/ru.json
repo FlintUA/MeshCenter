@@ -584,7 +584,8 @@
     "traceroute_reason_released": "Радио освобождено",
     "traceroute_reason_busy": "Выполняется другая команда радио",
     "traceroute_reason_cooldown": "Этот узел только что проверяли, повторите через {seconds} с",
-    "relay_probably": "вероятно: {name} ({hex})"
+    "relay_probably": "вероятно: {name} ({hex})",
+    "back_to_chats": "Назад к чатам"
   },
   "camera": {
     "live_camera": "Камера в реальном времени",

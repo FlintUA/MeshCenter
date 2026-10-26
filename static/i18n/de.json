@@ -584,7 +584,8 @@
     "traceroute_reason_released": "Das Funkgerät ist freigegeben",
     "traceroute_reason_busy": "Ein anderer Funkbefehl läuft gerade",
     "traceroute_reason_cooldown": "Dieser Knoten wurde gerade verfolgt, bitte in {seconds} s erneut versuchen",
-    "relay_probably": "wahrscheinlich: {name} ({hex})"
+    "relay_probably": "wahrscheinlich: {name} ({hex})",
+    "back_to_chats": "Zurück zu den Chats"
   },
   "camera": {
     "live_camera": "Live-Kamera",

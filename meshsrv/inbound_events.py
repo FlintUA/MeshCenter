@@ -37,6 +37,7 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
+from meshsrv.relay_resolver import note_direct, resolve_relay
 from meshsrv.radio_transport import (
     ReceivedNodeInfoEvent,
     ReceivedPositionEvent,
@@ -271,6 +272,8 @@ def _update_node_from_received_text(
             # Text packets carry no coordinates and must not erase a known position.
             "position": old.get("position"),
         })
+        # SIG4: remember that this node was heard directly (its own packet, never retransmitted)
+        note_direct(node, event.hop_start, event.hop_limit, deps.time())
         deps.nodes[node_id] = node
 
         new_snapshot = {
@@ -393,6 +396,19 @@ def ingest_received_text(
         )
 
     with deps.state_lock:
+        # SIG4: the last relay of THIS packet (the byte is only the low byte of a node number: resolved against the
+        # nodes heard directly in the last 24 h, see meshsrv/relay_resolver.py)
+        rx_metrics = {
+            "snr": event.rx_snr,
+            "rssi": event.rx_rssi,
+            "hop_start": event.hop_start,
+            "hop_limit": event.hop_limit,
+        }
+        relay = resolve_relay(event.relay_node, sender_id=node_id, hop_start=event.hop_start, hop_limit=event.hop_limit,
+                              nodes=deps.nodes, local_node_id=deps.local_node_id, now=deps.time())
+        if relay is not None:
+            rx_metrics["relay_node"] = event.relay_node
+            rx_metrics["relay"] = relay
         deps.add_message(
             "rx",
             sender,
@@ -410,12 +426,7 @@ def ingest_received_text(
             rx_time=event.rx_time,
             # Per-message radio metrics (SNR/RSSI/hops), kept so "Reply with signal" and Message Info
             # can show them for THIS packet (the node record only holds the latest values).
-            rx={
-                "snr": event.rx_snr,
-                "rssi": event.rx_rssi,
-                "hop_start": event.hop_start,
-                "hop_limit": event.hop_limit,
-            },
+            rx=rx_metrics,
         )
     _count("text_stored")
 
@@ -544,6 +555,7 @@ def ingest_received_nodeinfo(event: ReceivedNodeInfoEvent, deps: InboundDeps) ->
             hop_start=_signal_text(event.hop_start),
             relay_node=_signal_text(event.relay_node),
         )
+        note_direct(node, event.hop_start, event.hop_limit, deps.time())
         deps.nodes[node_id] = node
         if node_id.startswith("!"):
             deps.ensure_chat(node_id, node.get("name"), force=True)
@@ -606,6 +618,7 @@ def ingest_received_position(event: ReceivedPositionEvent, deps: InboundDeps) ->
         node["last_seen"] = deps.time()
         node["last_time"] = deps.now()
         node = deps.merge_position_into_node(node, old, position)
+        note_direct(node, event.hop_start, event.hop_limit, deps.time())
         deps.nodes[node_id] = node
         if node_id.startswith("!"):
             deps.ensure_chat(node_id, node.get("name"), force=False)

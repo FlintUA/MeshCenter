@@ -541,7 +541,55 @@
             const hops = hopStart - hopLimit;
             lines.push(hops === 0 ? 'Hops 0 (direct)' : 'Hops ' + hops);
         }
+        // SIG4: "Via <short name>" only when the relay is resolved to exactly one node (a guess would be worse than
+        // nothing); left out when it does not fit the byte budget next to the rest.
+        const via = relayViaName(rx);
+        if (via && utf8Length(lines.concat('Via ' + via).join('\n')) <= SIGNAL_REPLY_MAX_BYTES) lines.push('Via ' + via);
         return lines.join('\n');
+    }
+
+    const SIGNAL_REPLY_MAX_BYTES = 120;
+
+    // The short name of a RESOLVED relay as plain ASCII (emoji names blow the budget), or '' for any other status.
+    function relayViaName(rx) {
+        const relay = rx && rx.relay;
+        if (!relay || relay.status !== 'resolved') return '';
+        return String(relay.short_name || '').replace(/[^\x20-\x7e]/g, '').trim().slice(0, 8);
+    }
+
+    // What Message Info shows for the last relay of one packet. kind: none (no byte), direct, resolved, ambiguous,
+    // unknown; `hex` is the raw byte as 0x84; `names` the short names (resolved: one, ambiguous: up to four).
+    function relayInfo(rx) {
+        const byte = finiteNumber(rx && rx.relay_node);
+        if (byte === null || byte < 1 || byte > 255) return { kind: 'none', hex: '', names: [], count: 0 };
+        const hex = '0x' + Math.round(byte).toString(16).toUpperCase().padStart(2, '0');
+        const relay = (rx && rx.relay) || {};
+        const label = function (entry) { return String((entry && (entry.short_name || entry.node_id)) || '').trim(); };
+        if (relay.status === 'direct' || relay.status === 'resolved') {
+            return { kind: relay.status, hex: hex, names: [label(relay)].filter(Boolean), count: 1 };
+        }
+        if (relay.status === 'ambiguous') {
+            const names = (Array.isArray(relay.candidates) ? relay.candidates : []).map(label).filter(Boolean);
+            return { kind: 'ambiguous', hex: hex, names: names, count: finiteNumber(relay.count) || names.length };
+        }
+        return { kind: 'unknown', hex: hex, names: [], count: 0 };
+    }
+
+    // SIG4: menu state for "Trace route to sender". Hidden for own/system messages and messages without a real node
+    // sender; disabled (with a reason key the caller translates) on a TCP radio, a released radio, while a trace is
+    // running or inside the repeat block. options: isOwn, transportType, released, busy, cooldownLeftS.
+    function tracerouteMenuState(message, options) {
+        const opts = options || {};
+        const hidden = { visible: false, disabled: false, reasonKey: '', retryS: 0 };
+        if (!message || message.kind !== 'rx' || opts.isOwn) return hidden;
+        if (!/^![0-9a-fA-F]{8}$/.test(String(message.node_id || ''))) return hidden;
+        const show = function (reasonKey, retryS) { return { visible: true, disabled: Boolean(reasonKey), reasonKey: reasonKey || '', retryS: retryS || 0 }; };
+        if (String(opts.transportType || '').toLowerCase() === 'tcp') return show('tcp');
+        if (opts.released) return show('released');
+        if (opts.busy) return show('busy');
+        const left = finiteNumber(opts.cooldownLeftS);
+        if (left !== null && left > 0) return show('cooldown', Math.ceil(left));
+        return show('');
     }
 
     function utf8Length(text) {
@@ -587,6 +635,8 @@
         previewText: previewText,
         buildSignalReplyText: buildSignalReplyText,
         signalReplyMenuState: signalReplyMenuState,
+        relayInfo: relayInfo,
+        tracerouteMenuState: tracerouteMenuState,
         utf8Length: utf8Length,
         profileConnectionBadge: profileConnectionBadge,
         firstUnreadIndex: firstUnreadIndex,

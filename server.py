@@ -42,6 +42,7 @@ from meshsrv import planned_restart
 from meshsrv.info_parser import local_node_entry, parse_info_nodes
 from meshsrv.radio_manager import RadioConnectionManager
 from meshsrv.radio_release_store import RadioReleaseStore
+from meshsrv.relay_resolver import clean_relay, note_direct
 from meshsrv.runtime_identity import (
     resolve_meshtastic_cli,
     resolve_serial_port,
@@ -4286,6 +4287,7 @@ def process_nodeinfo(block):
             node_id, old, long_name=long_name, short_name=short_name, hw_model=hw_model, role=role,
             rssi=rssi, snr=snr, hop_start=hop_start, relay_node=relay_node,
         )
+        note_direct(node, hop_start, extract_hop_limit(block), time.time())  # SIG4: heard directly just now?
         name = node["name"]
         nodes[node_id] = node
         if node_id.startswith("!"):
@@ -4350,6 +4352,13 @@ def clean_rx_metrics(rx):
                 continue
             number = round(number, 2)
         out[key] = number
+    # SIG4: the last relay of the packet: its raw low byte and the resolution (see meshsrv/relay_resolver.py)
+    relay_byte = rx.get("relay_node")
+    if isinstance(relay_byte, int) and not isinstance(relay_byte, bool) and 1 <= relay_byte <= 255:
+        out["relay_node"] = relay_byte
+        relay = clean_relay(rx.get("relay"))
+        if relay:
+            out["relay"] = relay
     return out or None
 
 
@@ -7193,6 +7202,7 @@ register_node_tools_routes(
     RadioBusyError=RadioBusyError,
     log_system_event=log_system_event,
     is_radio_available=is_radio_available,
+    current_transport=current_radio_transport,
 )
 register_node_icon_routes(app, PROFILE_DATA_DIR, LOCAL_NODE_ID, is_valid_node_id)
 

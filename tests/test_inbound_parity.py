@@ -106,7 +106,7 @@ def _snapshot(srv):
         if isinstance(message.get("reply_to"), dict):
             message["reply_to"] = {k: v for k, v in message["reply_to"].items() if k not in ("id", "time")}
     chats = {cid: {k: v for k, v in c.items() if k not in ("last_time", "last_ts")} for cid, c in srv.chats.items()}
-    nodes = {nid: {k: v for k, v in n.items() if k not in ("last_seen", "last_time")} for nid, n in srv.nodes.items()}
+    nodes = {nid: {k: v for k, v in n.items() if k not in ("last_seen", "last_time", "last_direct")} for nid, n in srv.nodes.items()}
     return {
         "messages": messages, "chats": chats, "nodes": nodes,
         "seen_ids": sorted(srv.seen_ids), "seen_recent_texts": sorted(srv.seen_recent_texts),

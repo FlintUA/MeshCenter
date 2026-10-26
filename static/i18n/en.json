@@ -1583,7 +1583,8 @@
     "clear_reference": "Clear reference point",
     "change_reference_point": "Change reference point",
     "reference_cleared": "Reference point cleared",
-    "coordinates_label": "Coordinates"
+    "coordinates_label": "Coordinates",
+    "show_more": "Show {count} more ({hidden} not shown)"
   },
   "activity": {
     "card_title": "Activity",

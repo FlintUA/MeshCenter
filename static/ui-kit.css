@@ -6171,4 +6171,104 @@ video.camera-stream {
         padding: 6px 0;
         font-size: 13px;
     }
+
+    /* ======================================================================
+       MOB2-D: Nodes, Base and Node Manager on a phone: 44 px targets in the node list (the list itself shows the
+       first batch with a "Show more" button, see chat.js), 11 px minimum text, the Base chart tiles in the dark
+       theme and the small Node Manager controls.
+       ====================================================================== */
+    .node-card-select,
+    .sidebar-tab,
+    #nodeSearchInput,
+    #clearSearchBtn,
+    #nodeFiltersBtn,
+    #rescanNodesBtn,
+    .channel-card,
+    .node-detail-toolbar-btn,
+    .node-detail-tab,
+    .node-card-message-btn,
+    .device-action-btn,
+    #nodeManagerChangeImageBtn,
+    #addScheduleBtn,
+    #addTimerBtn {
+        min-height: 44px;
+    }
+
+    .node-card-message-btn,
+    #clearSearchBtn,
+    #nodeFiltersBtn {
+        min-width: 44px;
+    }
+
+    #nodeSearchInput {
+        font-size: 16px;
+    }
+
+    .node-last-seen,
+    .node-map-bearing,
+    .node-map-distance,
+    .node-manager-active-label,
+    .node-manager-change-image-btn,
+    .telemetry-label,
+    .telemetry-update,
+    .telemetry-status,
+    .sensor-update,
+    .time-clock-source,
+    .time-section-label,
+    .weather-location-coordinates,
+    .weather-forecast-title,
+    .weather-forecast-placeholder,
+    .weather-forecast-date,
+    .weather-state-badge {
+        font-size: 11px !important;
+    }
+
+    /* small pills stay small to the eye; their tap area is 44 px high (a transparent extension) */
+    .node-map-badge,
+    .node-card-key-btn,
+    .node-inline-id,
+    #weatherStateBadge {
+        position: relative;
+    }
+
+    .node-map-badge::after,
+    .node-card-key-btn::after,
+    .node-inline-id::after,
+    #weatherStateBadge::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 50%;
+        height: 44px;
+        transform: translateY(-50%);
+    }
+
+    .weatherProviderLink,
+    #weatherProviderLink {
+        display: inline-flex;
+        align-items: center;
+        min-height: 44px;
+    }
+
+    .nodes-show-more {
+        display: block;
+        width: 100%;
+        min-height: 44px;
+        margin: 8px 0 12px;
+        border: 1px solid var(--mc-border-soft, #dfe5ec);
+        border-radius: 10px;
+        background: var(--mc-chat-surface-raised, #fff);
+        color: var(--mc-primary, #1f6fdb);
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+    }
+
+    /* the Environment / Power chart tiles stayed light in the dark theme */
+    html[data-theme="dark"] .telemetry-btn {
+        background: var(--mc-chat-surface-raised);
+        color: var(--mc-chat-text);
+        border-color: var(--mc-border-soft);
+    }
 }

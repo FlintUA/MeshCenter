@@ -161,3 +161,27 @@ def test_mob2e_phone_status_block_is_in_the_workspace_sheet_and_hidden_by_defaul
         assert f'id="phoneStatus{key}"' in html
     css = CSS.read_text(encoding="utf-8").replace("\r\n", "\n")
     assert ".workspace-phone-status {\n    display: none;" in css, "hidden unless the phone media query shows it"
+
+
+def test_mob2d_node_cards_and_base_on_a_phone():
+    """MOB2-D (phone only): 44 px targets in the node list, 11 px minimum text, dark tiles on the Base page."""
+    block = _block()
+    assert "MOB2-D" in block
+    assert "min-height: 44px" in _rule(block, "    .node-card-select,")
+    assert "min-width: 44px" in _rule(block, "    .node-card-message-btn,\n    #clearSearchBtn,")
+    assert "font-size: 11px" in _rule(block, "    .node-last-seen,")
+    assert "min-height: 44px" in _rule(block, "    .sidebar-tab,")
+    dark = _rule(block, '    html[data-theme="dark"] .telemetry-btn {')
+    assert "background" in dark
+    assert "min-height: 44px" in _rule(block, "    .nodes-show-more {")
+
+
+def test_mob2d_rules_stay_inside_the_media_query():
+    text = CSS.read_text(encoding="utf-8")
+    assert text.index("MOB2-D") > text.index(MARKER)
+
+
+def test_mob2d_chat_js_caps_the_phone_node_list():
+    js = (Path(__file__).resolve().parent.parent / "static" / "chat.js").read_text(encoding="utf-8")
+    assert "phoneNodeWindow(" in js and "nodes-show-more" in js
+    assert "phoneNodeLimit = PHONE_NODE_BATCH" in js, "the limit resets with the filters and the search"

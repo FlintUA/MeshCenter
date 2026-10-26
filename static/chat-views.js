@@ -155,6 +155,37 @@
         return nodeLastSeen(b) - nodeLastSeen(a);
     }
 
+    // MOB2-D: the phone renders a window of the node list (638 cards = 2240 tap targets). `nodes` is the list as
+    // the user sees it (filters, search and sort already applied). With the default sort the window starts with
+    // the own node, then the favourites, then the most recently heard (the list's own order); any other sort is
+    // the user's choice and keeps its order. opts: limit (default PHONE_NODE_BATCH), sort, localNodeId,
+    // mustInclude (ids that must be in the window: the selected node, a node focused from a message).
+    const PHONE_NODE_BATCH = 60;
+
+    function phoneNodeWindow(nodes, opts) {
+        const o = opts || {};
+        const list = Array.isArray(nodes) ? nodes.slice() : [];
+        const total = list.length;
+        let ordered = list;
+        if ((o.sort || 'last_heard') === 'last_heard') {
+            const rank = function (node) {
+                if (node.is_local || (o.localNodeId && node.node_id === o.localNodeId)) return 0;
+                return node.favorite ? 1 : 2;
+            };
+            ordered = list
+                .map(function (node, index) { return { node: node, index: index, rank: rank(node) }; })
+                .sort(function (a, b) { return a.rank - b.rank || a.index - b.index; })
+                .map(function (entry) { return entry.node; });
+        }
+        let limit = Math.max(1, Math.floor(Number(o.limit)) || PHONE_NODE_BATCH);
+        (Array.isArray(o.mustInclude) ? o.mustInclude : []).forEach(function (id) {
+            const at = ordered.findIndex(function (node) { return node.node_id === id; });
+            if (at >= limit) limit = at + 1;
+        });
+        const shown = ordered.slice(0, limit);
+        return { nodes: shown, hidden: total - shown.length, total: total };
+    }
+
     // context additionally: { distance(node) -> meters | null }
     function sortNodes(nodes, sortKey, context) {
         const ctx = context || {};
@@ -655,6 +686,8 @@
         nodePassesFilters: nodePassesFilters,
         sortNodes: sortNodes,
         filterAndSortNodes: filterAndSortNodes,
+        phoneNodeWindow: phoneNodeWindow,
+        PHONE_NODE_BATCH: PHONE_NODE_BATCH,
     };
     root.MCViews = api;
 })(typeof window !== 'undefined' ? window : globalThis);

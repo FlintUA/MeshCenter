@@ -1583,7 +1583,8 @@
     "clear_reference": "Скинути опорну точку",
     "change_reference_point": "Змінити опорну точку",
     "reference_cleared": "Опорну точку скинуто",
-    "coordinates_label": "Координати"
+    "coordinates_label": "Координати",
+    "show_more": "Показати ще {count} (приховано {hidden})"
   },
   "activity": {
     "card_title": "Активність",

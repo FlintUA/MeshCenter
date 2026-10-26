@@ -171,8 +171,6 @@ def test_mob2d_node_cards_and_base_on_a_phone():
     assert "min-width: 44px" in _rule(block, "    .node-card-message-btn,\n    #clearSearchBtn,")
     assert "font-size: 11px" in _rule(block, "    .node-last-seen,")
     assert "min-height: 44px" in _rule(block, "    .sidebar-tab,")
-    dark = _rule(block, '    html[data-theme="dark"] .telemetry-btn {')
-    assert "background" in dark
     assert "min-height: 44px" in _rule(block, "    .nodes-show-more {")
 
 
@@ -185,3 +183,26 @@ def test_mob2d_chat_js_caps_the_phone_node_list():
     js = (Path(__file__).resolve().parent.parent / "static" / "chat.js").read_text(encoding="utf-8")
     assert "phoneNodeWindow(" in js and "nodes-show-more" in js
     assert "phoneNodeLimit = PHONE_NODE_BATCH" in js, "the limit resets with the filters and the search"
+
+
+def test_mob2f_node_search_row_and_filters_popover_on_a_phone():
+    """MOB2-F (phone only): the search row has gaps and 44 px buttons, the filters popover sits BELOW the row
+    (the gear stays fully visible and toggles it) and scrolls inside when the screen is short."""
+    block = _block()
+    assert "MOB2-F" in block
+    row = _rule(block, "    .search-container.search-row {")
+    assert "grid-template-columns: minmax(0, 1fr) 44px 44px" in row and "gap: 8px" in row
+    gear = _rule(block, "    .node-filters-btn,")
+    assert "width: 44px" in gear and "height: 44px" in gear
+    pop = _rule(block, "    .node-filters-popover {")
+    assert "top: 52px" in pop and "overflow-y: auto" in pop and "overscroll-behavior: contain" in pop
+    assert "min-height: 44px" in _rule(block, "    .node-filters-group label {")
+
+
+def test_dark_theme_telemetry_tiles_are_themed_at_every_width():
+    """The Environment / Power chart tiles stayed light in the dark theme: the dark rules are NOT phone-only."""
+    css = CSS.read_text(encoding="utf-8").replace("\r\n", "\n")
+    head = css[:css.index(MARKER)]
+    for selector in ('html[data-theme="dark"] .telemetry-btn.environment {', 'html[data-theme="dark"] .telemetry-btn.power {'):
+        assert selector in head, selector
+

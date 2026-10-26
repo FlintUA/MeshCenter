@@ -119,6 +119,10 @@ class SerialPortSupervisor:
         self._is_planned_restart = is_planned_restart or (lambda: False)
         self._last_stop_request_at = float("-inf")
         self._claim_released_at = float("-inf")
+        # SIG4b: what the radio is busy with while a claim holds it ("traceroute", "radio_command", ...), and
+        # the last such reason for the short while the listener needs to come back (the dock says "Busy: x")
+        self._busy_reason = ""
+        self._last_busy_reason = ""
         # ST1: visible counters (/api/radio_health "listener_exits") - how often the
         # listener ended on its own, how many of those were inside the post-claim
         # settle window, and how many were a corrupted-frame early restart.
@@ -780,6 +784,25 @@ class SerialPortSupervisor:
             or (time.monotonic() - self._last_stop_request_at < INTENTIONAL_STOP_GRACE_S)
         )
 
+    def begin_busy(self, reason: str) -> None:
+        """A claim starts (the listener is about to be paused): remember why, for the status chip."""
+        self._busy_reason = str(reason or "radio_command")
+        self._last_busy_reason = self._busy_reason
+
+    def end_busy(self) -> None:
+        """The claim is over and the port is handed back: the listener is on its way up."""
+        self._busy_reason = ""
+        self._claim_released_at = time.monotonic()
+
+    def busy_reason(self, listener_running: bool, window: float = 45.0) -> str:
+        """Why the radio is busy right now ("" = not busy): during a claim, or - while the listener has not
+        come back yet - for the short window after it."""
+        if self._busy_reason:
+            return self._busy_reason
+        if not listener_running and self.restarting_after_claim(window):
+            return self._last_busy_reason or "radio_command"
+        return ""
+
     def restarting_after_claim(self, window: float = 45.0) -> bool:
         """True for a short while after a claim handed the port back: the listener
         is on its way up again, which is "paused", not "down"."""
@@ -1098,7 +1121,7 @@ class SerialPortSupervisor:
         return self._wait_for_release_outcome(timeout=timeout)
 
     @contextmanager
-    def claim_exclusive_access(self, *, timeout: float = 8, cooldown: float = 2.0):
+    def claim_exclusive_access(self, *, timeout: float = 8, cooldown: float = 2.0, reason: str = "radio_command"):
         """Claim exclusive access to the serial port for the duration of
         the block - pause the listener, stop it, wait for the OS to
         actually free the device, hold radio_lock for the whole
@@ -1144,6 +1167,7 @@ class SerialPortSupervisor:
         busy" claim.
         """
         with self._radio_lock:
+            self.begin_busy(reason)
             outcome = self._prepare_command(timeout=timeout)
             try:
                 if outcome != PortReleaseOutcome.PORT_FREE:
@@ -1161,4 +1185,4 @@ class SerialPortSupervisor:
                 if cooldown:
                     time.sleep(cooldown)
                 self._pause_listen.clear()
-                self._claim_released_at = time.monotonic()
+                self.end_busy()

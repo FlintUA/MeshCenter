@@ -229,7 +229,9 @@ function _securityCurrentPasswordErrorMessage(data) {
         return window.I18N.t('system.security_current_password_invalid');
     }
     if (data.error_code === 'login_throttled') {
-        return window.I18N.t('system.security_current_password_throttled');
+        return data.retry_after
+            ? window.I18N.t('auth.login_throttled', { seconds: data.retry_after })
+            : window.I18N.t('system.security_current_password_throttled');
     }
     return null;
 }
@@ -250,6 +252,15 @@ async function toggleSecurityEnabled(checked) {
     const body = { enabled: checked };
     if (!checked && currentPasswordInput) {
         body.current_password = currentPasswordInput.value || '';
+        // An empty field can only fail on the server - and every failed attempt counts toward the lock-out.
+        // So ask for the password first: put the box back, say what is missing, send nothing.
+        if (!body.current_password) {
+            const toggle = document.getElementById('securityEnabled');
+            if (toggle) toggle.checked = true;
+            renderSecurityResult(window.I18N.t('system.security_current_password_required'), true);
+            currentPasswordInput.focus();
+            return;
+        }
     }
 
     try {

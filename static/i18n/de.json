@@ -583,7 +583,8 @@
     "traceroute_reason_tcp": "Traceroute braucht eine serielle Funkverbindung",
     "traceroute_reason_released": "Das Funkgerät ist freigegeben",
     "traceroute_reason_busy": "Ein anderer Funkbefehl läuft gerade",
-    "traceroute_reason_cooldown": "Dieser Knoten wurde gerade verfolgt, bitte in {seconds} s erneut versuchen"
+    "traceroute_reason_cooldown": "Dieser Knoten wurde gerade verfolgt, bitte in {seconds} s erneut versuchen",
+    "relay_probably": "wahrscheinlich: {name} ({hex})"
   },
   "camera": {
     "live_camera": "Live-Kamera",
@@ -910,7 +911,14 @@
     "connection_disconnected": "Getrennt",
     "edit_tcp_title": "TCP-Verbindung bearbeiten",
     "edit_tcp_confirm": "Speichern und verbinden",
-    "tcp_port_invalid": "Port von 1 bis 65535 eingeben."
+    "tcp_port_invalid": "Port von 1 bis 65535 eingeben.",
+    "header_busy": "Beschäftigt",
+    "header_busy_reason": "Beschäftigt: {reason}",
+    "busy_reason_traceroute": "Traceroute",
+    "busy_reason_request_telemetry": "Telemetrieanfrage",
+    "busy_reason_request_position": "Positionsanfrage",
+    "busy_reason_node_scan": "Knotensuche",
+    "busy_reason_radio_command": "Funkbefehl"
   },
   "system": {
     "container_mode_notice": "Läuft in einem Container. Host-Funktionen (WLAN, Netzwerk, Neustart, Herunterfahren, Updates, Hardware-Einrichtung) sind deaktiviert. Uptime, Last und RAM sind Werte des Hosts; der Speicher zeigt das Datenvolume. Zum Aktualisieren das Image neu bauen.",
@@ -1083,7 +1091,8 @@
     "security_logout_all_title": "Überall abmelden?",
     "security_logout_all_confirm": "Jeder bei MeshCenter angemeldete Browser, auch dieser, muss sich neu anmelden, und offene Kamerastreams werden beendet.",
     "security_logout_all_not_enabled": "Der Passwortschutz ist aus, es gibt nichts abzumelden.",
-    "security_logout_all_failed": "Überall abmelden war nicht möglich."
+    "security_logout_all_failed": "Überall abmelden war nicht möglich.",
+    "security_current_password_required": "Gib zuerst dein aktuelles Passwort ein und schalte dann den Schutz aus."
   },
   "settings": {
     "title": "Einstellungen",

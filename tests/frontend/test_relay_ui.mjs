@@ -34,10 +34,13 @@ const msg = (relay, extra = {}) => ({ kind: 'rx', packet_id: 7, node_id: '!aabbc
     }
     assert.ok(!V.buildSignalReplyText(msg(undefined)).includes('Via'), 'no relay at all: no Via line');
     // non-ASCII (emoji) names are stripped, an empty result leaves the line out
-    assert.equal(V.buildSignalReplyText(msg({ status: 'resolved', short_name: 'FMG🙂' })).split('\n').pop(), 'Via FMG');
-    assert.ok(!V.buildSignalReplyText(msg({ status: 'resolved', short_name: '🙂🙂' })).includes('Via'));
+    assert.equal(V.buildSignalReplyText(msg({ status: 'resolved', basis: 'direct24h', short_name: 'FMG🙂' })).split('\n').pop(), 'Via FMG');
+    assert.ok(!V.buildSignalReplyText(msg({ status: 'resolved', basis: 'direct24h', short_name: '🙂🙂' })).includes('Via'));
+    // resolved only from the 2 h fallback (never heard directly): a guess, it never goes on air
+    assert.ok(!V.buildSignalReplyText(msg({ status: 'resolved', basis: 'recent2h', short_name: 'AAH0' })).includes('Via'), 'recent2h: no Via line');
+    assert.ok(!V.buildSignalReplyText(msg({ status: 'resolved', short_name: 'AAH0' })).includes('Via'), 'no basis: no Via line');
     // a long name is cut so the text stays well inside the radio's limit
-    const long = V.buildSignalReplyText(msg({ status: 'resolved', short_name: 'ABCDEFGHIJKLMNOP' }));
+    const long = V.buildSignalReplyText(msg({ status: 'resolved', basis: 'direct24h', short_name: 'ABCDEFGHIJKLMNOP' }));
     assert.equal(long.split('\n').pop(), 'Via ABCDEFGH');
     assert.ok(new TextEncoder().encode(long).length <= 120);
 }
@@ -47,7 +50,9 @@ const msg = (relay, extra = {}) => ({ kind: 'rx', packet_id: 7, node_id: '!aabbc
     assert.deepEqual(plain(V.relayInfo({})), { kind: 'none', hex: '', names: [], count: 0 });
     assert.equal(V.relayInfo({ relay_node: 0 }).kind, 'none');
     assert.deepEqual(plain(V.relayInfo({ relay_node: 5, relay: { status: 'unknown' } })), { kind: 'unknown', hex: '0x05', names: [], count: 0 });
-    assert.deepEqual(plain(V.relayInfo({ relay_node: 0x84, relay: { status: 'resolved', short_name: 'FMG' } })), { kind: 'resolved', hex: '0x84', names: ['FMG'], count: 1 });
+    assert.deepEqual(plain(V.relayInfo({ relay_node: 0x84, relay: { status: 'resolved', basis: 'direct24h', short_name: 'FMG' } })), { kind: 'resolved', hex: '0x84', names: ['FMG'], count: 1 });
+    assert.deepEqual(plain(V.relayInfo({ relay_node: 0xDC, relay: { status: 'resolved', basis: 'recent2h', short_name: 'AAH0' } })), { kind: 'probably', hex: '0xDC', names: ['AAH0'], count: 1 }, 'the 2 h fallback is only "probably"');
+    assert.deepEqual(plain(V.relayInfo({ relay_node: 0xDC, relay: { status: 'resolved', basis: 'recent2h', short_name: 'AAH0' } })), { kind: 'probably', hex: '0xDC', names: ['AAH0'], count: 1 }, 'the 2 h fallback is only "probably"');
     assert.equal(V.relayInfo({ relay_node: 0x84, relay: { status: 'direct', short_name: 'SEND' } }).kind, 'direct');
     const amb = V.relayInfo({ relay_node: 0x84, relay: { status: 'ambiguous', count: 6, candidates: [{ short_name: 'A' }, { short_name: 'B' }, { node_id: '!aaaaaa84' }] } });
     assert.deepEqual(plain(amb), { kind: 'ambiguous', hex: '0x84', names: ['A', 'B', '!aaaaaa84'], count: 6 });

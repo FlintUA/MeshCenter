@@ -541,8 +541,8 @@
             const hops = hopStart - hopLimit;
             lines.push(hops === 0 ? 'Hops 0 (direct)' : 'Hops ' + hops);
         }
-        // SIG4: "Via <short name>" only when the relay is resolved to exactly one node (a guess would be worse than
-        // nothing); left out when it does not fit the byte budget next to the rest.
+        // SIG4: "Via <short name>" only when the relay is resolved to exactly one node that was heard DIRECTLY
+        // (a guess from the 2 h fallback never goes on air); left out when it does not fit the byte budget.
         const via = relayViaName(rx);
         if (via && utf8Length(lines.concat('Via ' + via).join('\n')) <= SIGNAL_REPLY_MAX_BYTES) lines.push('Via ' + via);
         return lines.join('\n');
@@ -553,18 +553,22 @@
     // The short name of a RESOLVED relay as plain ASCII (emoji names blow the budget), or '' for any other status.
     function relayViaName(rx) {
         const relay = rx && rx.relay;
-        if (!relay || relay.status !== 'resolved') return '';
+        if (!relay || relay.status !== 'resolved' || relay.basis !== 'direct24h') return '';
         return String(relay.short_name || '').replace(/[^\x20-\x7e]/g, '').trim().slice(0, 8);
     }
 
-    // What Message Info shows for the last relay of one packet. kind: none (no byte), direct, resolved, ambiguous,
-    // unknown; `hex` is the raw byte as 0x84; `names` the short names (resolved: one, ambiguous: up to four).
+    // What Message Info shows for the last relay of one packet. kind: none (no byte), direct, resolved, probably
+    // (resolved from the 2 h fallback only), ambiguous, unknown; `hex` is the raw byte as 0x84; `names` the short names (resolved: one, ambiguous: up to four).
     function relayInfo(rx) {
         const byte = finiteNumber(rx && rx.relay_node);
         if (byte === null || byte < 1 || byte > 255) return { kind: 'none', hex: '', names: [], count: 0 };
         const hex = '0x' + Math.round(byte).toString(16).toUpperCase().padStart(2, '0');
         const relay = (rx && rx.relay) || {};
         const label = function (entry) { return String((entry && (entry.short_name || entry.node_id)) || '').trim(); };
+        if (relay.status === 'resolved' && relay.basis === 'recent2h') {
+            // one node heard in the last 2 hours, but never directly: a probable relay, not a confirmed one
+            return { kind: 'probably', hex: hex, names: [label(relay)].filter(Boolean), count: 1 };
+        }
         if (relay.status === 'direct' || relay.status === 'resolved') {
             return { kind: relay.status, hex: hex, names: [label(relay)].filter(Boolean), count: 1 };
         }

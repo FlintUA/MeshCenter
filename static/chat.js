@@ -6645,6 +6645,7 @@ function relayInfoText(rx) {
     if (info.kind === 'none') return '';
     if (info.kind === 'direct') return window.I18N.t('chat.relay_direct', { name: info.names[0] || '', hex: info.hex });
     if (info.kind === 'resolved') return window.I18N.t('chat.relay_resolved', { name: info.names[0] || '', hex: info.hex });
+    if (info.kind === 'probably') return window.I18N.t('chat.relay_probably', { name: info.names[0] || '', hex: info.hex });
     if (info.kind === 'ambiguous' && info.names.length) {
         const more = Math.max(0, info.count - info.names.length);
         return window.I18N.t('chat.relay_possibly', { names: info.names.join(', ') + (more ? ` +${more}` : ''), hex: info.hex });
@@ -14110,6 +14111,11 @@ function formatReconnectStatus(reconnect) {
     return window.I18N.t('node_manager.reconnecting_status_now', { attempt: reconnect.attempt });
 }
 
+function busyReasonLabel(reason) {
+    const key = String(reason || 'radio_command');
+    return window.I18N.tOrFallback(`node_manager.busy_reason_${key}`, {}, window.I18N.t('node_manager.busy_reason_radio_command'));
+}
+
 function updateHeaderNodeStatus(data, reachable = true) {
     const headerStatus = document.getElementById('headerStatusText');
     if (!headerStatus) return;
@@ -14136,7 +14142,10 @@ function updateHeaderNodeStatus(data, reachable = true) {
         stateClass = 'status-released';
 
     } else if (status === 'PAUSED') {
-        label = 'Radio Busy';
+        // SIG4b: a radio command (traceroute, scan, send...) holds the radio: "Busy: traceroute", never "Offline"
+        label = data?.busy_reason
+            ? window.I18N.t('node_manager.header_busy_reason', { reason: busyReasonLabel(data.busy_reason) })
+            : window.I18N.t('node_manager.header_busy');
         stateClass = 'status-warning';
 
     } else if (status === 'STARTING') {

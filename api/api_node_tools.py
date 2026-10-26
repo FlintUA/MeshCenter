@@ -443,7 +443,7 @@ def register_node_tools_routes(
         )
 
         try:
-            with radio_session(device=resolved_port, timeout=10, cooldown=0.4, extra_release_wait=6):
+            with radio_session(device=resolved_port, timeout=10, cooldown=0.4, extra_release_wait=6, reason=action):
                 start_time = time.time()
 
                 # Device telemetry is dispatched without waiting for the remote

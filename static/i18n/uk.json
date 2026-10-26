@@ -583,7 +583,8 @@
     "traceroute_reason_tcp": "Для трасування потрібне послідовне підключення радіо",
     "traceroute_reason_released": "Радіо звільнено",
     "traceroute_reason_busy": "Виконується інша команда радіо",
-    "traceroute_reason_cooldown": "Цей вузол щойно перевіряли, повторіть через {seconds} с"
+    "traceroute_reason_cooldown": "Цей вузол щойно перевіряли, повторіть через {seconds} с",
+    "relay_probably": "імовірно: {name} ({hex})"
   },
   "camera": {
     "live_camera": "Камера в реальному часі",
@@ -910,7 +911,14 @@
     "connection_disconnected": "Відключено",
     "edit_tcp_title": "Змінити TCP-підключення",
     "edit_tcp_confirm": "Зберегти та підключитися",
-    "tcp_port_invalid": "Введіть порт від 1 до 65535."
+    "tcp_port_invalid": "Введіть порт від 1 до 65535.",
+    "header_busy": "Зайнято",
+    "header_busy_reason": "Зайнято: {reason}",
+    "busy_reason_traceroute": "трасування",
+    "busy_reason_request_telemetry": "запит телеметрії",
+    "busy_reason_request_position": "запит позиції",
+    "busy_reason_node_scan": "пошук вузлів",
+    "busy_reason_radio_command": "команда радіо"
   },
   "system": {
     "container_mode_notice": "Працює в контейнері. Функції рівня хоста (Wi-Fi, мережа, перезавантаження, вимкнення, оновлення, налаштування обладнання) вимкнено. Аптайм, навантаження та ОЗП - значення хоста; диск показує том даних. Для оновлення перезберіть образ.",
@@ -1083,7 +1091,8 @@
     "security_logout_all_title": "Вийти скрізь?",
     "security_logout_all_confirm": "Усі браузери, у яких виконано вхід у MeshCenter, зокрема цей, мають увійти знову, а відкриті потоки камери зупиняться.",
     "security_logout_all_not_enabled": "Захист паролем вимкнено, виходити нема з чого.",
-    "security_logout_all_failed": "Не вдалося вийти скрізь."
+    "security_logout_all_failed": "Не вдалося вийти скрізь.",
+    "security_current_password_required": "Спершу введіть поточний пароль, потім вимкніть захист."
   },
   "settings": {
     "title": "Налаштування",

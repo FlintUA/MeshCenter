@@ -4867,7 +4867,7 @@ class RadioBusyError(RuntimeError):
 
 
 @contextmanager
-def radio_session(device=None, timeout=8, cooldown=2.0, extra_release_wait=None):
+def radio_session(device=None, timeout=8, cooldown=2.0, extra_release_wait=None, reason="radio_command"):
     """Claim exclusive access to the radio for the duration of the block.
 
     Centralizes the pause-listener / wait-for-port / hold-radio_lock /
@@ -4922,6 +4922,7 @@ def radio_session(device=None, timeout=8, cooldown=2.0, extra_release_wait=None)
             f"radio_lock busy: could not acquire within {timeout}s "
             "- another long-running radio call is in progress"
         )
+    listener_supervisor.begin_busy(reason)  # SIG4b: the status chip says "Busy: <reason>", not "Offline"
     try:
         remaining = max(1.0, timeout - (time.monotonic() - start))
         prepared = prepare_radio_command(device=device, timeout=remaining)
@@ -4951,6 +4952,7 @@ def radio_session(device=None, timeout=8, cooldown=2.0, extra_release_wait=None)
             if is_radio_available():
                 pause_listen.clear()
     finally:
+        listener_supervisor.end_busy()
         radio_lock.release()
 
 
@@ -8847,7 +8849,7 @@ def api_rescan_nodes():
         # change must hit the device the listener actually verified, not a
         # stale startup value.
         rescan_port = current_serial_port()
-        with radio_session(device=rescan_port, timeout=10, cooldown=2.0):
+        with radio_session(device=rescan_port, timeout=10, cooldown=2.0, reason="node_scan"):
             # Fetch --info while still holding radio_lock, so this doesn't
             # race the listener (or any other radio_session caller) the way
             # a bare parse_nodes_from_info() call used to: that helper runs
@@ -9514,6 +9516,20 @@ def api_radio_health():
                 packet_age=None, transport_state={},
             )
         )
+
+    # SIG4b: the radio is held by a command (traceroute, scan, send...) or the listener is still coming back
+    # from one: "Busy: <reason>", authoritative at once like a release (the worker only ticks every 30 s).
+    busy_reason = ""
+    if status["released"] is None and status["transport"] == "serial":
+        try:
+            busy_reason = listener_supervisor.busy_reason(bool(status.get("listener_running")))
+        except Exception:
+            busy_reason = ""
+    status["busy_reason"] = busy_reason
+    if busy_reason:
+        status["status"], status["level"] = "PAUSED", "WARNING"
+        status["status_reason"] = "Radio busy: " + busy_reason.replace("_", " ")
+        status["recommendation"] = "Wait until the radio command is completed"
 
     # Inbound receive counters (counts and states only - never message content).
     try:

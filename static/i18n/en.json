@@ -583,7 +583,8 @@
     "traceroute_reason_tcp": "Trace route needs a serial radio connection",
     "traceroute_reason_released": "The radio is released",
     "traceroute_reason_busy": "Another radio command is running",
-    "traceroute_reason_cooldown": "This node was traced a moment ago, try again in {seconds} s"
+    "traceroute_reason_cooldown": "This node was traced a moment ago, try again in {seconds} s",
+    "relay_probably": "probably: {name} ({hex})"
   },
   "camera": {
     "live_camera": "Live Camera",
@@ -910,7 +911,14 @@
     "connection_disconnected": "Disconnected",
     "edit_tcp_title": "Edit TCP connection",
     "edit_tcp_confirm": "Save and connect",
-    "tcp_port_invalid": "Enter a port from 1 to 65535."
+    "tcp_port_invalid": "Enter a port from 1 to 65535.",
+    "header_busy": "Busy",
+    "header_busy_reason": "Busy: {reason}",
+    "busy_reason_traceroute": "traceroute",
+    "busy_reason_request_telemetry": "telemetry request",
+    "busy_reason_request_position": "position request",
+    "busy_reason_node_scan": "node scan",
+    "busy_reason_radio_command": "radio command"
   },
   "system": {
     "container_mode_notice": "Running in a container. Host-level controls (Wi-Fi, network, reboot, shutdown, updates, hardware setup) are disabled. Uptime, load and RAM shown here are the host's; disk shows the data volume. To update, rebuild the image.",
@@ -1083,7 +1091,8 @@
     "security_logout_all_title": "Sign out everywhere?",
     "security_logout_all_confirm": "Every browser that is signed in to MeshCenter, including this one, has to sign in again, and open camera streams stop.",
     "security_logout_all_not_enabled": "Password protection is off, so there is nothing to sign out of.",
-    "security_logout_all_failed": "Could not sign out everywhere."
+    "security_logout_all_failed": "Could not sign out everywhere.",
+    "security_current_password_required": "Enter your current password first, then switch protection off."
   },
   "settings": {
     "title": "Settings",

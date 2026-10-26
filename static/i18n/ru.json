@@ -583,7 +583,8 @@
     "traceroute_reason_tcp": "Для трассировки нужно последовательное подключение радио",
     "traceroute_reason_released": "Радио освобождено",
     "traceroute_reason_busy": "Выполняется другая команда радио",
-    "traceroute_reason_cooldown": "Этот узел только что проверяли, повторите через {seconds} с"
+    "traceroute_reason_cooldown": "Этот узел только что проверяли, повторите через {seconds} с",
+    "relay_probably": "вероятно: {name} ({hex})"
   },
   "camera": {
     "live_camera": "Камера в реальном времени",
@@ -910,7 +911,14 @@
     "connection_disconnected": "Отключено",
     "edit_tcp_title": "Изменить TCP-подключение",
     "edit_tcp_confirm": "Сохранить и подключиться",
-    "tcp_port_invalid": "Введите порт от 1 до 65535."
+    "tcp_port_invalid": "Введите порт от 1 до 65535.",
+    "header_busy": "Занято",
+    "header_busy_reason": "Занято: {reason}",
+    "busy_reason_traceroute": "трассировка",
+    "busy_reason_request_telemetry": "запрос телеметрии",
+    "busy_reason_request_position": "запрос позиции",
+    "busy_reason_node_scan": "поиск узлов",
+    "busy_reason_radio_command": "команда радио"
   },
   "system": {
     "container_mode_notice": "Работает в контейнере. Функции уровня хоста (Wi-Fi, сеть, перезагрузка, выключение, обновления, настройка оборудования) отключены. Аптайм, нагрузка и ОЗУ - значения хоста; диск показывает том данных. Для обновления пересоберите образ.",
@@ -1083,7 +1091,8 @@
     "security_logout_all_title": "Выйти везде?",
     "security_logout_all_confirm": "Все браузеры, в которых выполнен вход в MeshCenter, включая этот, должны будут войти заново, а открытые потоки камеры остановятся.",
     "security_logout_all_not_enabled": "Защита паролем выключена, выходить не из чего.",
-    "security_logout_all_failed": "Не удалось выйти везде."
+    "security_logout_all_failed": "Не удалось выйти везде.",
+    "security_current_password_required": "Сначала введите текущий пароль, затем отключите защиту."
   },
   "settings": {
     "title": "Настройки",

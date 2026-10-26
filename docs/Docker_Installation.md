@@ -112,7 +112,7 @@ Build from a **release tag**, not from whatever `main` happens to be:
 ```bash
 git clone https://github.com/FlintUA/MeshCenter
 cd MeshCenter
-git checkout v1.13.3
+git checkout v1.13.4
 ```
 
 (`git checkout` of a tag prints a "detached HEAD" notice - that is fine.)
@@ -120,20 +120,20 @@ git checkout v1.13.3
 On Linux/macOS or Git Bash the helper script picks the version from the tag:
 
 ```bash
-deploy/docker/build.sh              # builds meshcenter:1.13.3
+deploy/docker/build.sh              # builds meshcenter:1.13.4
 ```
 
 On Windows without a POSIX shell (PowerShell / cmd) run the command it wraps:
 
 ```bash
-docker build --platform linux/amd64 --build-arg MESHCENTER_VERSION=1.13.3 -t meshcenter:1.13.3 .
+docker build --platform linux/amd64 --build-arg MESHCENTER_VERSION=1.13.4 -t meshcenter:1.13.4 .
 ```
 
 The version number you pass is what MeshCenter shows in its footer, so use a real
-version (`1.13.3`), never a name like `test`. From v1.13.0 on the image also carries
+version (`1.13.4`), never a name like `test`. From v1.13.0 on the image also carries
 OCI labels (`org.opencontainers.image.version`, `.revision` = the exact commit,
 `.source`, `.title`, `.licenses`), readable with
-`docker image inspect meshcenter:1.13.3 --format '{{json .Config.Labels}}'`;
+`docker image inspect meshcenter:1.13.4 --format '{{json .Config.Labels}}'`;
 `build.sh` fills the revision itself. With the plain `docker build` command add
 `--build-arg MESHCENTER_REVISION=$(git rev-parse HEAD)` (optional; it defaults to
 `unknown`). Images built from older versions have no labels: the tag and the footer
@@ -142,7 +142,7 @@ in the web UI are the source of truth.
 ### 3. Save the image and copy it to the NAS
 
 ```bash
-docker save meshcenter:1.13.3 -o meshcenter-1.13.3.tar
+docker save meshcenter:1.13.4 -o meshcenter-1.13.4.tar
 ```
 
 Use `-o` (not `> file`): in PowerShell, `>` re-encodes the stream and corrupts the
@@ -152,13 +152,13 @@ Copy it to the NAS with File Station (upload) or `scp`. Then import it, either:
 
 * **by SSH** (this is what the NAS acceptance used), as root:
   ```bash
-  sudo docker load -i /volume2/docker/meshcenter-1.13.3.tar
+  sudo docker load -i /volume2/docker/meshcenter-1.13.4.tar
   ```
 * **or in Container Manager**: *Image → Add → Add from file* and pick the `.tar`.
   Use the plain `.tar` that `docker save` wrote; it has not been verified which
   other extensions the GUI accepts, so do not gzip it for the GUI.
 
-Either way the image `meshcenter:1.13.3` should now be listed under *Image*.
+Either way the image `meshcenter:1.13.4` should now be listed under *Image*.
 
 ### 4. Create the folders and give the container the right owner
 
@@ -188,7 +188,7 @@ name: meshcenter
 services:
   meshcenter:
     container_name: meshcenter
-    image: meshcenter:1.13.3
+    image: meshcenter:1.13.4
     user: "1026:100"                 # the owner of ./config and ./data
     restart: unless-stopped
     ports:
@@ -196,7 +196,7 @@ services:
     environment:
       TZ: Europe/Berlin              # your IANA time zone
       MESHCENTER_TRUST_HOST_CLOCK: "1"   # DSM keeps the NAS clock synchronized
-      MESHCENTER_VERSION: "1.13.3"
+      MESHCENTER_VERSION: "1.13.4"
     volumes:
       - ./config:/config
       - ./data:/data
@@ -306,11 +306,11 @@ Docker commands on DSM need root: run `sudo -i` once after logging in over SSH
    The container never changes ownership itself; if it cannot write it stops
    with a clear message.
 3. Put the repository in `src/` (`git clone https://github.com/FlintUA/MeshCenter src`,
-   then `git -C src checkout v1.13.3`), and copy `src/deploy/docker/compose.yaml`
+   then `git -C src checkout v1.13.4`), and copy `src/deploy/docker/compose.yaml`
    and `src/deploy/docker/.env.example` (as `.env`) next to it. In `compose.yaml`
    set `build.context: ./src`.
 4. Edit `.env`: `PUID`/`PGID` from step 2, `TZ`, `MESHCENTER_VERSION`
-   (e.g. `1.13.3`, the output of `git -C src describe --tags` without the `v`).
+   (e.g. `1.13.4`, the output of `git -C src describe --tags` without the `v`).
 5. Build and start (SSH, in `/volume2/docker/meshcenter`):
    ```bash
    sudo docker compose build

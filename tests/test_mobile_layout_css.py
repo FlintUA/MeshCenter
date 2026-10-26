@@ -135,3 +135,29 @@ def test_mob2c_back_button_is_in_the_template_hidden_by_default():
     assert 'id="chatBackBtn" hidden' in html
     assert html.index('id="chatBackBtn"') < html.index('class="chat-header-info"'), "Back comes first in the header"
 
+
+def test_mob2e_controls_and_text_on_system_settings_about():
+    """MOB2-E (phone only, inside the media query): 44 px targets, 16 px inputs (iOS zooms the page on focus
+    below 16 px), 11 px minimum for the small texts, the Settings select no longer sticks out of the screen."""
+    block = _block()
+    assert "MOB2-E" in block
+    assert "min-height: 44px" in _rule(block, "    .btn.btn-xs,")
+    fields = _rule(block, "    .settings-select,")
+    assert "min-height: 44px" in fields and "font-size: 16px" in fields and "max-width: 100%" in fields
+    assert "width: 24px" in _rule(block, "    .switch input[type=\"checkbox\"],")
+    assert "min-height: 44px" in _rule(block, "    .about-tab {")
+    assert "font-size: 11px" in _rule(block, "    .radio-history-time,")
+
+
+def test_mob2e_every_rule_is_inside_the_narrow_media_query():
+    text = CSS.read_text(encoding="utf-8")
+    assert text.index("MOB2-E") > text.index(MARKER)
+
+
+def test_mob2e_phone_status_block_is_in_the_workspace_sheet_and_hidden_by_default():
+    html = (Path(__file__).resolve().parent.parent / "templates" / "index.html").read_text(encoding="utf-8")
+    assert 'id="workspacePhoneStatus"' in html
+    for key in ("Version", "Cpu", "Ram", "Temp", "Uptime"):
+        assert f'id="phoneStatus{key}"' in html
+    css = CSS.read_text(encoding="utf-8").replace("\r\n", "\n")
+    assert ".workspace-phone-status {\n    display: none;" in css, "hidden unless the phone media query shows it"

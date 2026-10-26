@@ -120,9 +120,44 @@
         if (typeof window.closeNotificationCenter === 'function') window.closeNotificationCenter();
     }
 
+    // MOB2-E: version, CPU, RAM, temperature and uptime for the phone, copied from the (hidden) dock elements
+    var PHONE_STATUS = [
+        ['phoneStatusCpu', 'dockCpuMetric'],
+        ['phoneStatusRam', 'dockRamMetric'],
+        ['phoneStatusTemp', 'dockTempMetric'],
+        ['phoneStatusUptime', 'baseUptimeBadge'],
+    ];
+
+    function syncPhoneStatus() {
+        if (!isMobile()) return;
+        PHONE_STATUS.forEach(function (pair) {
+            var target = document.getElementById(pair[0]);
+            var source = document.getElementById(pair[1]);
+            var text = source && source.textContent ? String(source.textContent).trim() : '';
+            // the row already has the label: "CPU 12%" -> "12%", "Uptime 71d" -> "71d"
+            text = text.replace(/^(CPU|RAM|TEMP|Uptime)\s*/i, '');
+            if (target) target.textContent = text || '--';
+        });
+        var version = document.getElementById('phoneStatusVersion');
+        var brand = typeof document.querySelector === 'function' ? document.querySelector('.dock-brand-name') : null;
+        var brandText = brand && brand.textContent ? String(brand.textContent).replace(/\s+/g, ' ').trim() : '';
+        brandText = brandText.replace(/^MeshCenter\s*/i, '');
+        if (version) version.textContent = brandText || '--';
+    }
+
+    var phoneStatusTimer = null;
+
     function syncSheetState() {
         var open = isMobile() && sheetOpen();
         if (document.body && document.body.classList) document.body.classList.toggle('mc-sheet-open', open);
+        var workspace = document.getElementById('workspacePopover');
+        if (open && workspace && !workspace.hidden) {
+            syncPhoneStatus();
+            if (!phoneStatusTimer && typeof setInterval === 'function') phoneStatusTimer = setInterval(syncPhoneStatus, 5000);
+        } else if (phoneStatusTimer && typeof clearInterval === 'function') {
+            clearInterval(phoneStatusTimer);
+            phoneStatusTimer = null;
+        }
     }
 
     function initSheets() {
@@ -240,5 +275,5 @@
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
     else init();
 
-    window.MCMobileLayout = { closeSheets: closeSheets, syncSheetState: syncSheetState, updateTabsCue: updateTabsCue, nextPane: nextPane, isMobile: isMobile, setPane: setPane, getPane: function () { return pane; }, getChatPage: function () { return chatPage; }, setChatPage: setChatPage, _wrapShowChatList: wrapShowChatList, QUERY: QUERY, _wrapOpenChat: wrapOpenChat };
+    window.MCMobileLayout = { closeSheets: closeSheets, syncSheetState: syncSheetState, syncPhoneStatus: syncPhoneStatus, updateTabsCue: updateTabsCue, nextPane: nextPane, isMobile: isMobile, setPane: setPane, getPane: function () { return pane; }, getChatPage: function () { return chatPage; }, setChatPage: setChatPage, _wrapShowChatList: wrapShowChatList, QUERY: QUERY, _wrapOpenChat: wrapOpenChat };
 })();

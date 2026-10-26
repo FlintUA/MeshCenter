@@ -5445,6 +5445,11 @@ video.camera-stream {
     color: var(--mc-danger, #b91c1c);
 }
 
+/* the phone-only status block of the Workspace sheet (version, CPU, RAM, temperature, uptime) */
+.workspace-phone-status {
+    display: none;
+}
+
 /* ============================================================
    MOB1: one screen at a time on a narrow viewport (<= 768 px)
    Everything here is inside the media query, so a wide viewport is untouched.
@@ -6052,5 +6057,118 @@ video.camera-stream {
         right: -4px;
         opacity: 0.7;
         font-size: 22px;
+    }
+
+    /* ======================================================================
+       MOB2-E: System, Settings and About on a phone: 44 px targets, 16 px fields (iOS zooms the page on focus
+       below 16 px), 11 px minimum for small texts, the Settings select inside the screen, and a Status block in the
+       Workspace sheet for what the phone dock no longer shows (version, CPU, RAM, temperature, uptime).
+       ====================================================================== */
+    .btn.btn-xs,
+    .btn.btn-sm,
+    .mc-refresh-btn,
+    .system-refresh-btn,
+    .wifi-toggle-btn,
+    .wifi-scan-action,
+    .updates-changelog-toggle,
+    .radio-history-toggle,
+    .workspace-page-close-btn {
+        min-height: 44px;
+    }
+
+    .workspace-page-close-btn,
+    .btn-icon {
+        min-width: 44px;
+    }
+
+    .system-card button,
+    .settings-card button,
+    .map-settings-card button,
+    .reference-location-card button,
+    .mc-refresh-btn,
+    .system-refresh-btn,
+    .cpu-range-btn {
+        min-height: 44px;
+        height: auto;
+    }
+
+    .cpu-range-btn {
+        min-width: 44px;
+        font-size: 11px;
+    }
+
+    /* the page-header Refresh buttons are fixed at 36 px by their own rule */
+    .mc-refresh-btn,
+    .system-refresh-btn {
+        min-height: 44px !important;
+        height: auto !important;
+    }
+
+    .settings-select,
+    .settings-number-input,
+    select,
+    input[type="text"],
+    input[type="password"],
+    input[type="number"],
+    input[type="search"] {
+        min-height: 44px;
+        font-size: 16px;
+        max-width: 100%;
+        box-sizing: border-box;
+    }
+
+    /* the toggles are plain checkboxes inside a label: the label is the 44 px target, the box 24 px */
+    .switch {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 44px;
+        min-height: 44px;
+    }
+
+    .switch input[type="checkbox"],
+    .system-row input[type="checkbox"],
+    .settings-option input[type="checkbox"] {
+        width: 24px;
+        height: 24px;
+    }
+
+    .system-row,
+    .settings-option {
+        min-height: 44px;
+    }
+
+    .about-tab {
+        min-height: 44px;
+    }
+
+    .about-section a,
+    .about-card a {
+        display: inline-flex;
+        align-items: center;
+        min-height: 44px;
+    }
+
+    .about-footer span,
+    .settings-experimental-badge,
+    .about-card-kicker,
+    .radio-history-time,
+    .radio-history-source,
+    .weather-state-badge,
+    .reference-location-status {
+        font-size: 11px;
+    }
+
+    .workspace-popover .workspace-phone-status {
+        display: block;
+        order: -1;
+    }
+
+    .workspace-phone-status .workspace-phone-status-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 6px 0;
+        font-size: 13px;
     }
 }

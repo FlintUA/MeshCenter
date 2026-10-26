@@ -1769,7 +1769,11 @@
     "panel_show_nodes": "Показати панель вузлів",
     "mobile_open_base": "Відкрити сторінку Base",
     "mobile_open_nodes": "Відкрити сторінку вузлів",
-    "mobile_back": "Назад до робочої області"
+    "mobile_back": "Назад до робочої області",
+    "phone_status_title": "Стан",
+    "phone_status_version": "Версія",
+    "phone_status_temp": "Температура",
+    "phone_status_uptime": "Час роботи"
   },
   "ipcamera": {
     "title": "Мережеві камери",

@@ -5674,10 +5674,22 @@ function renderNodeFilterControls() {
     }
 }
 
+// MOB2-F: on a phone the popover is as high as the space between its top edge and the dock (a 320x568 screen is
+// shorter than the whole list of options); it scrolls inside. A wide viewport keeps its natural height.
+function fitNodeFiltersPopover(popover) {
+    if (!window.MCMobileLayout || !window.MCMobileLayout.isMobile()) {
+        popover.style.maxHeight = '';
+        return;
+    }
+    const space = window.innerHeight - popover.getBoundingClientRect().top - 64;
+    popover.style.maxHeight = `${Math.max(160, Math.floor(space))}px`;
+}
+
 function setNodeFiltersPopoverOpen(open) {
     const popover = document.getElementById('nodeFiltersPopover');
     if (!popover) return;
     popover.hidden = !open;
+    if (open) fitNodeFiltersPopover(popover);
     renderNodeFilterControls();
 }
 

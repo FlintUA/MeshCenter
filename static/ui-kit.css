@@ -5450,6 +5450,53 @@ video.camera-stream {
     display: none;
 }
 
+/* The Environment / Power chart tiles (Base page) kept their light category colours in the dark theme.
+   Dark surface, the category colour stays as the border and the value colour. */
+html[data-theme="dark"] .telemetry-btn {
+    background: var(--mc-chat-surface-raised);
+    border-color: var(--mc-border-soft);
+}
+
+html[data-theme="dark"] .telemetry-btn .telemetry-label {
+    color: var(--mc-chat-text);
+}
+
+html[data-theme="dark"] .telemetry-btn .telemetry-update {
+    color: var(--mc-chat-muted);
+}
+
+html[data-theme="dark"] .telemetry-btn .telemetry-value {
+    color: var(--mc-chat-text);
+}
+
+html[data-theme="dark"] .telemetry-btn.environment {
+    background: rgba(138, 180, 216, 0.12);
+    border-color: rgba(138, 180, 216, 0.55);
+}
+
+html[data-theme="dark"] .telemetry-btn.environment:hover {
+    background: rgba(138, 180, 216, 0.22);
+    border-color: #8ab4d8;
+}
+
+html[data-theme="dark"] .telemetry-btn.environment .telemetry-value {
+    color: #9fd3f2;
+}
+
+html[data-theme="dark"] .telemetry-btn.power {
+    background: rgba(212, 184, 90, 0.12);
+    border-color: rgba(212, 184, 90, 0.55);
+}
+
+html[data-theme="dark"] .telemetry-btn.power:hover {
+    background: rgba(212, 184, 90, 0.22);
+    border-color: #d4b85a;
+}
+
+html[data-theme="dark"] .telemetry-btn.power .telemetry-value {
+    color: #e8cd72;
+}
+
 /* ============================================================
    MOB1: one screen at a time on a narrow viewport (<= 768 px)
    Everything here is inside the media query, so a wide viewport is untouched.
@@ -6265,10 +6312,62 @@ video.camera-stream {
         cursor: pointer;
     }
 
-    /* the Environment / Power chart tiles stayed light in the dark theme */
-    html[data-theme="dark"] .telemetry-btn {
-        background: var(--mc-chat-surface-raised);
-        color: var(--mc-chat-text);
-        border-color: var(--mc-border-soft);
+    /* ======================================================================
+       MOB2-F: the Nodes pane header on a phone: the search field, the clear button and the gear have gaps and
+       44 px targets (the 36 px grid columns made the 44 px buttons overlap), and the Sort and filters popover opens
+       BELOW the row (the gear stays visible and toggles it), scrolls inside when the screen is short (chat.js sets
+       its max-height from the space left above the dock) and has 44 px rows.
+       ====================================================================== */
+    .search-container.search-row {
+        grid-template-columns: minmax(0, 1fr) 44px 44px;
+        gap: 8px;
+        align-items: center;
+    }
+
+    .node-filters-btn,
+    .clear-search-btn {
+        width: 44px;
+        height: 44px;
+    }
+
+    .node-filters-popover {
+        top: 52px;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: auto;
+        /* a shadow at the edge that still has more to scroll to */
+        background:
+            linear-gradient(var(--mc-popover-bg, var(--mc-surface, #fff)) 30%, rgba(255, 255, 255, 0)) top / 100% 36px no-repeat local,
+            linear-gradient(rgba(255, 255, 255, 0), var(--mc-popover-bg, var(--mc-surface, #fff)) 70%) bottom / 100% 36px no-repeat local,
+            radial-gradient(farthest-side at 50% 0, rgba(0, 0, 0, 0.35), rgba(0, 0, 0, 0)) top / 100% 10px no-repeat scroll,
+            radial-gradient(farthest-side at 50% 100%, rgba(0, 0, 0, 0.35), rgba(0, 0, 0, 0)) bottom / 100% 10px no-repeat scroll,
+            var(--mc-popover-bg, var(--mc-surface, #fff));
+    }
+
+    .node-filters-popover::-webkit-scrollbar {
+        width: 8px;
+    }
+
+    .node-filters-popover::-webkit-scrollbar-thumb {
+        background: rgba(120, 140, 165, 0.7);
+        border-radius: 4px;
+    }
+
+    .node-filters-group label {
+        min-height: 44px;
+        font-size: 14px;
+    }
+
+    .node-filters-group input[type="radio"],
+    .node-filters-group input[type="checkbox"] {
+        width: 22px;
+        height: 22px;
+    }
+
+    .node-filters-reset {
+        min-height: 44px;
+        padding: 0 16px;
+        font-size: 14px;
     }
 }

@@ -6184,7 +6184,8 @@ video.camera-stream {
     #nodeFiltersBtn,
     #rescanNodesBtn,
     .channel-card,
-    .node-map-badge,
+    .node-detail-toolbar-btn,
+    .node-detail-tab,
     .node-card-message-btn,
     .device-action-btn,
     #nodeManagerChangeImageBtn,
@@ -6205,14 +6206,42 @@ video.camera-stream {
 
     .node-last-seen,
     .node-map-bearing,
+    .node-map-distance,
     .node-manager-active-label,
     .node-manager-change-image-btn,
     .telemetry-label,
     .telemetry-update,
+    .telemetry-status,
     .sensor-update,
+    .time-clock-source,
+    .time-section-label,
+    .weather-location-coordinates,
+    .weather-forecast-title,
+    .weather-forecast-placeholder,
     .weather-forecast-date,
     .weather-state-badge {
-        font-size: 11px;
+        font-size: 11px !important;
+    }
+
+    /* small pills stay small to the eye; their tap area is 44 px high (a transparent extension) */
+    .node-map-badge,
+    .node-card-key-btn,
+    .node-inline-id,
+    #weatherStateBadge {
+        position: relative;
+    }
+
+    .node-map-badge::after,
+    .node-card-key-btn::after,
+    .node-inline-id::after,
+    #weatherStateBadge::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 50%;
+        height: 44px;
+        transform: translateY(-50%);
     }
 
     .weatherProviderLink,

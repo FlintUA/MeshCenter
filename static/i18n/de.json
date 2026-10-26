@@ -1769,7 +1769,11 @@
     "panel_show_nodes": "Nodes-Bereich einblenden",
     "mobile_open_base": "Base-Seite öffnen",
     "mobile_open_nodes": "Nodes-Seite öffnen",
-    "mobile_back": "Zurück zum Arbeitsbereich"
+    "mobile_back": "Zurück zum Arbeitsbereich",
+    "phone_status_title": "Status",
+    "phone_status_version": "Version",
+    "phone_status_temp": "Temperatur",
+    "phone_status_uptime": "Laufzeit"
   },
   "ipcamera": {
     "title": "Netzwerkkameras",

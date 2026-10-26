@@ -16,6 +16,8 @@
     var QUERY = '(max-width: 768px)';
     var BUTTON_PANES = { toggleBaseSidebarBtn: 'base', toggleSidebarBtn: 'nodes' };
     var pane = 'workspace';
+    // MOB2-C: on a phone Chats is two pages: the list of conversations or one conversation
+    var chatPage = 'list';
     var mq = typeof window.matchMedia === 'function' ? window.matchMedia(QUERY) : null;
 
     function isMobile() {
@@ -61,12 +63,28 @@
         });
     }
 
+    function syncChatPage() {
+        var body = document.body;
+        if (!body) return;
+        var phone = isMobile();
+        if (phone) body.setAttribute('data-mobile-chat', chatPage);
+        else body.removeAttribute('data-mobile-chat');
+        var back = typeof document.getElementById === 'function' ? document.getElementById('chatBackBtn') : null;
+        if (back) back.hidden = !(phone && chatPage === 'conversation');
+    }
+
+    function setChatPage(next) {
+        chatPage = next === 'conversation' ? 'conversation' : 'list';
+        syncChatPage();
+    }
+
     function apply() {
         var body = document.body;
         if (!body) return;
         if (isMobile()) body.setAttribute('data-mobile-pane', pane);
         else body.removeAttribute('data-mobile-pane');
         syncButtons();
+        syncChatPage();
     }
 
     function setPane(next) {
@@ -140,6 +158,11 @@
     document.addEventListener('click', function (event) {
         var target = event.target && event.target.closest ? event.target.closest('button') : null;
         if (!target) return;
+        if (target.id === 'chatBackBtn') {
+            // MOB2-C: Back from a conversation to the list of conversations
+            if (typeof window.showChatList === 'function') window.showChatList();
+            return;
+        }
         if (BUTTON_PANES[target.id] && isMobile()) {
             // capture phase: the desktop handler (hide/show a column) must not run on a phone
             event.preventDefault();
@@ -162,10 +185,24 @@
         var wrapped = function () {
             var result = original.apply(this, arguments);
             if (isMobile() && pane !== 'workspace') setPane('workspace');
+            setChatPage('conversation');
             return result;
         };
         wrapped.mobileWrapped = true;
         window.openChat = wrapped;
+    }
+
+    // MOB2-C: showing the list again (Back, a deleted chat) returns to the list page
+    function wrapShowChatList() {
+        if (typeof window.showChatList !== 'function' || window.showChatList.mobileWrapped) return;
+        var original = window.showChatList;
+        var wrapped = function () {
+            var result = original.apply(this, arguments);
+            setChatPage('list');
+            return result;
+        };
+        wrapped.mobileWrapped = true;
+        window.showChatList = wrapped;
     }
 
     if (mq) {
@@ -198,9 +235,10 @@
         // Workspace.apply() (desktop button state) runs after load: set ours again once it has
         window.addEventListener('load', function () { apply(); revealActiveTab(); updateTabsCue(); });
         wrapOpenChat();
+        wrapShowChatList();
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
     else init();
 
-    window.MCMobileLayout = { closeSheets: closeSheets, syncSheetState: syncSheetState, updateTabsCue: updateTabsCue, nextPane: nextPane, isMobile: isMobile, setPane: setPane, getPane: function () { return pane; }, QUERY: QUERY, _wrapOpenChat: wrapOpenChat };
+    window.MCMobileLayout = { closeSheets: closeSheets, syncSheetState: syncSheetState, updateTabsCue: updateTabsCue, nextPane: nextPane, isMobile: isMobile, setPane: setPane, getPane: function () { return pane; }, getChatPage: function () { return chatPage; }, setChatPage: setChatPage, _wrapShowChatList: wrapShowChatList, QUERY: QUERY, _wrapOpenChat: wrapOpenChat };
 })();

@@ -584,7 +584,8 @@
     "traceroute_reason_released": "Радіо звільнено",
     "traceroute_reason_busy": "Виконується інша команда радіо",
     "traceroute_reason_cooldown": "Цей вузол щойно перевіряли, повторіть через {seconds} с",
-    "relay_probably": "імовірно: {name} ({hex})"
+    "relay_probably": "імовірно: {name} ({hex})",
+    "back_to_chats": "Назад до чатів"
   },
   "camera": {
     "live_camera": "Камера в реальному часі",

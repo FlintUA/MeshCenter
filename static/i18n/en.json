@@ -584,7 +584,8 @@
     "traceroute_reason_released": "The radio is released",
     "traceroute_reason_busy": "Another radio command is running",
     "traceroute_reason_cooldown": "This node was traced a moment ago, try again in {seconds} s",
-    "relay_probably": "probably: {name} ({hex})"
+    "relay_probably": "probably: {name} ({hex})",
+    "back_to_chats": "Back to chats"
   },
   "camera": {
     "live_camera": "Live Camera",

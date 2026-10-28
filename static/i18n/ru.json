@@ -433,7 +433,10 @@
     "tab_help": "Справка",
     "tab_license": "Лицензия",
     "tab_links": "Ссылки",
-    "tab_changelog": "История изменений"
+    "tab_changelog": "История изменений",
+    "telegram_quicklink_label": "Telegram",
+    "telegram_resource_kicker": "Официальный канал",
+    "telegram_resource_description": "Анонсы релизов, обновления и обсуждения"
   },
   "node_panel": {
     "node_telemetry": "Телеметрия узла",

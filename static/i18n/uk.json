@@ -433,7 +433,10 @@
     "tab_help": "Довідка",
     "tab_license": "Ліцензія",
     "tab_links": "Посилання",
-    "tab_changelog": "Історія змін"
+    "tab_changelog": "Історія змін",
+    "telegram_quicklink_label": "Telegram",
+    "telegram_resource_kicker": "Офіційний канал",
+    "telegram_resource_description": "Анонси релізів, оновлення та обговорення"
   },
   "node_panel": {
     "node_telemetry": "Телеметрія вузла",

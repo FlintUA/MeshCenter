@@ -433,7 +433,10 @@
     "tab_help": "Help",
     "tab_license": "License",
     "tab_links": "Links",
-    "tab_changelog": "Changelog"
+    "tab_changelog": "Changelog",
+    "telegram_quicklink_label": "Telegram",
+    "telegram_resource_kicker": "Official channel",
+    "telegram_resource_description": "Release announcements, updates and discussion"
   },
   "node_panel": {
     "node_telemetry": "Node telemetry",

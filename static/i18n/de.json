@@ -433,7 +433,10 @@
     "tab_help": "Hilfe",
     "tab_license": "Lizenz",
     "tab_links": "Links",
-    "tab_changelog": "Änderungsprotokoll"
+    "tab_changelog": "Änderungsprotokoll",
+    "telegram_quicklink_label": "Telegram",
+    "telegram_resource_kicker": "Offizieller Kanal",
+    "telegram_resource_description": "Release-Ankündigungen, Updates und Diskussionen"
   },
   "node_panel": {
     "node_telemetry": "Knoten-Telemetrie",

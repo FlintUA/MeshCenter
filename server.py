@@ -7205,6 +7205,7 @@ register_weather_routes(
         os.environ.get(runtime_env.CONFIG_DIR_ENV, "").strip() or os.path.dirname(os.path.abspath(__file__)),
         "weather_secrets.py",
     ),
+    handle_errors=handle_errors,
 )
 
 register_node_tools_routes(

@@ -99,12 +99,17 @@ def register_weather_routes(
     weather_manager,
     resolve_location=None,
     secrets_path=None,
+    handle_errors=None,
 ):
+    if handle_errors is None:
+        handle_errors = lambda f: f
+
     def resolved_location():
         location = resolve_location() if callable(resolve_location) else None
         return location if isinstance(location, dict) else {}
 
     @app.get("/api/weather/current")
+    @handle_errors
     def api_weather_current():
         force = request.args.get("refresh", "").lower() in {"1", "true", "yes"}
         location = resolved_location()
@@ -125,6 +130,7 @@ def register_weather_routes(
         return jsonify(payload), 200 if payload.get("ok") else 503
 
     @app.get("/api/weather/config")
+    @handle_errors
     def api_weather_config_status():
         return jsonify({
             "ok": True,
@@ -133,6 +139,7 @@ def register_weather_routes(
         })
 
     @app.post("/api/weather/config")
+    @handle_errors
     def api_weather_save_key():
         data = request.get_json(silent=True) or {}
         api_key = _normalize_api_key(data.get("api_key"))

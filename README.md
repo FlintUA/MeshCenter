@@ -26,6 +26,7 @@ A complete browser-based control center for Meshtastic® base stations running o
   <img src="https://img.shields.io/badge/Docker-x86--64%20%7C%20TCP%20radio-2496ED" alt="Docker">
   <img src="https://img.shields.io/badge/Meshtastic-Compatible-success" alt="Meshtastic">
   <img src="https://img.shields.io/badge/Status-Active%20Development-brightgreen" alt="Status">
+  <a href="https://t.me/meshcenter_official"><img src="https://img.shields.io/badge/Telegram-MeshCenter-26A5E4?logo=telegram&logoColor=white" alt="Telegram"></a>
 </p>
 
 ---
@@ -347,6 +348,22 @@ Please include: Raspberry Pi model and OS version (for Docker: host or NAS model
 
 Special thanks to the Meshtastic Team, the Raspberry Pi Foundation, the open-source community, and everyone who tests MeshCenter and shares feedback.
 
+## Community & Updates
+
+📢 **Official Telegram Channel**
+
+[MeshCenter News & Updates](https://t.me/meshcenter_official)
+
+Follow official announcements, releases and development news.
+
+💬 **MeshCenter Community**
+
+[Join the Community Chat](https://t.me/meshcenter_community)
+
+Ask questions, discuss features, report problems and share your experience.
+
+🌍 Community languages: English, German, Ukrainian and Russian.
+
 ## Support
 
 If you enjoy the project: ⭐ star the repository, report bugs, suggest features, or share it with other Meshtastic users.
@@ -357,6 +374,8 @@ If you enjoy the project: ⭐ star the repository, report bugs, suggest features
 
 - Live Demo: https://meshcenter.elektroniker.help/preview/
 - Information Center: https://meshcenter.elektroniker.help/
+- Telegram channel: [https://t.me/meshcenter_official](https://t.me/meshcenter_official)
+- Community chat: [https://t.me/meshcenter_community](https://t.me/meshcenter_community)
 - GitHub: [https://github.com/FlintUA](https://github.com/FlintUA)
 - Project repository: [https://github.com/FlintUA/MeshCenter](https://github.com/FlintUA/MeshCenter)
 - Website: [https://elektroniker.help](https://elektroniker.help) - additional articles and projects on Meshtastic, Raspberry Pi, embedded systems, electronics and 3D printing

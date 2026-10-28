@@ -433,7 +433,11 @@
     "tab_help": "Hilfe",
     "tab_license": "Lizenz",
     "tab_links": "Links",
-    "tab_changelog": "Änderungsprotokoll"
+    "tab_changelog": "Änderungsprotokoll",
+    "telegram_channel_title": "Telegram-Kanal",
+    "telegram_channel_description": "Offizielle Neuigkeiten, Releases und Entwicklungs-Updates",
+    "telegram_community_title": "Community-Chat",
+    "telegram_community_description": "Stelle Fragen, teile Ideen und diskutiere mit anderen MeshCenter-Nutzern"
   },
   "node_panel": {
     "node_telemetry": "Knoten-Telemetrie",

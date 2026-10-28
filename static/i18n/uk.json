@@ -433,7 +433,11 @@
     "tab_help": "Довідка",
     "tab_license": "Ліцензія",
     "tab_links": "Посилання",
-    "tab_changelog": "Історія змін"
+    "tab_changelog": "Історія змін",
+    "telegram_channel_title": "Telegram-канал",
+    "telegram_channel_description": "Офіційні новини, релізи та оновлення розробки",
+    "telegram_community_title": "Спільнота MeshCenter",
+    "telegram_community_description": "Ставте запитання, діліться ідеями та обговорюйте MeshCenter з іншими користувачами"
   },
   "node_panel": {
     "node_telemetry": "Телеметрія вузла",

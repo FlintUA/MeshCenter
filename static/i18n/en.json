@@ -434,9 +434,10 @@
     "tab_license": "License",
     "tab_links": "Links",
     "tab_changelog": "Changelog",
-    "telegram_quicklink_label": "Telegram",
-    "telegram_resource_kicker": "Official channel",
-    "telegram_resource_description": "Release announcements, updates and discussion"
+    "telegram_channel_title": "Telegram Channel",
+    "telegram_channel_description": "Official news, releases and development updates",
+    "telegram_community_title": "Community Chat",
+    "telegram_community_description": "Ask questions, share ideas and discuss MeshCenter with other users"
   },
   "node_panel": {
     "node_telemetry": "Node telemetry",

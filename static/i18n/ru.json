@@ -434,9 +434,10 @@
     "tab_license": "Лицензия",
     "tab_links": "Ссылки",
     "tab_changelog": "История изменений",
-    "telegram_quicklink_label": "Telegram",
-    "telegram_resource_kicker": "Официальный канал",
-    "telegram_resource_description": "Анонсы релизов, обновления и обсуждения"
+    "telegram_channel_title": "Telegram-канал",
+    "telegram_channel_description": "Официальные новости, релизы и обновления о разработке",
+    "telegram_community_title": "Сообщество MeshCenter",
+    "telegram_community_description": "Задавайте вопросы, делитесь идеями и обсуждайте MeshCenter с другими пользователями"
   },
   "node_panel": {
     "node_telemetry": "Телеметрия узла",

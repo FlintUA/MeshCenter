@@ -348,11 +348,21 @@ Please include: Raspberry Pi model and OS version (for Docker: host or NAS model
 
 Special thanks to the Meshtastic Team, the Raspberry Pi Foundation, the open-source community, and everyone who tests MeshCenter and shares feedback.
 
-## 📢 Community & Updates
+## Community & Updates
 
-Official Telegram channel: [t.me/meshcenter_official](https://t.me/meshcenter_official)
+📢 **Official Telegram Channel**
 
-Follow it for release announcements, development updates and new features. You can also ask questions and discuss MeshCenter there.
+[MeshCenter News & Updates](https://t.me/meshcenter_official)
+
+Follow official announcements, releases and development news.
+
+💬 **MeshCenter Community**
+
+[Join the Community Chat](https://t.me/meshcenter_community)
+
+Ask questions, discuss features, report problems and share your experience.
+
+🌍 Community languages: English, German, Ukrainian and Russian.
 
 ## Support
 
@@ -365,6 +375,7 @@ If you enjoy the project: ⭐ star the repository, report bugs, suggest features
 - Live Demo: https://meshcenter.elektroniker.help/preview/
 - Information Center: https://meshcenter.elektroniker.help/
 - Telegram channel: [https://t.me/meshcenter_official](https://t.me/meshcenter_official)
+- Community chat: [https://t.me/meshcenter_community](https://t.me/meshcenter_community)
 - GitHub: [https://github.com/FlintUA](https://github.com/FlintUA)
 - Project repository: [https://github.com/FlintUA/MeshCenter](https://github.com/FlintUA/MeshCenter)
 - Website: [https://elektroniker.help](https://elektroniker.help) - additional articles and projects on Meshtastic, Raspberry Pi, embedded systems, electronics and 3D printing

@@ -414,11 +414,16 @@
     "upload_not_ready": "Загрузка: не готова",
     "err_ttl_custom": "Введите целое положительное число секунд для настраиваемого срока действия",
     "request_key_again": "Запросить ключ ещё раз",
+    "key_request_retry_status": "Ожидание ответа - попытка {attempt} из {max}, следующая через {minutes} мин",
+    "cancel_key_request": "Остановить запросы",
+    "cancelling_key_request": "Остановка запросов ключа…",
+    "key_request_cancelled": "Запросы ключа остановлены",
     "key_request_state": {
       "idle": "Ключ неизвестен",
       "queued": "Запрос ключа отправлен",
       "waiting_response": "Ожидание ответа",
-      "retry_available": "Повтор доступен"
+      "retry_available": "Повтор доступен",
+      "no_answer": "Нет ответа"
     },
     "unavailable": {
       "local_node": "Это ваш собственный узел",

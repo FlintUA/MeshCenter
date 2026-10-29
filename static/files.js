@@ -162,6 +162,7 @@
         queued: 'Key request sent',
         waiting_response: 'Waiting for response',
         retry_available: 'Retry available',
+        no_answer: 'No answer',
     };
 
     var FILES_UNAVAILABLE_REASON_LABELS = {
@@ -1728,6 +1729,13 @@
         // store's toggleSelect, driven by the node-card select button.
         if (contactId) {
             if (action === 'contact-request-key') { contactRequestKey(contactId); return; }
+            if (action === 'contact-cancel-key') {
+                contactCommand(contactId, 'cancel-key-request', {
+                    queued: t('files.cancelling_key_request', 'Stopping key requests…'),
+                    success: t('files.key_request_cancelled', 'Key requests stopped'),
+                });
+                return;
+            }
             if (action === 'contact-confirm') { contactConfirm(contactId); return; }
             if (action === 'contact-accept') { contactAcceptKeyChange(contactId); return; }
             if (action === 'contact-reject') { contactRejectKeyChange(contactId); return; }

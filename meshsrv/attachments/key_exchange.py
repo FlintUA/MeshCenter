@@ -46,7 +46,7 @@ import sqlite3
 import time
 from typing import Optional
 
-from meshsrv.attachments import codec
+from meshsrv.attachments import codec, key_request_retry
 from meshsrv.attachments.delivery.base import DeliveryEnvelope, RouteType
 from meshsrv.attachments.identity import MCAPrincipal, compute_key_id, load_signing_key
 from meshsrv.attachments.workspace import MCAWorkspaceManager
@@ -600,6 +600,47 @@ class KeyExchangeCoordinator:
             (self._principal.workspace_id, self._adapter_id),
         ).fetchall()
         return {row["source_address"]: row["last_request_sent_at"] for row in rows}
+
+    # ---- KEY_REQUEST retry series (see key_request_retry.py) ---------------
+
+    def _upsert_series(self, source_address: str, attempts: int, next_retry_at: Optional[float]) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO mca_key_exchange_contact_state
+                (workspace_id, adapter_id, source_address, key_request_attempts, key_request_next_retry_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(workspace_id, adapter_id, source_address)
+            DO UPDATE SET key_request_attempts = excluded.key_request_attempts,
+                          key_request_next_retry_at = excluded.key_request_next_retry_at
+            """,
+            (self._principal.workspace_id, self._adapter_id, source_address, int(attempts), next_retry_at),
+        )
+        self._conn.commit()
+
+    def start_key_request_series(self, source_address: str, now: float) -> None:
+        """The user's own KEY_REQUEST was just sent: attempt 1 of a new retry series (replaces a finished or
+        cancelled one)."""
+        attempts, next_retry_at = key_request_retry.first_attempt(now)
+        self._upsert_series(source_address, attempts, next_retry_at)
+
+    def advance_key_request_series(self, source_address: str, attempts: int, next_retry_at: Optional[float]) -> None:
+        """Persist the series after a retry was sent, after a postponement, or when it gave up (`next_retry_at`
+        None with attempts at the maximum = `no_answer`)."""
+        self._upsert_series(source_address, attempts, next_retry_at)
+
+    def end_key_request_series(self, source_address: str) -> None:
+        """Cancel, an answer (the contact's key arrived) or a removed contact: no series any more."""
+        self._upsert_series(source_address, 0, None)
+
+    def list_key_request_series(self) -> "dict[str, tuple[int, Optional[float]]]":
+        """(address -> (attempts, next_retry_at)) for every address that has a running or finished series.
+        Worker/startup thread only, like the other list_* reads."""
+        rows = self._conn.execute(
+            "SELECT source_address, key_request_attempts, key_request_next_retry_at FROM mca_key_exchange_contact_state "
+            "WHERE workspace_id = ? AND adapter_id = ? AND key_request_attempts > 0",
+            (self._principal.workspace_id, self._adapter_id),
+        ).fetchall()
+        return {row["source_address"]: (int(row["key_request_attempts"]), row["key_request_next_retry_at"]) for row in rows}
 
     def get_status(self, source_address: str) -> AddressStatus:
         binding = self.get_binding(source_address)

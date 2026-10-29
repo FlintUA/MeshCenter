@@ -278,9 +278,13 @@ def test_clock_is_the_single_source_of_time(tmp_path, clock):
 
 # --- no-secret projection ----------------------------------------------------
 
-def test_capability_carries_only_state_string_and_boolean():
+def test_capability_carries_only_state_string_boolean_and_the_retry_counters():
+    """The state string and the boolean, the retry attempt numbers (policy constants) and the private due time that
+    is only ever published as whole seconds (retry_in_s) - never a raw timestamp (it is excluded from repr)."""
     fields = {f.name for f in dataclasses.fields(KeyRequestCapability)}
-    assert fields == {"key_request_state", "can_request_key"}
+    assert fields == {"key_request_state", "can_request_key", "retry_attempt", "retry_max", "retry_due_at"}
+    capability = KeyRequestCapability(KeyRequestState.WAITING_RESPONSE, False, 2, 4, 12345.678)
+    assert "12345" not in repr(capability)
 
 
 def test_snapshot_carries_only_the_by_address_mapping():

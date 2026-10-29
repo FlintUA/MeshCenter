@@ -73,6 +73,12 @@ State meanings (a single, closed vocabulary - see the enum):
     has not yet elapsed; we are waiting for the contact's KEY_ANNOUNCE.
   - `retry_available` - a request was sent but the window has elapsed with
     no key arriving; a fresh request is permitted again.
+  - `no_answer` - the automatic retry series (key_request_retry.py: 4 requests
+    over about 8 h 40 min) ended without a key; "Request again" starts a new
+    series. While a series is running the state stays `waiting_response` and
+    the capability also carries the attempt number (`retry_attempt` of
+    `retry_max`) and, derived at read time, the whole seconds until the next
+    look at the series (`retry_in_s`, rounded up to 30 s) - never a timestamp.
 
 `can_request_key` in the snapshot is the worker's own answer for an address
 that *has* activity: `True` only when the address has no TOFU binding (its
@@ -90,7 +96,9 @@ import enum
 import threading
 import time
 import types
-from typing import Dict, Mapping, Set
+from typing import Dict, Mapping, Optional, Set
+
+from meshsrv.attachments import key_request_retry
 
 from meshsrv.attachments.key_exchange import (
     MIN_SECONDS_BETWEEN_KEY_REQUESTS_TO_SAME_ADDRESS,
@@ -109,6 +117,7 @@ class KeyRequestState(str, enum.Enum):
     QUEUED = "queued"
     WAITING_RESPONSE = "waiting_response"
     RETRY_AVAILABLE = "retry_available"
+    NO_ANSWER = "no_answer"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -119,6 +128,14 @@ class KeyRequestCapability:
 
     key_request_state: KeyRequestState
     can_request_key: bool
+    #: attempt number of a running retry series (1..retry_max), 0 when no series is running
+    retry_attempt: int = 0
+    retry_max: int = 0
+    #: when the worker looks at the running series again - held privately, only ever published as `retry_in_s()`
+    retry_due_at: Optional[float] = dataclasses.field(default=None, repr=False)
+
+    def retry_in_s(self, now: float) -> Optional[int]:
+        return key_request_retry.seconds_until_next(self.retry_due_at, now)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -251,6 +268,7 @@ class KeyRequestStatePublisher:
         address."""
         try:
             timestamps: Dict[str, float] = self._coordinator.list_key_request_sent_at()
+            series = self._coordinator.list_key_request_series()
             bindings: Set[str] = {
                 b.transport_address for b in self._coordinator.list_bindings()
             }
@@ -259,7 +277,25 @@ class KeyRequestStatePublisher:
 
         now = self._now()
         by_address: Dict[str, KeyRequestCapability] = {}
-        for address in sorted(timestamps):
+        for address in sorted(set(timestamps) | set(series)):
+            attempts, next_retry_at = series.get(address, (0, None))
+            if address in bindings:
+                # a key is known: no series matters any more (the worker ends it on its next pass)
+                attempts, next_retry_at = 0, None
+            if key_request_retry.is_running(attempts, next_retry_at):
+                by_address[address] = KeyRequestCapability(
+                    key_request_state=KeyRequestState.WAITING_RESPONSE, can_request_key=False,
+                    retry_attempt=attempts, retry_max=key_request_retry.MAX_ATTEMPTS, retry_due_at=next_retry_at,
+                )
+                continue
+            if key_request_retry.is_no_answer(attempts, next_retry_at):
+                by_address[address] = KeyRequestCapability(
+                    key_request_state=KeyRequestState.NO_ANSWER, can_request_key=True,
+                    retry_attempt=attempts, retry_max=key_request_retry.MAX_ATTEMPTS,
+                )
+                continue
+            if address not in timestamps:
+                continue
             if now - timestamps[address] < self._min_interval:
                 state = KeyRequestState.WAITING_RESPONSE
                 can_request = False

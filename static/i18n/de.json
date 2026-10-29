@@ -414,11 +414,16 @@
     "upload_not_ready": "Upload: nicht bereit",
     "err_ttl_custom": "Gib eine positive ganze Zahl an Sekunden für das benutzerdefinierte Ablaufdatum ein",
     "request_key_again": "Schlüssel erneut anfordern",
+    "key_request_retry_status": "Warte auf Antwort - Versuch {attempt} von {max}, nächster in {minutes} Min.",
+    "cancel_key_request": "Anfragen stoppen",
+    "cancelling_key_request": "Schlüsselanfragen werden gestoppt…",
+    "key_request_cancelled": "Schlüsselanfragen gestoppt",
     "key_request_state": {
       "idle": "Schlüssel unbekannt",
       "queued": "Schlüsselanfrage gesendet",
       "waiting_response": "Warte auf Antwort",
-      "retry_available": "Erneut möglich"
+      "retry_available": "Erneut möglich",
+      "no_answer": "Keine Antwort"
     },
     "unavailable": {
       "local_node": "Das ist dein eigener Knoten",

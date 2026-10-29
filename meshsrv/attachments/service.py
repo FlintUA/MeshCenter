@@ -61,7 +61,7 @@ from typing import Callable, Dict, List, Optional
 import requests
 from nacl.signing import VerifyKey
 
-from meshsrv.attachments import codec, contacts, crypto, receiver, sender
+from meshsrv.attachments import codec, contacts, crypto, key_request_retry, receiver, sender
 from meshsrv.attachments.command_registry import CommandRegistry
 from meshsrv.attachments.commands import MAX_COMMANDS_PER_TICK, Command, CommandQueue
 from meshsrv.attachments.db.tombstones import is_tombstoned
@@ -376,8 +376,11 @@ class AttachmentsService:
         pending_reservations: Optional[PendingReservations] = None,
         recipient_snapshot_publisher: Optional[RecipientSnapshotPublisher] = None,
         key_request_snapshot_publisher: Optional[KeyRequestStatePublisher] = None,
+        contact_exists_fn: Optional[Callable[[str], bool]] = None,
     ):
         self._conn = conn
+        # KEY_REQUEST auto-retry: True while the node is still known to MeshCenter; None = never ends a series for it
+        self._contact_exists_fn = contact_exists_fn
         self._workspace_manager = workspace_manager
         self._principal = principal
         self._provider_registry = provider_registry
@@ -655,6 +658,7 @@ class AttachmentsService:
         # for any received transfer still parked in WAITING_KEY with an
         # unknown signer. Rate-limited and idempotent - safe on every tick.
         self._auto_request_missing_keys()
+        self._retry_key_requests()
 
         # PR 4 (shared target model): republish the key-request capability
         # snapshot *after* this tick's command drain and auto-request scan,
@@ -1020,6 +1024,7 @@ class AttachmentsService:
             "attachment_revoke": self._command_revoke,
             "attachment_delete_local_content": self._command_delete_local_content,
             "contact_request_key": self._command_request_key,
+            "contact_cancel_key_request": self._command_cancel_key_request,
             "contact_confirm": self._command_confirm,
             "contact_accept_key_change": self._command_accept_key_change,
             "contact_reject_key_change": self._command_reject_key_change,
@@ -2331,10 +2336,80 @@ class AttachmentsService:
             return CommandOutcome.failed("radio_unavailable")
 
         self._key_exchange.record_key_request_sent(contact_id, self._now())
+        self._key_exchange.start_key_request_series(contact_id, self._now())
         return CommandOutcome.succeeded(
             resource_id=contact_id,
             result={"contact_id": contact_id, "status": "requested"},
         )
+
+    def _command_cancel_key_request(self, command: Command) -> CommandOutcome:
+        """`contact_cancel_key_request`: end the automatic retries of a KEY_REQUEST series. Idempotent; the 10 min
+        per-address gate (last_request_sent_at) is kept, so Cancel is never a way around it."""
+        contact_id = command.payload.get("contact_id")
+        if not _is_contact_id(contact_id):
+            return CommandOutcome.failed("invalid_contact_id")
+        self._key_exchange.end_key_request_series(contact_id)
+        return CommandOutcome.succeeded(
+            resource_id=contact_id,
+            result={"contact_id": contact_id, "status": "cancelled"},
+        )
+
+    def _retry_key_requests(self) -> None:
+        """Walk the running KEY_REQUEST series (key_request_retry.py): end one whose key arrived or whose node is gone,
+        send the next retry when due, give up after the last wait. Safe every tick; one bad series stops nothing."""
+        try:
+            series = self._key_exchange.list_key_request_series()
+        except Exception:  # noqa: BLE001
+            logger.exception("AttachmentsService: listing key-request series failed")
+            return
+        now = self._now()
+        for address, (attempts, next_retry_at) in series.items():
+            if not key_request_retry.is_running(attempts, next_retry_at):
+                continue
+            try:
+                self._retry_one_key_request(address, attempts, next_retry_at, now)
+            except Exception:  # noqa: BLE001
+                logger.exception("AttachmentsService: key-request retry failed for %s", address)
+
+    def _retry_one_key_request(self, address: str, attempts: int, next_retry_at: float, now: float) -> None:
+        if self._key_exchange.get_binding(address) is not None or (
+            self._contact_exists_fn is not None and not self._contact_exists_fn(address)
+        ):
+            self._key_exchange.end_key_request_series(address)
+            return
+        action = key_request_retry.due_action(attempts, next_retry_at, now)
+        if action == key_request_retry.ACTION_NONE:
+            return
+        if action == key_request_retry.ACTION_GIVE_UP:
+            self._key_exchange.advance_key_request_series(address, attempts, None)
+            return
+        postpone = now + key_request_retry.POSTPONE_UNSENT_S
+        if self._delivery_adapter is None:
+            self._key_exchange.advance_key_request_series(address, attempts, postpone)
+            return
+        try:
+            self._key_exchange.check_key_request_rate_limit(address, now)
+            self._key_exchange.check_auto_key_request_quota(now)
+        except RateLimited:
+            self._key_exchange.advance_key_request_series(address, attempts, postpone)
+            return
+        route = Route(route_type=RouteType.DIRECT, route_id=address, destination_address=address)
+        try:
+            wire_payload = self._delivery_adapter.encode(self._key_exchange.build_key_request(), route)
+            receipt = self._delivery_adapter.send(
+                wire_payload, route, idempotency_key=f"key-request-retry-{address}-{attempts + 1}"
+            )
+            sent = bool(receipt.sent)
+        except DeliveryError:
+            sent = False
+        if not sent:
+            # released, busy or offline: wait, without spending an attempt or quota
+            self._key_exchange.advance_key_request_series(address, attempts, postpone)
+            return
+        self._key_exchange.record_key_request_sent(address, now)
+        self._key_exchange.record_auto_key_request_sent(now)
+        count, due = key_request_retry.after_retry_sent(attempts, now)
+        self._key_exchange.advance_key_request_series(address, count, due)
 
     # ---- Step 1.7: contact trust (Files workspace) -----------------------
 

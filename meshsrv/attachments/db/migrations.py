@@ -988,6 +988,21 @@ class Migration:
     down_data_fixup: Optional[Callable[[sqlite3.Connection], None]] = None
 
 
+# Migration 18 (KEY_REQUEST auto-retry, see key_request_retry.py): the persisted state of a retry series per contact
+# address, two columns on the existing per-contact row. `key_request_attempts` counts the KEY_REQUESTs of the current
+# series (0 = no series), `key_request_next_retry_at` is when the worker looks at the series again (NULL = none is
+# running). Both survive a restart, so a series is neither lost nor restarted by one.
+_MIGRATION_0018_UP = """
+ALTER TABLE mca_key_exchange_contact_state ADD COLUMN key_request_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE mca_key_exchange_contact_state ADD COLUMN key_request_next_retry_at REAL;
+"""
+
+_MIGRATION_0018_DOWN = """
+ALTER TABLE mca_key_exchange_contact_state DROP COLUMN key_request_next_retry_at;
+ALTER TABLE mca_key_exchange_contact_state DROP COLUMN key_request_attempts;
+"""
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(1, "create_core_tables", _MIGRATION_0001_UP, _MIGRATION_0001_DOWN),
     Migration(2, "extend_provider_profiles", _MIGRATION_0002_UP, _MIGRATION_0002_DOWN),
@@ -1019,6 +1034,7 @@ MIGRATIONS: Sequence[Migration] = (
         17, "outbox_route_snapshot", _MIGRATION_0017_UP, _MIGRATION_0017_DOWN,
         data_fixup=_migration_0017_fixup_backfill_outbox_routes,
     ),
+    Migration(18, "key_request_retry_series", _MIGRATION_0018_UP, _MIGRATION_0018_DOWN),
 )
 
 LATEST_VERSION: int = MIGRATIONS[-1].version if MIGRATIONS else 0

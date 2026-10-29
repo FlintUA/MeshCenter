@@ -414,11 +414,16 @@
     "upload_not_ready": "Завантаження: не готове",
     "err_ttl_custom": "Введіть ціле додатне число секунд для настроюваного терміну дії",
     "request_key_again": "Запитати ключ ще раз",
+    "key_request_retry_status": "Очікування відповіді - спроба {attempt} з {max}, наступна через {minutes} хв",
+    "cancel_key_request": "Зупинити запити",
+    "cancelling_key_request": "Зупинка запитів ключа…",
+    "key_request_cancelled": "Запити ключа зупинено",
     "key_request_state": {
       "idle": "Ключ невідомий",
       "queued": "Запит ключа надіслано",
       "waiting_response": "Очікування відповіді",
-      "retry_available": "Повтор доступний"
+      "retry_available": "Повтор доступний",
+      "no_answer": "Немає відповіді"
     },
     "unavailable": {
       "local_node": "Це ваш власний вузол",

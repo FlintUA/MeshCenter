@@ -78,6 +78,7 @@ COMMAND_KINDS = frozenset({
     "attachment_copy_code",
     "attachment_add_delivery",
     "contact_request_key",
+    "contact_cancel_key_request",
     "contact_confirm",
     "contact_accept_key_change",
     "contact_reject_key_change",

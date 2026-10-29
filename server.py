@@ -10036,7 +10036,10 @@ def start_runtime():
         print(f"[MCA] WARNING: {_mca_warning}", flush=True)
         log_system_event("MCAttach control channel not configured", "WARNING", _mca_warning, source="mca")
     try:
-        mca_runtime.start_attachments_service(DATA_DIR, transport_router, MCA_CONTROL_CHANNEL_INDEX)
+        mca_runtime.start_attachments_service(
+            DATA_DIR, transport_router, MCA_CONTROL_CHANNEL_INDEX,
+            contact_exists=lambda contact_id: contact_id in nodes,  # a removed node ends its KEY_REQUEST retries
+        )
     except Exception as e:
         print(f"[MCA] failed to start AttachmentsService: {e}", flush=True)
 

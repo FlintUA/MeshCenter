@@ -5334,11 +5334,20 @@ function renderNodeCardKeyActions(nodeId, isSelected) {
         // state, and offer "Request key" only when the store says we may.
         const kr = t.key_request_state;
         if (t.can_request_key) {
-            status = window.I18N.t('files.contact.key_unknown');
-            const again = kr === 'retry_available';
+            status = kr === 'no_answer' ? window.I18N.t('files.key_request_state.no_answer') : window.I18N.t('files.contact.key_unknown');
+            const again = kr === 'retry_available' || kr === 'no_answer';
             actions.push(`<button type="button" class="node-card-key-btn"${disabled} data-files-action="contact-request-key" data-contact="${escapeHtml(t.id)}">${escapeHtml(again ? window.I18N.t('files.request_key_again') : window.I18N.t('files.request_key'))}</button>`);
         } else if (kr === 'queued' || kr === 'waiting_response') {
             status = window.I18N.t('files.key_request_state.' + kr);
+            if (kr === 'waiting_response' && t.retry_attempt > 0 && t.retry_max > 0) {
+                // automatic retries are running: say which attempt, when the next one is due, and offer to stop them
+                status = window.I18N.t('files.key_request_retry_status', {
+                    attempt: t.retry_attempt,
+                    max: t.retry_max,
+                    minutes: Math.max(1, Math.ceil((t.retry_in_s || 0) / 60)),
+                });
+                actions.push(`<button type="button" class="node-card-key-btn"${disabled} data-files-action="contact-cancel-key" data-contact="${escapeHtml(t.id)}">${escapeHtml(window.I18N.t('files.cancel_key_request'))}</button>`);
+            }
         } else {
             status = window.I18N.t('files.contact.key_unknown');
         }

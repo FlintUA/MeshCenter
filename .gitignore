@@ -52,7 +52,8 @@ Thumbs.db
 # Claude Code local settings (machine-specific permissions/prefs, never shared -
 # was previously only excluded by this machine's personal global gitignore,
 # not the repo itself, so a clone on another machine had no protection)
-.claude/settings.local.json
+.claude/
+
 
 # Docker runtime state created by running compose from deploy/docker/
 deploy/docker/data/

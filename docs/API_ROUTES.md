@@ -147,7 +147,7 @@ Auth/CSRF columns mirror `api/api_auth.py`'s own `_enforce_auth()`/`_enforce_csr
 | `/api/security` | GET | `api/api_auth.py:583` (`api_get_security`) | required | exempt |
 | `/api/security` | POST | `api/api_auth.py:593` (`api_update_security`) | required | required |
 | `/api/send` | POST | `api/api_chat.py:626` (`api_send`) | required | required |
-| `/api/send/retry` | POST | `api/api_chat.py:775` (`api_send_retry`) | required | required |
+| `/api/send/retry` | POST | `api/api_chat.py:779` (`api_send_retry`) | required | required |
 | `/api/sensors` | GET | `server.py:7476` (`api_sensors`) | required | exempt |
 | `/api/settings` | GET | `api/api_settings.py:668` (`api_get_settings`) | required | exempt |
 | `/api/settings` | POST | `api/api_settings.py:699` (`api_update_settings`) | required | required |

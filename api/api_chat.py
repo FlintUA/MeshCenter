@@ -650,7 +650,11 @@ def register_chat_routes(
         if isinstance(reply_to, dict):
             raw_packet_id = reply_to.get("packet_id")
             try:
-                reply_packet_id = int(raw_packet_id) if raw_packet_id is not None else None
+                if raw_packet_id is not None and not isinstance(raw_packet_id, bool):
+                    parsed_id = int(raw_packet_id)
+                    reply_packet_id = parsed_id if parsed_id > 0 else None
+                else:
+                    reply_packet_id = None
             except (TypeError, ValueError):
                 reply_packet_id = None
 

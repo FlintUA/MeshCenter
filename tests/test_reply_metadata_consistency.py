@@ -296,3 +296,29 @@ def test_8_cross_chat_ambiguity_stays_unresolved_end_to_end(srv):
     assert reply["chat_id"] == "channel:2", "sanity check: lands in neither candidate chat"
     assert reply["reply_id"] == 321
     assert "reply_to" not in reply, "ambiguous - stays unresolved rather than guessing"
+
+
+@pytest.mark.parametrize("invalid_packet_id", [True, False, 0, -1, -500])
+def test_api_send_rejects_boolean_zero_or_negative_reply_packet_id(srv, invalid_packet_id):
+    """Confirm that /api/send rejects boolean, zero, or negative packet_id values
+    in reply_to payloads instead of coercing them or treating them as valid."""
+    client = srv.app.test_client()
+    with client.session_transaction() as sess:
+        sess["csrf_token"] = "test-token"
+
+    payload = {
+        "text": "test reply",
+        "chat_id": srv.CHANNEL_CHAT_ID,
+        "reply_to": {
+            "id": "msg_123",
+            "packet_id": invalid_packet_id,
+            "sender": "Remote",
+            "text": "Original message text",
+        },
+    }
+
+    res = client.post("/api/send", json=payload, headers={"X-CSRF-Token": "test-token"})
+    assert res.status_code == 400
+    data = res.get_json()
+    assert data["ok"] is False
+    assert data["error_code"] == "reply_missing_packet_id"

@@ -236,3 +236,31 @@ def test_running_series_is_waiting_response_with_counters_and_no_timestamp(rig):
     assert cap.can_request_key is False
     assert cap.retry_in_s(rig.clock.now) == 600
     assert str(rig.clock.now + 600) not in repr(cap)
+
+
+# ---- node table id formats ----------------------------------------------------
+
+
+def test_node_known_matches_real_format_ids_in_any_case():
+    # contact ids are '!' + 8 lowercase hex; the node table keeps what the radio reported
+    assert policy.node_known("!1fa065f0", ["!1fa065f0", "!067a40fa"])
+    assert policy.node_known("!1fa065f0", ["!1FA065F0"])
+    assert policy.node_known("!b0f14d2a", ["!B0f14D2a"])
+    assert not policy.node_known("!1fa065f0", ["!067a40fa", "!756f9960"])
+    assert not policy.node_known("!1fa065f0", [])
+    # a bare number or hex without '!' is not the same key
+    assert not policy.node_known("!1fa065f0", ["1fa065f0", 535586288])
+
+
+def test_mixed_case_node_keeps_the_series_alive(rig):
+    nodes = {"!1FA065F0": {}}
+    rig.service._contact_exists_fn = lambda address: policy.node_known(address, list(nodes))
+    rig.coordinator.record_key_request_sent("!1fa065f0", rig.clock.now)
+    rig.coordinator.start_key_request_series("!1fa065f0", rig.clock.now)
+    rig.clock.advance(600)
+    rig.service._retry_key_requests()
+    assert rig.coordinator.list_key_request_series()["!1fa065f0"][0] == 2
+    nodes.clear()
+    rig.clock.advance(1800)
+    rig.service._retry_key_requests()
+    assert "!1fa065f0" not in rig.coordinator.list_key_request_series()

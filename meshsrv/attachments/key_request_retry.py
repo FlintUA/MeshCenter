@@ -72,6 +72,14 @@ def due_action(attempts: int, next_retry_at: Optional[float], now: float) -> str
     return ACTION_GIVE_UP if int(attempts) >= MAX_ATTEMPTS else ACTION_RETRY
 
 
+def node_known(contact_id: str, node_ids) -> bool:
+    """True when `contact_id` (MCA form: '!' + 8 lowercase hex) names one of `node_ids` (the node table's keys: '!' + 8
+    hex, written in whatever case the radio reported). Compared case-insensitively on the hex part, so a node stored as
+    '!1FA065F0' is not mistaken for a removed one."""
+    wanted = str(contact_id or "").strip().lower()
+    return any(str(node_id or "").strip().lower() == wanted for node_id in node_ids)
+
+
 def seconds_until_next(next_retry_at: Optional[float], now: float) -> Optional[int]:
     """Whole seconds until the series is looked at again, rounded UP to a multiple of 30 (the UI shows minutes; a raw
     timestamp is never published), or None when no series is running."""

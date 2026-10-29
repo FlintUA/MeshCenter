@@ -6176,8 +6176,8 @@ html[data-theme="dark"] .telemetry-btn.power .telemetry-value {
     .switch input[type="checkbox"],
     .system-row input[type="checkbox"],
     .settings-option input[type="checkbox"] {
-        width: 24px;
-        height: 24px;
+        width: 28px;
+        height: 28px;
     }
 
     .system-row,
@@ -6368,6 +6368,26 @@ html[data-theme="dark"] .telemetry-btn.power .telemetry-value {
     .node-filters-reset {
         min-height: 44px;
         padding: 0 16px;
+        font-size: 14px;
+    }
+
+    /* ======================================================================
+       MOB2-G: leftovers of the phone audit: the installation ID row is a 44 px target, the Base weather labels and
+       the dock chevron are no longer 10 px, the toggle boxes are 28 px (the label around them is 44 px).
+       ====================================================================== */
+    .system-row .copyable-value {
+        display: inline-flex;
+        align-items: center;
+        min-height: 44px;
+        word-break: break-all;
+    }
+
+    .weather-metric span,
+    .weather-footer span {
+        font-size: 11px !important;
+    }
+
+    .dock-notification-chevron {
         font-size: 14px;
     }
 }

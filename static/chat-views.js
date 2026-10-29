@@ -77,6 +77,7 @@
 
     const SORT_KEYS = ['last_heard', 'name', 'distance', 'hops', 'favorites_first'];
     const OFFLINE_AFTER_SECONDS = 2 * 60 * 60;
+    const DIRECT_WITHIN_SECONDS = 24 * 60 * 60;
     // Real Meshtastic Config.DeviceConfig.Role names for relaying infrastructure.
     // (ROUTER_CLIENT is the deprecated pre-2.3 name of the same behaviour.)
     const INFRASTRUCTURE_ROLES = ['ROUTER', 'ROUTER_LATE', 'REPEATER', 'ROUTER_CLIENT'];
@@ -121,6 +122,40 @@
         return Number.isFinite(seen) && seen > 0 ? seen : 0;
     }
 
+    // NL1: "heard directly" = its own packet arrived with no relay hop in the last 24 h. `last_direct` (epoch seconds,
+    // noted by the ingest paths since SIG4) is the truth; a node that has none yet falls back to hops_away == 0 AND
+    // heard at all in the last 24 h. One rule for the filter, the header pill and its number.
+    function isHeardDirectly(node, now) {
+        const current = Number(now);
+        const withinDay = function (seconds) {
+            return Number.isFinite(seconds) && seconds > 0 && (!Number.isFinite(current) || current - seconds <= DIRECT_WITHIN_SECONDS);
+        };
+        const direct = node ? node.last_direct : undefined;
+        if (direct !== undefined && direct !== null && direct !== '') return withinDay(Number(direct));
+        return nodeHops(node) === 0 && withinDay(nodeLastSeen(node));
+    }
+
+    function isOnline(node, now) {
+        const seen = nodeLastSeen(node);
+        const current = Number(now);
+        return Boolean(seen) && (!Number.isFinite(current) || current - seen <= OFFLINE_AFTER_SECONDS);
+    }
+
+    // NL1: the three numbers of the Nodes header, over the nodes that are not ignored (whatever the other filters and
+    // the search say). `shown` is the length of the list the user currently sees (filters + search applied).
+    function nodeHeaderCounts(nodes, shown, now) {
+        const list = (Array.isArray(nodes) ? nodes : []).filter(function (n) { return n && !n.ignored; });
+        let online = 0;
+        let direct = 0;
+        list.forEach(function (n) {
+            if (isOnline(n, now)) online += 1;
+            if (isHeardDirectly(n, now)) direct += 1;
+        });
+        const total = list.length;
+        const shownCount = Number.isFinite(Number(shown)) ? Number(shown) : total;
+        return { total: total, shown: shownCount, filtered: shownCount !== total, online: online, direct: direct };
+    }
+
     function isInfrastructureRole(role) {
         return INFRASTRUCTURE_ROLES.indexOf(String(role || '').toUpperCase()) !== -1;
     }
@@ -140,7 +175,7 @@
             const now = Number(ctx.now);
             if (!seen || (Number.isFinite(now) && now - seen > OFFLINE_AFTER_SECONDS)) return false;
         }
-        if (s.directOnly && nodeHops(node) !== 0) return false;
+        if (s.directOnly && !isHeardDirectly(node, ctx.now)) return false;
         if (s.hideInfrastructure && isInfrastructureRole(node.role)) return false;
         if (s.knownKeyOnly && !(typeof ctx.hasKnownKey === 'function' && ctx.hasKnownKey(node))) return false;
         return true;
@@ -683,6 +718,10 @@
         normalizeNodeFilters: normalizeNodeFilters,
         activeFilterCount: activeFilterCount,
         nodeHops: nodeHops,
+        isHeardDirectly: isHeardDirectly,
+        isOnline: isOnline,
+        nodeHeaderCounts: nodeHeaderCounts,
+        DIRECT_WITHIN_SECONDS: DIRECT_WITHIN_SECONDS,
         nodePassesFilters: nodePassesFilters,
         sortNodes: sortNodes,
         filterAndSortNodes: filterAndSortNodes,

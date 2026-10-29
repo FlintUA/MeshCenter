@@ -4334,6 +4334,9 @@ const CHAT_ACTIONS = {
     'node-filters-toggle': () => toggleNodeFiltersPopover(),
     'node-filter-chip-remove': (target) => removeNodeFilterChip(target.getAttribute('data-filter')),
     'node-filters-reset': () => resetNodeFilters(),
+    'nodes-header-online': () => toggleNodeHeaderFilter('hideOffline'),
+    'nodes-header-direct': () => toggleNodeHeaderFilter('directOnly'),
+    'nodes-header-clear': () => clearNodeHeaderFilters(),
     'notif-mark-read': (target) => {
         markBackendNotificationRead(target.getAttribute('data-id'), target);
     },
@@ -5705,6 +5708,55 @@ function removeNodeFilterChip(flag) {
     refreshNodeListAfterFilterChange();
 }
 
+// NL1: the Nodes header row (count, online and direct pills, clear). The numbers come from MCViews.nodeHeaderCounts, the
+// pills toggle the same filter flags as the Sort/filters popover, so a pill and the list can never disagree.
+function renderNodesHeader(shownCount) {
+    const row = document.getElementById('nodesHeaderRow');
+    if (!row) return;
+    const t = (key, params) => window.I18N.t(key, params);
+    const counts = window.MCViews.nodeHeaderCounts(nodeCache, shownCount, Date.now() / 1000);
+    const state = loadNodeFilterState();
+    const countEl = document.getElementById('nodesHeaderCount');
+    if (countEl) {
+        countEl.textContent = counts.filtered ? t('nodes.header_count_filtered', { shown: counts.shown, total: counts.total }) : String(counts.total);
+        countEl.setAttribute('aria-label', window.I18N.plural('nodes.header_count_aria', counts.total, { count: counts.total }));
+    }
+    const fillPill = (id, number, active, textKey, ariaKey) => {
+        const pill = document.getElementById(id);
+        if (!pill) return;
+        const numEl = pill.querySelector('.nodes-pill-num');
+        const textEl = pill.querySelector('.nodes-pill-text');
+        if (numEl) numEl.textContent = String(number);
+        if (textEl) textEl.textContent = t(textKey);
+        pill.classList.toggle('is-active', Boolean(active));
+        pill.setAttribute('aria-pressed', active ? 'true' : 'false');
+        const label = t(ariaKey, { count: number });
+        pill.setAttribute('aria-label', label);
+        pill.title = label;
+    };
+    fillPill('nodesPillOnline', counts.online, state.hideOffline, 'nodes.header_online', 'nodes.header_online_aria');
+    fillPill('nodesPillDirect', counts.direct, state.directOnly, 'nodes.header_direct', 'nodes.header_direct_aria');
+    const clear = document.getElementById('nodesHeaderClear');
+    if (clear) {
+        clear.hidden = !(window.MCViews.activeFilterCount(state) > 0 || nodeSearchTerm);
+        clear.setAttribute('aria-label', t('nodes.header_clear'));
+        clear.title = t('nodes.header_clear');
+    }
+}
+
+function toggleNodeHeaderFilter(flag) {
+    const state = loadNodeFilterState();
+    state[flag] = !state[flag];
+    refreshNodeListAfterFilterChange();
+}
+
+function clearNodeHeaderFilters() {
+    nodeSearchTerm = '';
+    const searchInput = document.getElementById('nodeSearchInput');
+    if (searchInput) searchInput.value = '';
+    resetNodeFilters();
+}
+
 function resetNodeFilters() {
     nodeFilterState = window.MCViews.normalizeNodeFilters(null);
     refreshNodeListAfterFilterChange();
@@ -5808,6 +5860,7 @@ function renderSidebarNodeCards() {
     if (!nodesList) return;
 
     let filteredNodes = computeFilteredNodeCards();
+    renderNodesHeader(filteredNodes.length);
     const eff = effectiveSelectedTarget();
     const selectedNodeId = (eff && eff.kind === 'node') ? eff.id : null;
     let hiddenOnPhone = 0;

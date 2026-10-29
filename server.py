@@ -2518,30 +2518,10 @@ def _telemetry_from_local_node(line):
 
 
 
-def _decode_waypoint_text(value):
-    """Decode only explicit Python-style Unicode escapes from CLI output."""
-    text = str(value or "")
-    def replace_escape(match):
-        try:
-            return chr(int(match.group(1), 16))
-        except (TypeError, ValueError, OverflowError):
-            return match.group(0)
-    text = re.sub(r"\\U([0-9a-fA-F]{8})", replace_escape, text)
-    text = re.sub(r"\\u([0-9a-fA-F]{4})", replace_escape, text)
-    return text
-
-
 def _waypoint_string(line, keys):
-    for key in keys:
-        patterns = (
-            rf"['\"]{re.escape(key)}['\"]\s*:\s*['\"]([^'\"]*)['\"]",
-            rf"\b{re.escape(key)}\s*:\s*['\"]([^'\"]*)['\"]",
-        )
-        for pattern in patterns:
-            match = re.search(pattern, line, re.IGNORECASE)
-            if match:
-                return _decode_waypoint_text(match.group(1))
-    return ""
+    """A waypoint name/description from the listen line, decoded (SIG3), "" when absent."""
+    value = _string_field(line, keys)
+    return value if value is not None else ""
 
 
 def _waypoint_number(line, keys):
@@ -2565,14 +2545,16 @@ def parse_waypoint_from_listen_line(line):
         return None
 
     sender_id = _telemetry_sender_node_id(line) or ""
-    marker_positions = [
-        position for position in (
-            line.find("'waypoint':"),
-            line.find('"waypoint":'),
-            line.find("WAYPOINT_APP"),
-        ) if position >= 0
-    ]
-    waypoint_text = line[min(marker_positions):] if marker_positions else line
+    # SIG3: start at the waypoint dict itself when there is one. Starting at the earlier "WAYPOINT_APP" would begin
+    # in the middle of the quoted portnum, and the quote pairing of the string decoder would be shifted by one.
+    dict_positions = [position for position in (line.find("'waypoint':"), line.find('"waypoint":')) if position >= 0]
+    app_position = line.find("WAYPOINT_APP")
+    if dict_positions:
+        waypoint_text = line[min(dict_positions):]
+    elif app_position >= 0:
+        waypoint_text = line[app_position:]
+    else:
+        waypoint_text = line
 
     waypoint_id = _waypoint_number(waypoint_text, ("id", "waypointId", "waypoint_id"))
     latitude_i = _waypoint_number(waypoint_text, ("latitudeI", "latitude_i"))
@@ -3986,6 +3968,9 @@ def resolve_reply_reference(message):
 _TEXT_DECODE_WARNED = False
 
 
+_FIELD_DECODE_WARNED = False
+
+
 def _python_string_literal_at(line, start):
     """The Python/JSON string literal that begins at `line[start]` (a quote character), as the exact
     source token (quotes included), or None when `start` is not a quote or the string never closes.
@@ -4011,6 +3996,67 @@ def _decode_python_string_literal(token):
     ever evaluated. None when it is not a plain str."""
     value = ast.literal_eval(token)
     return value if isinstance(value, str) else None
+
+
+def _mask_string_values(text):
+    """`text` with the CONTENT of every string value replaced by underscores (same length, quotes kept). A string
+    followed by a colon is a key and stays readable. The field names of a listen line are then searched in this
+    copy, so a name like `x 'shortName': 'EVIL' y` can never be mistaken for the next field (SIG3, same idea as
+    line_without_text_literals())."""
+    out = []
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if ch in "'\"":
+            token = _python_string_literal_at(text, i)
+            if token:
+                j = i + len(token)
+                k = j
+                while k < len(text) and text[k] in " \t":
+                    k += 1
+                is_key = k < len(text) and text[k] == ":"
+                out.append(token if is_key else ch + "_" * (len(token) - 2) + ch)
+                i = j
+                continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _decode_field_token(token):
+    """The text of one string-literal token of a listen line (SIG3). Strict `ast.literal_eval` of that ONE token
+    (see _decode_python_string_literal); a malformed literal falls back to the raw text between the quotes and
+    logs once. The protobuf text format writes non-ASCII as octal UTF-8 bytes (\\303\\251): those are repaired."""
+    global _FIELD_DECODE_WARNED
+    try:
+        value = _decode_python_string_literal(token)
+    except (ValueError, SyntaxError, MemoryError, RecursionError):
+        value = None
+        if not _FIELD_DECODE_WARNED:
+            _FIELD_DECODE_WARNED = True
+            print("[LISTEN] Could not decode the escapes of a name in a listen line; using the raw text "
+                  "(further failures are not logged)", flush=True)
+    if value is None:
+        return token[1:-1]
+    if re.search(r"\\[0-3][0-7]{2}", token):
+        try:
+            return value.encode("latin-1").decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            pass
+    return value
+
+
+def _string_field(text, keys):
+    """The decoded string value of the first of `keys` found as a real field of `text` (a Python-dict listen line,
+    quoted or bare protobuf-style keys), or None. Never evaluates anything but the one string token."""
+    masked = _mask_string_values(text)
+    for key in keys:
+        pattern = re.compile(rf"""(?<![A-Za-z0-9_])['"]?{re.escape(key)}['"]?\s*:\s*(?=['"])""", re.IGNORECASE)
+        for match in pattern.finditer(masked):
+            token = _python_string_literal_at(text, match.end())
+            if token:
+                return _decode_field_token(token)
+    return None
 
 
 def line_without_text_literals(line):
@@ -4231,6 +4277,13 @@ def _telemetry_values_from_metrics(device_metrics, environment_metrics, power_me
     }
 
 
+def _nodeinfo_name(block, names):
+    """A NodeInfo long/short name, decoded like a received text (SIG3: serial stores what TCP stores); the old
+    regex reader is the fallback for a value that is not a quoted string."""
+    value = _string_field(block, names)
+    return value.strip() if value is not None else extract_field(block, names)
+
+
 def process_nodeinfo(block):
     if ("NODEINFO_APP" not in block and "longName" not in block and "long_name" not in block and
         "shortName" not in block and "short_name" not in block and "hwModel" not in block and "hw_model" not in block):
@@ -4265,8 +4318,8 @@ def process_nodeinfo(block):
         )
         return True
         
-    long_name = extract_field(block, ["longName", "long_name", "longname"])
-    short_name = extract_field(block, ["shortName", "short_name", "shortname"])
+    long_name = _nodeinfo_name(block, ["longName", "long_name", "longname"])
+    short_name = _nodeinfo_name(block, ["shortName", "short_name", "shortname"])
     hw_model = extract_field(block, ["hwModel", "hw_model"])
     role = extract_field(block, ["role", "Role"])
     rssi = extract_rssi(block)

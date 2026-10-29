@@ -152,7 +152,7 @@ Copy it to the NAS with File Station (upload) or `scp`. Then import it, either:
 
 * **by SSH** (this is what the NAS acceptance used), as root:
   ```bash
-  sudo docker load -i /volume2/docker/meshcenter-1.13.6.tar
+  sudo docker load -i /volume2/docker/meshcenter/meshcenter-1.13.6.tar
   ```
 * **or in Container Manager**: *Image → Add → Add from file* and pick the `.tar`.
   Use the plain `.tar` that `docker save` wrote; it has not been verified which
@@ -244,11 +244,33 @@ Open `http://<nas-ip>:5080/`.
 
 ### 8. Update and back up (plain steps)
 
-* **Update:** on the PC `git fetch --tags && git checkout v<new>`, build and save
-  the new image (steps 2-3), load it on the NAS, change the `image:` and
-  `MESHCENTER_VERSION` lines in `compose.yaml`, then
-  `sudo docker compose up -d`. `config/` and `data/` are untouched. The old image
-  stays on the NAS: to **roll back**, put its tag back and `up -d` again.
+* **Update:** build and save the new image on the PC (steps 2-3: `git fetch --tags
+  && git checkout v<new>`, then `docker save`) and copy the `.tar` into
+  `/volume2/docker/meshcenter/`. Then on the NAS (SSH), with the new version in
+  place of `1.13.6`:
+
+  ```bash
+  cd /volume2/docker/meshcenter
+  sha256sum meshcenter-1.13.6.tar        # compare with the value you got with the tar
+  sudo docker load -i meshcenter-1.13.6.tar
+  sed -i 's|image: meshcenter:.*|image: meshcenter:1.13.6|; s|MESHCENTER_VERSION: ".*"|MESHCENTER_VERSION: "1.13.6"|' compose.yaml
+  grep -E 'image|MESHCENTER_VERSION' compose.yaml   # both lines show 1.13.6
+  sudo docker compose up -d
+  ```
+
+  Then open **About** (or the version in the Workspace menu) and check that it
+  shows `1.13.6`. `config/` and `data/` are untouched.
+
+  > **Warning: load first, then `up -d`.** If the new image is not loaded yet,
+  > `docker compose up -d` tries to pull `meshcenter:1.13.6` from the internet and
+  > stops with `pull access denied` (the image is never published).
+
+  The checksum is the one that came with the tar (the `.sha256` file next to it, or
+  the value the person who built it sent you); it is not part of the GitHub release,
+  because the image is not published.
+* **Roll back:** the old image stays on the NAS. Put the old tag back with the same
+  `sed` line (for example `1.13.5`), check it with `grep`, and run
+  `sudo docker compose up -d` again.
 * **Back up:** `sudo docker compose stop`, copy `config/` and `data/`, then
   `sudo docker compose start`. A copy of a running instance can be inconsistent
   (SQLite files).

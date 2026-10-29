@@ -189,7 +189,7 @@ The install has been validated end-to-end on a clean Raspberry Pi Zero 2 W with 
 - **Multi-radio profiles** - switch between physical radios with each one's data kept isolated
 - **Localization** - English, German, Russian and Ukrainian interface language, with the Files workspace fully translated in all four (see [docs/User_Guide.md](docs/User_Guide.md#language) for current coverage of the rest)
 
-In Docker server mode the host-hardware features above are not available: camera, Wi-Fi manager, e-Paper display, I2C sensors/RTC, USB/Bluetooth radio and in-app update (the image is updated instead). Everything else - messaging, Files (MCAttach), map, nodes, telemetry, weather, automation, multi-radio profiles and localization - works the same. Details: [docs/Docker_Installation.md](docs/Docker_Installation.md).
+In Docker server mode the host-hardware features above are not available: camera, Wi-Fi manager, e-Paper display, I2C sensors/RTC, USB/Bluetooth radio and in-app update (the image is updated instead: [update steps](docs/Docker_Installation.md#8-update-and-back-up-plain-steps)). Everything else - messaging, Files (MCAttach), map, nodes, telemetry, weather, automation, multi-radio profiles and localization - works the same. Details: [docs/Docker_Installation.md](docs/Docker_Installation.md).
 
 See **[docs/User_Guide.md](docs/User_Guide.md)** for the full, practical walkthrough of every feature above - installation, configuration, day-to-day usage, backup, and troubleshooting. See [docs/architecture/Architecture.md](docs/architecture/Architecture.md) for how it's built internally, and [docs/development/Roadmap.md](docs/development/Roadmap.md) for what's planned.
 

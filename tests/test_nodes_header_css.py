@@ -46,3 +46,11 @@ def test_markup_and_actions_are_wired():
         assert f'data-chat-action="{action}"' in HTML
         assert f"'{action}'" in JS
     assert "toggleNodeHeaderFilter('hideOffline')" in JS and "toggleNodeHeaderFilter('directOnly')" in JS
+
+
+def test_compact_is_decided_by_measured_fit_with_the_container_query_only_as_fallback():
+    assert '.nodes-header-row[data-fit="compact"] .nodes-pill-text' in CSS
+    fallback = CSS[CSS.index("@container nodespane"):]
+    assert ".nodes-header-row:not([data-fit])" in fallback
+    assert "function fitNodesHeader()" in JS and "last.getBoundingClientRect().right > rowRect.right" in JS
+    assert "new ResizeObserver(() => fitNodesHeader())" in JS

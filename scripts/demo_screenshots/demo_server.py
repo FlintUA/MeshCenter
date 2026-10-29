@@ -190,6 +190,63 @@ try:
 except Exception as error:  # the Files tab then says "not ready"; every other view is unaffected
     print("DEMO: MCAttach service not started:", type(error).__name__, error, flush=True)
 
+# ---- three invented file transfers for the Files tab (rows written straight into the throwaway MCAttach database)
+import threading  # noqa: E402
+
+
+def seed_transfers():
+    import sqlite3
+    import uuid
+
+    deadline = time.time() + 30
+    paths = []
+    while time.time() < deadline and not paths:
+        paths = [str(path) for path in (data_dir / "mca").rglob("attachments.db")]
+        time.sleep(0.5)
+    if not paths:
+        print("DEMO: no MCAttach database found, the Files tab stays empty", flush=True)
+        return
+    connection = sqlite3.connect(paths[0])
+    try:
+        principal = connection.execute("SELECT workspace_id, principal_id FROM mca_principal LIMIT 1").fetchone()
+    except sqlite3.Error:
+        principal = None
+    if principal is None:
+        print("DEMO: could not read the MCAttach principal, the Files tab stays empty", flush=True)
+        return
+    workspace_id, principal_id = principal
+    stamp = int(time.time())
+    demo = [
+        # direction, state, file name, mime, size, minutes ago
+        ("received", "AVAILABLE", "trail-notes-demo.pdf", "application/pdf", 214_330, 12),
+        ("sent", "DOWNLOADED", "relay-site-photo.jpg", "image/jpeg", 1_204_880, 95),
+        ("received", "DOWNLOADED", "tower-route-demo.gpx", "application/gpx+xml", 48_120, 260),
+    ]
+    counterparty = "!0000d001"  # the node the app selects first: the Files list is filtered to the selected node
+    for direction, state, name, mime, size, minutes in demo:
+        attachment_id = uuid.uuid4().hex
+        connection.execute(
+            "INSERT INTO attachments (id, workspace_id, transfer_id, direction, principal_id, sender_principal_id, provider_id, state, "
+            "file_name, mime_type, plain_size, cipher_size, plain_sha256, created_at, hard_expires_at, download_grace_seconds, "
+            "reply_route_type, reply_route_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (attachment_id, workspace_id, uuid.uuid4().hex, direction, principal_id, None, "demo-relay", state, name, mime,
+             size, size + 28, "0" * 64, stamp - minutes * 60, stamp + 7 * 86400, 3600,
+             "DIRECT" if direction == "received" else None, counterparty if direction == "received" else None),
+        )
+        if direction == "sent":
+            connection.execute(
+                "INSERT INTO attachment_deliveries (id, attachment_id, adapter_id, connector_profile_id, route_type, route_id, "
+                "wire_format, idempotency_key, state, sent_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (uuid.uuid4().hex, attachment_id, "meshtastic", "demo", "DIRECT", counterparty, "MCA1-TEXT", uuid.uuid4().hex, "SENT",
+                 stamp - minutes * 60),
+            )
+    connection.commit()
+    connection.close()
+
+
+threading.Thread(target=seed_transfers, daemon=True).start()
+
 # ---- a calm radio status: the sandbox has no listener, so keep the stored health at "OK" and never "busy"
 import threading  # noqa: E402
 

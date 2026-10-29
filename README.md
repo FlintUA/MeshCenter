@@ -65,26 +65,12 @@ See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full dependency bre
 
 ## 📸 Screenshots
 
-*These screenshots are from v1.5.0 - the overall layout is still representative, but the current interface also has a **Files** tab (MCAttach) alongside Chats/Camera/Media/Devices that isn't shown here. Refreshing these from a current install is tracked as a follow-up.*
+*Taken from MeshCenter v1.13 with invented demo data (no real nodes, positions or keys); the generator is in [scripts/demo_screenshots/](scripts/demo_screenshots/).*
 
 <details>
-<summary>🗺️ Map - Light theme</summary>
+<summary>💬 Chats - Light theme</summary>
 
-![MeshCenter map view light theme](docs/images/MeshCenter_map_light_theme.png)
-
-</details>
-
-<details>
-<summary>🗺️ Map - Dark theme</summary>
-
-![MeshCenter map view dark theme](docs/images/MeshCenter_map_dark_theme.png)
-
-</details>
-
-<details>
-<summary>🗺️ Map + Nodes panel - Light theme</summary>
-
-![MeshCenter map split light theme](docs/images/MeshCenter_map_split_light_theme.png)
+![MeshCenter chats light theme](docs/images/MeshCenter_chats_light_theme.png)
 
 </details>
 
@@ -96,30 +82,9 @@ See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full dependency bre
 </details>
 
 <details>
-<summary>💬 Chats - Light theme</summary>
+<summary>📁 Files (MCAttach) - Light theme</summary>
 
-![MeshCenter chats light theme](docs/images/MeshCenter_chats_light_theme.png)
-
-</details>
-
-<details>
-<summary>💬 Chats + Nodes panel - Dark theme</summary>
-
-![MeshCenter chats split dark theme](docs/images/MeshCenter_chats_split_dark_theme.png)
-
-</details>
-
-<details>
-<summary>🖼️ Media - Light theme</summary>
-
-![MeshCenter media light theme](docs/images/MeshCenter_media_light_theme.png)
-
-</details>
-
-<details>
-<summary>🖼️ Media + Nodes panel - Light theme</summary>
-
-![MeshCenter media split light theme](docs/images/MeshCenter_media_split_light_theme.png)
+![MeshCenter files light theme](docs/images/MeshCenter_files_light_theme.png)
 
 </details>
 
@@ -138,9 +103,16 @@ See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full dependency bre
 </details>
 
 <details>
-<summary>ℹ️ About - Dark theme</summary>
+<summary>🖥️ System and updates - Dark theme</summary>
 
-![MeshCenter about dark theme](docs/images/MeshCenter_about_dark_theme.png)
+![MeshCenter system dark theme](docs/images/MeshCenter_system_dark_theme.png)
+
+</details>
+
+<details>
+<summary>📱 On a phone - chat list, conversation, Nodes (dark)</summary>
+
+![MeshCenter on a phone](docs/images/MeshCenter_phone.png)
 
 </details>
 

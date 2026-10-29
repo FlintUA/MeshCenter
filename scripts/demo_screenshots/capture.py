@@ -2,7 +2,9 @@
 docs/images/, recompressed losslessly.
 
     python scripts/demo_screenshots/demo_server.py &              # fake data only
-    python scripts/demo_screenshots/capture.py [http://127.0.0.1:8795] [output dir]
+    python scripts/demo_screenshots/capture.py [http://127.0.0.1:8795] [output dir] [files]
+
+A third argument `files` takes only the Files (MCAttach) image.
 
 Needs Playwright with Microsoft Edge or Chromium (`pip install playwright`), Pillow and zopflipy (lossless PNG
 recompression). Before every shot the page text is scrubbed of anything that belongs to the machine the demo runs on
@@ -86,7 +88,24 @@ def open_channel(page):
     page.wait_for_function("document.querySelectorAll('.message').length > 2", timeout=15000)
 
 
+def capture_files_only():
+    with sync_playwright() as p:
+        try:
+            browser = p.chromium.launch(channel="msedge")
+        except Exception:
+            browser = p.chromium.launch()
+        page = fresh(browser, DESKTOP, "light")
+        page.evaluate("switchMainTab('files')")
+        page.wait_for_function("document.querySelectorAll('.files-transfer-item').length > 0", timeout=20000)
+        page.evaluate("document.querySelector('.files-transfer-item').click()")
+        settle(page, 2500)
+        save(page, "MeshCenter_files_light_theme.png")
+        browser.close()
+
+
 def main():
+    if len(sys.argv) > 3 and sys.argv[3] == "files":
+        return capture_files_only()
     with sync_playwright() as p:
         try:
             browser = p.chromium.launch(channel="msedge")
@@ -101,6 +120,8 @@ def main():
 
         # 3. Files (MCAttach), light
         page.evaluate("switchMainTab('files')")
+        page.wait_for_function("document.querySelectorAll('.files-transfer-item').length > 0", timeout=20000)
+        page.evaluate("document.querySelector('.files-transfer-item').click()")
         settle(page, 2500)
         save(page, "MeshCenter_files_light_theme.png")
 

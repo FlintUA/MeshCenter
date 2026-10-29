@@ -4349,3 +4349,143 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
     }
 }
 
+
+/* NL1: the Nodes header row. A fixed-height sticky row; label length follows the PANE width (container query on
+   .nodes-scroll), the hit areas follow the pointer (coarse = a finger). */
+.nodes-scroll {
+    container-type: inline-size;
+    container-name: nodespane;
+}
+.nodes-header-row {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 6px;
+    background: #f8f9fa;
+    font-variant-numeric: tabular-nums;
+}
+html[data-theme="dark"] .nodes-header-row {
+    background: #18212c;
+}
+.nodes-header-title {
+    white-space: nowrap;
+}
+.nodes-header-count {
+    min-width: 2.2em;
+    color: var(--mc-text, #1b2b3f);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0;
+    text-transform: none;
+    white-space: nowrap;
+}
+html[data-theme="dark"] .nodes-header-count {
+    color: #dbe5f1;
+}
+.nodes-header-pills {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+}
+.nodes-pill {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 26px;
+    box-sizing: border-box;
+    padding: 0 10px;
+    border: 1px solid var(--mc-border, #d8e1ec);
+    border-radius: 13px;
+    background: rgba(31, 111, 235, .06);
+    color: var(--mc-text, #1b2b3f);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.nodes-pill:hover {
+    background: rgba(31, 111, 235, .14);
+}
+.nodes-pill.is-active {
+    background: #1f6feb;
+    border-color: #1f6feb;
+    color: #fff;
+}
+.nodes-pill-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #2ea043;
+}
+.nodes-pill.is-active .nodes-pill-dot {
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, .55);
+}
+.nodes-pill-glyph {
+    line-height: 1;
+}
+.nodes-header-clear {
+    position: relative;
+    flex: 0 0 22px;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--mc-muted, #5c7290);
+    font-size: 12px;
+    cursor: pointer;
+}
+/* the slot stays reserved while the x is hidden, so the pills never move */
+.nodes-header-clear[hidden] {
+    display: inline-block;
+    visibility: hidden;
+}
+html[data-theme="dark"] .nodes-pill {
+    border-color: #2f3d4e;
+    background: rgba(94, 163, 255, .10);
+    color: #dbe5f1;
+}
+html[data-theme="dark"] .nodes-pill.is-active {
+    background: #2f81f7;
+    border-color: #2f81f7;
+    color: #fff;
+}
+@media (pointer: coarse) {
+    .nodes-pill::after,
+    .nodes-header-clear::after {
+        content: "";
+        position: absolute;
+        left: -4px;
+        right: -4px;
+        top: 50%;
+        height: 44px;
+        transform: translateY(-50%);
+    }
+    .nodes-header-clear::after {
+        left: -11px;
+        right: -11px;
+    }
+}
+/* a narrow pane: "84 + 7" without the words */
+@container nodespane (max-width: 340px) {
+    .nodes-pill-text {
+        display: none;
+    }
+    .nodes-pill {
+        padding: 0 8px;
+    }
+    .nodes-header-row {
+        gap: 6px;
+    }
+}

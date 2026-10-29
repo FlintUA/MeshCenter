@@ -557,3 +557,46 @@ console.log(`test_chat_views.mjs: ${passed} tests passed`);
     assert.deepEqual(B(undefined), offline);
     console.log('ok - profileConnectionBadge');
 }
+
+// ---- NL1: header counters and the 24 h "heard directly" rule ----
+
+test('heard directly: last_direct within 24 h wins, older last_direct is not direct', () => {
+    assert.equal(V.isHeardDirectly(node('!d0000001', { last_direct: NOW_S - 86400, last_seen: NOW_S }), NOW_S), true);
+    assert.equal(V.isHeardDirectly(node('!d0000002', { last_direct: NOW_S - 86401, last_seen: NOW_S }), NOW_S), false);
+    // a recorded last_direct is final: hops_away 0 does not rescue an old one
+    assert.equal(V.isHeardDirectly(node('!d0000003', { last_direct: NOW_S - 90000, hops_away: 0, last_seen: NOW_S }), NOW_S), false);
+});
+
+test('heard directly: without last_direct it falls back to hops_away 0 and heard in the last 24 h', () => {
+    assert.equal(V.isHeardDirectly(node('!d0000004', { hops_away: 0, last_seen: NOW_S - 3600 }), NOW_S), true);
+    assert.equal(V.isHeardDirectly(node('!d0000005', { hops_away: 0, last_seen: NOW_S - 86401 }), NOW_S), false);
+    assert.equal(V.isHeardDirectly(node('!d0000006', { hops_away: 1, last_seen: NOW_S }), NOW_S), false);
+    assert.equal(V.isHeardDirectly(node('!d0000007', { last_seen: NOW_S }), NOW_S), false);
+    assert.equal(V.isHeardDirectly(node('!d0000008', { hops_away: 0, last_seen: 0 }), NOW_S), false);
+});
+
+test('the direct filter and the header count use the same rule', () => {
+    const list = [
+        node('!e0000001', { last_direct: NOW_S - 100, last_seen: NOW_S - 100 }),
+        node('!e0000002', { hops_away: 0, last_seen: NOW_S - 5000 }),
+        node('!e0000003', { hops_away: 2, last_seen: NOW_S - 10 }),
+        node('!e0000004', { last_direct: NOW_S - 200000, last_seen: NOW_S - 10 }),
+    ];
+    const listed = V.filterAndSortNodes(list, { directOnly: true }, { now: NOW_S });
+    assert.deepEqual(listed.map((n) => n.node_id).sort(), ['!e0000001', '!e0000002']);
+    assert.equal(V.nodeHeaderCounts(list, list.length, NOW_S).direct, listed.length);
+});
+
+test('header counts: not-ignored nodes only, online at the 2 h edge, filtered flag', () => {
+    const list = [
+        node('!f0000001', { last_seen: NOW_S - 7200 }),
+        node('!f0000002', { last_seen: NOW_S - 7201 }),
+        node('!f0000003', { last_seen: 0 }),
+        node('!f0000004', { ignored: true, last_seen: NOW_S, last_direct: NOW_S }),
+    ];
+    const counts = V.nodeHeaderCounts(list, 3, NOW_S);
+    assert.deepEqual([counts.total, counts.online, counts.direct, counts.filtered], [3, 1, 0, false]);
+    const some = V.nodeHeaderCounts(list, 1, NOW_S);
+    assert.deepEqual([some.shown, some.total, some.filtered], [1, 3, true]);
+    assert.deepEqual({ ...V.nodeHeaderCounts(null, undefined, NOW_S) }, { total: 0, shown: 0, filtered: false, online: 0, direct: 0 });
+});

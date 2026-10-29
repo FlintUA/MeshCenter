@@ -144,7 +144,7 @@ def test_mob2e_controls_and_text_on_system_settings_about():
     assert "min-height: 44px" in _rule(block, "    .btn.btn-xs,")
     fields = _rule(block, "    .settings-select,")
     assert "min-height: 44px" in fields and "font-size: 16px" in fields and "max-width: 100%" in fields
-    assert "width: 24px" in _rule(block, "    .switch input[type=\"checkbox\"],")
+    assert "width: 28px" in _rule(block, "    .switch input[type=\"checkbox\"],")
     assert "min-height: 44px" in _rule(block, "    .about-tab {")
     assert "font-size: 11px" in _rule(block, "    .radio-history-time,")
 
@@ -206,3 +206,20 @@ def test_dark_theme_telemetry_tiles_are_themed_at_every_width():
     for selector in ('html[data-theme="dark"] .telemetry-btn.environment {', 'html[data-theme="dark"] .telemetry-btn.power {'):
         assert selector in head, selector
 
+
+
+def test_mob2g_leftovers_on_a_phone():
+    """MOB2-G (phone only): the installation ID is a 44 px target, the Base weather labels and the dock chevron
+    are at least 11 px, the toggle boxes are 28 px (inside their 44 px label)."""
+    block = _block()
+    assert "MOB2-G" in block
+    assert "min-height: 44px" in _rule(block, "    .system-row .copyable-value {")
+    assert "font-size: 11px" in _rule(block, "    .weather-metric span,")
+    assert "font-size: 14px" in _rule(block, "    .dock-notification-chevron {")
+    toggles = _rule(block, '    .switch input[type="checkbox"],\n    .system-row input[type="checkbox"],\n    .settings-option input[type="checkbox"] {')
+    assert "width: 28px" in toggles and "height: 28px" in toggles
+
+
+def test_mob2g_rules_stay_inside_the_media_query():
+    text = CSS.read_text(encoding="utf-8")
+    assert text.index("MOB2-G") > text.index(MARKER)

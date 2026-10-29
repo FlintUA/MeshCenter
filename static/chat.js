@@ -5742,6 +5742,38 @@ function renderNodesHeader(shownCount) {
         clear.setAttribute('aria-label', t('nodes.header_clear'));
         clear.title = t('nodes.header_clear');
     }
+    watchNodesHeaderFit();
+    fitNodesHeader();
+}
+
+// NL1: full labels while the row really fits, compact only when it overflows. Measured, not assumed: the row is put
+// into the full form, and if its content is wider than the row it goes compact. Re-checked on every render, whenever the
+// row is resized (pane width, page zoom, rotation) and when fonts finish loading (text scaling).
+let nodesHeaderObserver = null;
+function fitNodesHeader() {
+    const row = document.getElementById('nodesHeaderRow');
+    if (!row || !row.clientWidth || typeof row.getBoundingClientRect !== 'function') return;
+    row.setAttribute('data-fit', 'full');
+    // the last element's right edge against the row's content box (scrollWidth would also count the transparent
+    // touch hit zones, which stick out on purpose)
+    const last = row.lastElementChild;
+    const rowRect = row.getBoundingClientRect();
+    const padRight = parseFloat(getComputedStyle(row).paddingRight) || 0;
+    const overflows = Boolean(last) && last.getBoundingClientRect().right > rowRect.right - padRight + 1;
+    row.setAttribute('data-fit', overflows ? 'compact' : 'full');
+}
+
+function watchNodesHeaderFit() {
+    if (nodesHeaderObserver) return;
+    const row = document.getElementById('nodesHeaderRow');
+    if (!row) return;
+    nodesHeaderObserver = true;
+    if (typeof ResizeObserver === 'function') {
+        nodesHeaderObserver = new ResizeObserver(() => fitNodesHeader());
+        nodesHeaderObserver.observe(row);
+    }
+    if (typeof window.addEventListener === 'function') window.addEventListener('resize', fitNodesHeader);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitNodesHeader);
 }
 
 function toggleNodeHeaderFilter(flag) {

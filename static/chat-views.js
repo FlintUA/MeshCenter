@@ -156,6 +156,23 @@
         return { total: total, shown: shownCount, filtered: shownCount !== total, online: online, direct: direct };
     }
 
+    // NL1: the Nodes header always MEASURES the full labels, whatever form it shows now (a decision never feeds the next
+    // one, so it cannot stick): put the row into the full form, take its natural width, compare it with the width the
+    // row really has, then choose. `env.available(row)` is the row's content width, `env.natural(row)` the natural width
+    // of the full form: the visible children and the gaps between them, the reserved x slot only when the x is shown (the
+    // transparent touch hit zones are never part of it). Returns the form it set, or null when the row cannot be
+    // measured (hidden pane).
+    function fitNodesHeaderRow(row, env) {
+        if (!row || !env) return null;
+        const available = Number(env.available(row));
+        if (!Number.isFinite(available) || available <= 0) return null;
+        row.setAttribute('data-fit', 'full');
+        const natural = Number(env.natural(row));
+        const mode = Number.isFinite(natural) && natural > available + 0.5 ? 'compact' : 'full';
+        row.setAttribute('data-fit', mode);
+        return mode;
+    }
+
     function isInfrastructureRole(role) {
         return INFRASTRUCTURE_ROLES.indexOf(String(role || '').toUpperCase()) !== -1;
     }
@@ -721,6 +738,7 @@
         isHeardDirectly: isHeardDirectly,
         isOnline: isOnline,
         nodeHeaderCounts: nodeHeaderCounts,
+        fitNodesHeaderRow: fitNodesHeaderRow,
         DIRECT_WITHIN_SECONDS: DIRECT_WITHIN_SECONDS,
         nodePassesFilters: nodePassesFilters,
         sortNodes: sortNodes,

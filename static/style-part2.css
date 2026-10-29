@@ -4350,12 +4350,8 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
 }
 
 
-/* NL1: the Nodes header row. A fixed-height sticky row; label length follows the PANE width (container query on
-   .nodes-scroll), the hit areas follow the pointer (coarse = a finger). */
-.nodes-scroll {
-    container-type: inline-size;
-    container-name: nodespane;
-}
+/* NL1: the Nodes header row. A fixed-height sticky row; label form follows the measured fit (see data-fit below), the hit
+   areas follow the pointer (coarse = a finger). */
 .nodes-header-row {
     position: sticky;
     top: 0;
@@ -4477,9 +4473,9 @@ html[data-theme="dark"] .nodes-pill.is-active {
         right: -11px;
     }
 }
-/* compact labels ("84 + 7" without the words): decided by REAL fit (fitNodesHeader() in chat.js measures the row and sets
-   data-fit); the container query below is only the fallback for a row that has not been measured yet. Text scaling and
-   page zoom change the width in CSS px, so a fixed width would compact a row that clearly fits. */
+/* compact labels ("84 + 7" without the words): decided by REAL fit (fitNodesHeader() in chat.js measures the full labels
+   against the row's width every time and sets data-fit). No width-based fallback: text scaling and page zoom change the
+   width in CSS px, so a fixed width compacted rows that clearly fit, and a fallback state must never block a switch back. */
 .nodes-header-row[data-fit="compact"] .nodes-pill-text {
     display: none;
 }
@@ -4488,15 +4484,4 @@ html[data-theme="dark"] .nodes-pill.is-active {
 }
 .nodes-header-row[data-fit="compact"] {
     gap: 6px;
-}
-@container nodespane (max-width: 340px) {
-    .nodes-header-row:not([data-fit]) .nodes-pill-text {
-        display: none;
-    }
-    .nodes-header-row:not([data-fit]) .nodes-pill {
-        padding: 0 8px;
-    }
-    .nodes-header-row:not([data-fit]) {
-        gap: 6px;
-    }
 }

@@ -600,3 +600,46 @@ test('header counts: not-ignored nodes only, online at the 2 h edge, filtered fl
     assert.deepEqual([some.shown, some.total, some.filtered], [1, 3, true]);
     assert.deepEqual({ ...V.nodeHeaderCounts(null, undefined, NOW_S) }, { total: 0, shown: 0, filtered: false, online: 0, direct: 0 });
 });
+
+// ---- NL1: the header form is measured fresh every time (it must never stick) ----
+
+function fakeRow(initial) {
+    const attrs = { 'data-fit': initial };
+    return { attrs, setAttribute(k, v) { attrs[k] = v; }, getAttribute(k) { return attrs[k]; } };
+}
+// natural width of the FULL form is a property of the content, not of the current form; the env reads it the way the
+// browser does, with the row forced into the full form first
+const fitEnv = (state) => ({
+    available: () => state.available,
+    natural: (row) => { state.seenForm = row.getAttribute('data-fit'); return state.natural; },
+});
+
+test('header fit: starting compact, a row that grows wide enough goes back to full', () => {
+    const row = fakeRow('compact');
+    const state = { available: 300, natural: 330 };
+    assert.equal(V.fitNodesHeaderRow(row, fitEnv(state)), 'compact');
+    state.available = 340; // pane grew (rotation, zoom out, wider text scale reset)
+    assert.equal(V.fitNodesHeaderRow(row, fitEnv(state)), 'full');
+    assert.equal(row.getAttribute('data-fit'), 'full');
+});
+
+test('header fit: a full form that overflows goes compact, one that fits stays full', () => {
+    const row = fakeRow('full');
+    const state = { available: 300, natural: 301 };
+    assert.equal(V.fitNodesHeaderRow(row, fitEnv(state)), 'compact');
+    state.natural = 300;
+    assert.equal(V.fitNodesHeaderRow(row, fitEnv(state)), 'full');
+});
+
+test('header fit: always measures the full form, never the compact one', () => {
+    const row = fakeRow('compact');
+    const state = { available: 400, natural: 380 };
+    V.fitNodesHeaderRow(row, fitEnv(state));
+    assert.equal(state.seenForm, 'full');
+});
+
+test('header fit: a hidden pane (no width) is left alone', () => {
+    const row = fakeRow('compact');
+    assert.equal(V.fitNodesHeaderRow(row, fitEnv({ available: 0, natural: 100 })), null);
+    assert.equal(row.getAttribute('data-fit'), 'compact');
+});

@@ -5752,15 +5752,21 @@ function renderNodesHeader(shownCount) {
 let nodesHeaderObserver = null;
 function fitNodesHeader() {
     const row = document.getElementById('nodesHeaderRow');
-    if (!row || !row.clientWidth || typeof row.getBoundingClientRect !== 'function') return;
-    row.setAttribute('data-fit', 'full');
-    // the last element's right edge against the row's content box (scrollWidth would also count the transparent
-    // touch hit zones, which stick out on purpose)
-    const last = row.lastElementChild;
-    const rowRect = row.getBoundingClientRect();
-    const padRight = parseFloat(getComputedStyle(row).paddingRight) || 0;
-    const overflows = Boolean(last) && last.getBoundingClientRect().right > rowRect.right - padRight + 1;
-    row.setAttribute('data-fit', overflows ? 'compact' : 'full');
+    if (!row || typeof row.getBoundingClientRect !== 'function' || typeof getComputedStyle !== 'function' || !window.MCViews.fitNodesHeaderRow) return;
+    window.MCViews.fitNodesHeaderRow(row, {
+        available: (el) => {
+            const style = getComputedStyle(el);
+            return el.clientWidth - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0);
+        },
+        natural: (el) => {
+            // the full form's own widths (flex items cannot shrink below their nowrap content): every child that takes part
+            // in the layout, plus the gaps; the x slot only while the x is shown
+            const gap = parseFloat(getComputedStyle(el).columnGap) || 0;
+            const kids = Array.from(el.children).filter((child) => !child.hidden);
+            const widths = kids.reduce((sum, child) => sum + child.getBoundingClientRect().width, 0);
+            return widths + gap * Math.max(0, kids.length - 1);
+        },
+    });
 }
 
 function watchNodesHeaderFit() {

@@ -32,11 +32,6 @@ def test_touch_hit_zone_is_44px_and_uses_pointer_coarse():
     assert re.search(r"height:\s*44px", block)
 
 
-def test_compact_labels_follow_the_pane_via_a_container_query():
-    assert re.search(r"\.nodes-scroll\s*\{[^}]*container-type:\s*inline-size", CSS)
-    assert re.search(r"@container nodespane \(max-width:\s*340px\)", CSS)
-
-
 def test_clear_slot_is_reserved_while_hidden():
     assert re.search(r"\.nodes-header-clear\[hidden\]\s*\{[^}]*visibility:\s*hidden", CSS)
 
@@ -48,9 +43,9 @@ def test_markup_and_actions_are_wired():
     assert "toggleNodeHeaderFilter('hideOffline')" in JS and "toggleNodeHeaderFilter('directOnly')" in JS
 
 
-def test_compact_is_decided_by_measured_fit_with_the_container_query_only_as_fallback():
+def test_compact_is_decided_by_measured_fit_with_no_width_fallback():
     assert '.nodes-header-row[data-fit="compact"] .nodes-pill-text' in CSS
-    fallback = CSS[CSS.index("@container nodespane"):]
-    assert ".nodes-header-row:not([data-fit])" in fallback
-    assert "function fitNodesHeader()" in JS and "last.getBoundingClientRect().right > rowRect.right" in JS
+    assert "@container" not in CSS and "container-type" not in CSS
+    assert ":not([data-fit])" not in CSS
+    assert "function fitNodesHeader()" in JS and "MCViews.fitNodesHeaderRow(row" in JS
     assert "new ResizeObserver(() => fitNodesHeader())" in JS

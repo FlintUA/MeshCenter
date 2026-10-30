@@ -36,7 +36,12 @@ function mediaViews() {
 function mediaLoadPrefs() {
     const saved = (typeof appSettings !== 'undefined' && appSettings && appSettings.media) || {};
     mediaSort = mediaViews().normalizeSort(saved.sort);
-    mediaView = mediaViews().normalizeView(saved.view);
+    mediaView = mediaViews().pickView(saved, mediaIsPhone());
+}
+
+// the sort is shared by all devices, the view is remembered for a phone and for a desktop separately
+function mediaIsPhone() {
+    return Boolean(window.MCMobileLayout && typeof window.MCMobileLayout.isMobile === 'function' && window.MCMobileLayout.isMobile());
 }
 
 async function mediaSavePrefs() {
@@ -44,7 +49,7 @@ async function mediaSavePrefs() {
         const response = await fetch('/api/settings', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ media: { sort: mediaSort, view: mediaView } })
+            body: JSON.stringify({ media: { sort: mediaSort, [mediaViews().viewField(mediaIsPhone())]: mediaView } })
         });
         const data = await response.json();
         if (data && data.ok && data.settings && typeof appSettings !== 'undefined') appSettings = data.settings;

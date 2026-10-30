@@ -47,6 +47,16 @@ assert.deepEqual(names(pictures), original, 'the caller list is never reordered'
 assert.equal(V.sortItems(null, 'name').length, 0);
 assert.deepEqual(names(V.sortItems(pictures, 'nonsense')), names(V.sortItems(pictures, 'date_desc')), 'an unknown key is the default');
 
+// ---------------------------------------------------------------- the view is remembered per device
+assert.equal(V.viewField(true), 'view_mobile');
+assert.equal(V.viewField(false), 'view_desktop');
+assert.equal(V.pickView({ view_desktop: 'list', view_mobile: 'small' }, true), 'small', 'a phone reads its own field');
+assert.equal(V.pickView({ view_desktop: 'list', view_mobile: 'small' }, false), 'list', 'a desktop reads its own');
+assert.equal(V.pickView({ view: 'list' }, true), 'list', 'the old single view is the fallback');
+assert.equal(V.pickView({ view: 'list', view_mobile: 'small' }, false), 'list');
+assert.equal(V.pickView({ view_mobile: 'bogus' }, true), 'large', 'an invalid value is the default');
+assert.equal(V.pickView(null, false), 'large');
+
 // ---------------------------------------------------------------- formatting
 assert.equal(V.formatBytes(500), '500 B');
 assert.equal(V.formatBytes(2048), '2.0 KB');
@@ -116,7 +126,7 @@ assert.equal(V.indexAfterDelete(0, 1), null, 'nothing left');
 // ---------------------------------------------------------------- the real files: wiring that must not drift
 const media = read('media.js');
 assert.ok(media.includes("fetch('/api/camera/screenshots/zip'") && media.includes("fetch('/api/camera/screenshots/delete'"), 'bulk calls');
-assert.ok(media.includes("media: { sort: mediaSort, view: mediaView }"), 'sort and view are remembered through the settings');
+assert.ok(media.includes('media: { sort: mediaSort, [mediaViews().viewField(mediaIsPhone())]: mediaView }'), 'sort and the per-device view are remembered through the settings');
 assert.ok(media.includes('loading="lazy"') && media.includes('thumb_url'), 'thumbnails load lazily');
 assert.ok(!/(^|[^A-Za-z])(confirm|alert|prompt)\(/.test(media), 'no native dialogs');
 assert.ok(template.indexOf('media-views.js') < template.indexOf('/static/media.js'), 'media-views.js loads first');

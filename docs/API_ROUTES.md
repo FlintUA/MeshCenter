@@ -153,9 +153,9 @@ Auth/CSRF columns mirror `api/api_auth.py`'s own `_enforce_auth()`/`_enforce_csr
 | `/api/send` | POST | `api/api_chat.py:626` (`api_send`) | required | required |
 | `/api/send/retry` | POST | `api/api_chat.py:775` (`api_send_retry`) | required | required |
 | `/api/sensors` | GET | `server.py:7477` (`api_sensors`) | required | exempt |
-| `/api/settings` | GET | `api/api_settings.py:693` (`api_get_settings`) | required | exempt |
-| `/api/settings` | POST | `api/api_settings.py:724` (`api_update_settings`) | required | required |
-| `/api/settings/reference-location-name` | POST | `api/api_settings.py:705` (`api_reference_location_name`) | required | required |
+| `/api/settings` | GET | `api/api_settings.py:704` (`api_get_settings`) | required | exempt |
+| `/api/settings` | POST | `api/api_settings.py:735` (`api_update_settings`) | required | required |
+| `/api/settings/reference-location-name` | POST | `api/api_settings.py:716` (`api_reference_location_name`) | required | required |
 | `/api/system/action` | POST | `api/api_system.py:86` (`api_system_action`) | required | required |
 | `/api/system/cpu-history` | GET | `system/cpu_history.py:183` (`api_system_cpu_history`) | required | exempt |
 | `/api/system/info` | GET | `api/api_system.py:131` (`api_system_info`) | required | exempt |

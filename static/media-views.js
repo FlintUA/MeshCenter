@@ -21,6 +21,18 @@
         return VIEWS.indexOf(value) !== -1 ? value : DEFAULT_VIEW;
     }
 
+    // The view is remembered per kind of device: settings.media.view_mobile on a phone, view_desktop elsewhere
+    // (a single `view` saved by the first G1 build seeds both until the device chooses).
+    function viewField(isMobile) {
+        return isMobile ? 'view_mobile' : 'view_desktop';
+    }
+
+    function pickView(media, isMobile) {
+        const saved = media && typeof media === 'object' ? media : {};
+        const own = saved[viewField(isMobile)];
+        return normalizeView(VIEWS.indexOf(own) !== -1 ? own : saved.view);
+    }
+
     function byText(a, b) {
         return String(a || '').localeCompare(String(b || ''), undefined, { sensitivity: 'base', numeric: true });
     }
@@ -141,7 +153,7 @@
 
     root.MCMediaViews = {
         SORTS, VIEWS, DEFAULT_SORT, DEFAULT_VIEW, ZIP_MAX_BYTES, BULK_MAX,
-        normalizeSort, normalizeView, sortItems, formatBytes, formatResolution,
+        normalizeSort, normalizeView, viewField, pickView, sortItems, formatBytes, formatResolution,
         toggle, allSelected, toggleAll, prune, totals, bulkState, neighbour, indexAfterDelete,
     };
 })(typeof window !== 'undefined' ? window : globalThis);

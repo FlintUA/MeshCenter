@@ -59,9 +59,11 @@ DEFAULT_SETTINGS = {
     },
 
     "media": {
-        # Gallery view preferences (not content): how the pictures are ordered and shown.
+        # Gallery view preferences (not content). The sort is shared by every device; the view is remembered
+        # separately for a desktop and for a phone (the same gallery wants different views there).
         "sort": "date_desc",
-        "view": "large",
+        "view_desktop": "large",
+        "view_mobile": "large",
     },
 
     "timers": {
@@ -457,9 +459,17 @@ def normalize_settings(settings):
     media_sort = str(media_settings.get("sort", "date_desc")).strip().lower()
     if media_sort not in MEDIA_SORTS:
         media_sort = "date_desc"
-    media_view = str(media_settings.get("view", "large")).strip().lower()
-    if media_view not in MEDIA_VIEWS:
-        media_view = "large"
+    # the single `view` of the first G1 build seeds both fields until each device has chosen its own
+    legacy_view = str(media_settings.get("view", "large")).strip().lower()
+    if legacy_view not in MEDIA_VIEWS:
+        legacy_view = "large"
+
+    def _media_view(key):
+        value = str(media_settings.get(key, legacy_view)).strip().lower()
+        return value if value in MEDIA_VIEWS else legacy_view
+
+    media_view_desktop = _media_view("view_desktop")
+    media_view_mobile = _media_view("view_mobile")
 
     # ---------------- Timer form defaults ----------------
 
@@ -612,7 +622,8 @@ def normalize_settings(settings):
 
         "media": {
             "sort": media_sort,
-            "view": media_view,
+            "view_desktop": media_view_desktop,
+            "view_mobile": media_view_mobile,
         },
 
         "timers": {

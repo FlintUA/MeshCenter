@@ -4,7 +4,7 @@
 # docs/architecture/docker-blockers.md):
 #  * python:3.11-slim-trixie (Debian 13, pinned) - no Raspberry Pi OS base needed: the camera/libcamera
 #    import is already guarded, and this image ships no camera, GPIO, I2C,
-#    BLE or serial support. TCP radios only (network cameras need ffmpeg: not included yet, see below).
+#    BLE or serial support. TCP radios only (network cameras use the minimal LGPL ffmpeg built in the first stage).
 #  * ONE container, TWO OS processes, TWO separate venvs - the GPLv3
 #    `meshtastic` package lives only in the adapter venv (the same layout
 #    install.sh builds on a Pi); Core's interpreter cannot import it. The
@@ -21,10 +21,51 @@
 #  * Runs as a non-root user; compose overrides it with PUID:PGID (the user
 #    owning the bind mounts). No chown is ever attempted.
 #  * Redistribution note: an image containing the adapter venv redistributes
-#    GPLv3 code. Build locally; do not publish it before the D0 section 5
-#    documentation gap is closed.
+#    GPLv3 code (and the LGPL ffmpeg below). Build locally; do not publish it
+#    before the D0 section 5 documentation gap is closed.
 # Pinned on purpose (DK5): python:3.11-slim silently moved from Debian 12 to 13 once. This is the system the
 # running image already uses; change it only deliberately, with a release note.
+# ---------------------------------------------------------------------------
+# Stage 1: a minimal LGPL ffmpeg (CAM2 Phase 4). Debian's own ffmpeg package is GPL (x264/x265) and adds about
+# 625 MB; this build has NO external libraries, NO --enable-gpl, NO --enable-nonfree, and only the components the
+# camera code uses (every call site was listed in the Phase 4 PR): the concat demuxer fed from stdin, RTSP/RTP/SDP
+# over tcp/udp (no TLS: RTSPS is not supported), the mov demuxer, native H.264 decoder, mjpeg encoder, the mp4,
+# mjpeg and image2pipe muxers, the scale/format filters. Shared libraries (an rpath into /opt/ffmpeg/lib), so the
+# LGPL relink right is trivial: the source tarball, the licence text and the configure line ship in the image under
+# /usr/share/doc/meshcenter-ffmpeg. The version and checksum are pinned; the checksum is checked by BuildKit itself.
+# Security point releases of the 7.1 line: rebuild the image (docs/development/RELEASING.md).
+FROM python:3.11-slim-trixie AS ffmpeg-build
+ARG FFMPEG_VERSION=7.1.5
+ARG FFMPEG_SHA256=de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f
+# hadolint ignore=DL3008
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends build-essential nasm pkg-config xz-utils ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+ADD --checksum=sha256:${FFMPEG_SHA256} https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz /src/ffmpeg.tar.xz
+RUN mkdir /src/ffmpeg && tar -xJf /src/ffmpeg.tar.xz -C /src/ffmpeg --strip-components=1 \
+ && cd /src/ffmpeg \
+ && ./configure \
+      --prefix=/opt/ffmpeg --enable-rpath --enable-shared --disable-static \
+      --disable-gpl --disable-nonfree --disable-version3 --disable-autodetect \
+      --disable-everything --disable-doc --disable-debug --disable-ffplay --disable-ffprobe \
+      --disable-avdevice --disable-postproc --enable-pthreads \
+      --enable-protocol=pipe,fd,tcp,udp,rtp \
+      --enable-demuxer=concat,rtsp,rtp,sdp,mov,mjpeg \
+      --enable-muxer=mp4,mjpeg,image2pipe \
+      --enable-decoder=h264,aac,pcm_alaw,pcm_mulaw \
+      --enable-encoder=mjpeg \
+      --enable-parser=h264,hevc,aac \
+      --enable-bsf=extract_extradata,h264_mp4toannexb,hevc_mp4toannexb,null \
+      --enable-filter=scale,format,null,buffer,buffersink \
+      --enable-swscale \
+ && make -j"$(nproc)" \
+ && make install \
+ && /opt/ffmpeg/bin/ffmpeg -buildconf > /opt/ffmpeg/buildconf.txt \
+ && cp /src/ffmpeg/COPYING.LGPLv2.1 /src/ffmpeg/LICENSE.md /opt/ffmpeg/ \
+ && /opt/ffmpeg/bin/ffmpeg -L | head -3
+
+# ---------------------------------------------------------------------------
+# Stage 2: the MeshCenter image
 FROM python:3.11-slim-trixie
 
 ARG MESHCENTER_VERSION=unknown
@@ -43,11 +84,8 @@ ENV MESHCENTER_RUNTIME=container \
     TZ=UTC \
     PATH=/opt/core-venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-# Debian point-release pins break rebuilds; only tini and tzdata are installed.
-# NO ffmpeg on purpose (CAM2): measured with a plain `apt-get install --no-install-recommends ffmpeg`
-# on python:3.11-slim (Debian 13) it adds 205 packages and about 625 MB (193 MB -> 818 MB image), far
-# over the 150 MB budget. Network (RTSP) cameras therefore show "ffmpeg is not available in this image"
-# here; the plan is a minimal LGPL ffmpeg built in a builder stage (Phase 4, target <= 60 MB).
+# Debian point-release pins break rebuilds; only tini and tzdata are installed. ffmpeg is NOT taken from Debian
+# (205 packages, about 625 MB, GPL): the minimal LGPL build of the first stage is copied in below.
 # hadolint ignore=DL3008
 RUN apt-get update \
  && apt-get install -y --no-install-recommends tini tzdata \
@@ -60,6 +98,18 @@ RUN apt-get update \
 WORKDIR /app
 
 # Dependencies first (layer cache). Core venv: no `meshtastic` in it.
+# The minimal LGPL ffmpeg (stage 1) with its shared libraries, the licence text, the configure line and the exact
+# source tarball it was built from (the written offer is this very file), and a PATH entry for the binary.
+COPY --from=ffmpeg-build /opt/ffmpeg/bin/ffmpeg /opt/ffmpeg/bin/ffmpeg
+COPY --from=ffmpeg-build /opt/ffmpeg/lib/ /opt/ffmpeg/lib/
+COPY --from=ffmpeg-build /opt/ffmpeg/buildconf.txt /opt/ffmpeg/COPYING.LGPLv2.1 /opt/ffmpeg/LICENSE.md /usr/share/doc/meshcenter-ffmpeg/
+COPY --from=ffmpeg-build /src/ffmpeg.tar.xz /usr/share/doc/meshcenter-ffmpeg/ffmpeg-source.tar.xz
+RUN ln -s /opt/ffmpeg/bin/ffmpeg /usr/local/bin/ffmpeg \
+ && ffmpeg -version | head -1 \
+ && ffmpeg -L | grep -q "GNU Lesser General Public" \
+ && ! ffmpeg -buildconf | grep -Eq "enable-(gpl|nonfree|version3)" \
+ && ! ldd /opt/ffmpeg/bin/ffmpeg | grep -q "not found"
+
 COPY requirements.txt /tmp/requirements.txt
 RUN python -m venv /opt/core-venv \
  && /opt/core-venv/bin/pip install -r /tmp/requirements.txt \
@@ -88,9 +138,9 @@ RUN ! /opt/core-venv/bin/python -c "import meshtastic" 2>/dev/null \
 
 # OCI image labels (v1.12.2): `docker image inspect` shows the version and the exact commit.
 # Declared last so a new revision never invalidates the dependency layers above.
-# The licence expression covers the whole image: MIT Core + the GPLv3 adapter environment.
+# The licence expression covers the whole image: MIT Core + the GPLv3 adapter environment + the LGPL ffmpeg.
 ARG MESHCENTER_REVISION=unknown
-LABEL org.opencontainers.image.title="MeshCenter"       org.opencontainers.image.version="${MESHCENTER_VERSION}"       org.opencontainers.image.revision="${MESHCENTER_REVISION}"       org.opencontainers.image.source="https://github.com/FlintUA/MeshCenter"       org.opencontainers.image.licenses="MIT AND GPL-3.0-only"
+LABEL org.opencontainers.image.title="MeshCenter"       org.opencontainers.image.version="${MESHCENTER_VERSION}"       org.opencontainers.image.revision="${MESHCENTER_REVISION}"       org.opencontainers.image.source="https://github.com/FlintUA/MeshCenter"       org.opencontainers.image.licenses="MIT AND GPL-3.0-only AND LGPL-2.1-or-later"
 
 USER ${PUID}:${PGID}
 EXPOSE 5000

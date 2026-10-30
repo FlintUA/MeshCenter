@@ -52,16 +52,15 @@ USB/serial radio, Bluetooth, local camera (CSI and USB), e-Paper display, I2C / 
 BME280 setup, hardware-config editing, Wi-Fi/network management, device
 reboot/shutdown, in-app self-update (**update by rebuilding or loading a new image**).
 
-**Live video of network cameras is not available in this image yet.** It needs
-`ffmpeg`, which is not included (a camera with Reolink API control still shows
-snapshots, about one picture per second, and "Take picture" works; the Devices
-card for local CSI/USB cameras says they are not available in Docker): Debian's own `ffmpeg` package would add
-205 packages and about 625 MB (measured: 193 MB -> 818 MB on `python:3.11-slim`),
-so the Network cameras card says "ffmpeg is not available in this Docker image"
-instead. A minimal ffmpeg built in the image (RTSP/RTP input, H.264/H.265
-parsers, MP4 and MJPEG output, LGPL, target 60 MB or less) is planned for the
-next camera phase. Once it is there: use TCP (UDP rarely works through Docker's
-bridge network) and an IP address, and keep the camera on your LAN (addresses of
+**Live video of network cameras works in this image** (the Devices card for local
+CSI/USB cameras says they are not available in Docker). The image builds its own
+minimal `ffmpeg` (7.1.5, LGPL, no external libraries, about 16 MB including the
+source it was built from, which is kept in `/usr/share/doc/meshcenter-ffmpeg/`)
+instead of Debian's package (205 packages, about 625 MB). It does RTSP over TCP or
+UDP, H.264 video (copied, not re-encoded), and a snapshot or MJPEG picture for
+browsers without MediaSource. **RTSPS (RTSP over TLS) is not supported yet.** Use
+TCP (UDP rarely works through Docker's bridge network) and an IP address, and keep
+the camera on your LAN (addresses of
 the container's own network and of its gateway are refused; with
 `network_mode: host` set `MESHCENTER_CAMERA_ALLOW_OWN_SUBNET=1`). Never forward a
 camera's ports to the Internet.

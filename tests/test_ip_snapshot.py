@@ -81,6 +81,7 @@ def env(tmp_path, monkeypatch, fake):
     gallery.mkdir()
     monkeypatch.setattr(camera_module, "DATA_DIR", str(tmp_path))
     monkeypatch.setattr(camera_module, "SCREENSHOTS_DIR", str(gallery))
+    monkeypatch.setattr(camera_module, "start_thumbnail_backfill", lambda missing: False)  # a background reader would lock files on Windows
     driver, limiter = _driver(tmp_path, monkeypatch)
     store = driver._store
     store.update(driver.id, {"host": "127.0.0.1", "username": "admin",

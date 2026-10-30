@@ -55,7 +55,8 @@
     "title_delete_waypoints": "Waypoints löschen",
     "title_delete_image": "Bild löschen",
     "title_delete_all_images": "Alle Bilder löschen",
-    "rollback": "Zurückrollen"
+    "rollback": "Zurückrollen",
+    "title_delete_images": "Bilder löschen"
   },
   "nav": {
     "chats": "Chats",
@@ -682,7 +683,9 @@
     "contrast": "Kontrast",
     "saturation": "Sättigung",
     "sharpness": "Schärfe",
-    "exposure": "Belichtung"
+    "exposure": "Belichtung",
+    "fullscreen_enter": "Vollbild",
+    "fullscreen_exit": "Vollbild beenden"
   },
   "media": {
     "media_gallery": "Mediengalerie",
@@ -719,7 +722,56 @@
       "few": "ALLE {count} Bilder löschen? Diese Aktion kann nicht rückgängig gemacht werden.",
       "many": "ALLE {count} Bilder löschen? Diese Aktion kann nicht rückgängig gemacht werden.",
       "other": "ALLE {count} Bilder löschen? Diese Aktion kann nicht rückgängig gemacht werden."
-    }
+    },
+    "sort_label": "Sortierung",
+    "sort_date_desc": "Datum, neueste zuerst",
+    "sort_date_asc": "Datum, älteste zuerst",
+    "sort_name": "Name",
+    "sort_size": "Größe, größte zuerst",
+    "sort_camera": "Kamera",
+    "view_label": "Ansicht",
+    "view_large": "Große Vorschaubilder",
+    "view_small": "Kleine Vorschaubilder",
+    "view_list": "Liste",
+    "select_all": "Alle auswählen",
+    "select_item": "Bild auswählen",
+    "open_image": "Öffnen",
+    "camera_local": "Lokale Kamera",
+    "bulk_download": "Zip herunterladen",
+    "bulk_delete": "Löschen",
+    "bulk_clear": "Auswahl aufheben",
+    "selected_summary": {
+      "one": "{count} ausgewählt, {size}",
+      "few": "{count} ausgewählt, {size}",
+      "many": "{count} ausgewählt, {size}",
+      "other": "{count} ausgewählt, {size}"
+    },
+    "zip_limit_message": "Ein Zip-Download ist auf {max} begrenzt. Ausgewählt sind {size}: wähle weniger Bilder aus oder lade sie in Teilen herunter.",
+    "bulk_too_many": "Höchstens {max} Bilder auf einmal: wähle weniger aus.",
+    "zip_started": {
+      "one": "Download von {count} Bild gestartet",
+      "few": "Download von {count} Bildern gestartet",
+      "many": "Download von {count} Bildern gestartet",
+      "other": "Download von {count} Bildern gestartet"
+    },
+    "download_failed": "Download fehlgeschlagen",
+    "bulk_delete_confirm": {
+      "one": "{count} Bild löschen? Das kann nicht rückgängig gemacht werden.",
+      "few": "{count} Bilder löschen? Das kann nicht rückgängig gemacht werden.",
+      "many": "{count} Bilder löschen? Das kann nicht rückgängig gemacht werden.",
+      "other": "{count} Bilder löschen? Das kann nicht rückgängig gemacht werden."
+    },
+    "bulk_deleted": {
+      "one": "{count} Bild gelöscht",
+      "few": "{count} Bilder gelöscht",
+      "many": "{count} Bilder gelöscht",
+      "other": "{count} Bilder gelöscht"
+    },
+    "bulk_delete_partial": "{done} gelöscht, {failed} konnten nicht gelöscht werden",
+    "lightbox_label": "Bildbetrachter",
+    "lightbox_close": "Schließen",
+    "lightbox_prev": "Vorheriges Bild",
+    "lightbox_next": "Nächstes Bild"
   },
   "devices": {
     "subtitle": "Periphere Geräte und Module, die dem aktiven Funkprofil zugeordnet sind",

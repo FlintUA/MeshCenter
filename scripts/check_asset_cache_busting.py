@@ -49,7 +49,7 @@ INDEX_HTML = REPO_ROOT / 'templates' / 'index.html'
 I18N_JS = REPO_ROOT / 'static' / 'i18n.js'
 
 # The single canonical cache-busting token for the current frontend release.
-CURRENT_VERSION = '20261031-compact'
+CURRENT_VERSION = '20261031-gallery'
 
 # Browser assets changed in the current release. Every entry must be referenced
 # in index.html with CURRENT_VERSION (and, for i18n.js, its CATALOG_VERSION must
@@ -77,6 +77,8 @@ CURRENT_ASSETS = {
     'static/style-part2.css',
     'static/style-part3.css',
     'static/targets.js',
+    'static/media.js',
+    'static/media-views.js',
     'static/ui-kit.css',
 }
 

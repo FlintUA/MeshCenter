@@ -55,7 +55,8 @@
     "title_delete_waypoints": "Видалити waypoints",
     "title_delete_image": "Видалити зображення",
     "title_delete_all_images": "Видалити всі зображення",
-    "rollback": "Відкотити"
+    "rollback": "Відкотити",
+    "title_delete_images": "Видалити знімки"
   },
   "nav": {
     "chats": "Чати",
@@ -682,7 +683,9 @@
     "contrast": "Контраст",
     "saturation": "Насиченість",
     "sharpness": "Різкість",
-    "exposure": "Експозиція"
+    "exposure": "Експозиція",
+    "fullscreen_enter": "На весь екран",
+    "fullscreen_exit": "Вийти з повноекранного режиму"
   },
   "media": {
     "media_gallery": "Галерея медіа",
@@ -719,7 +722,56 @@
       "few": "Видалити ВСІ {count} зображення? Цю дію неможливо скасувати.",
       "many": "Видалити ВСІ {count} зображень? Цю дію неможливо скасувати.",
       "other": "Видалити ВСІ {count} зображень? Цю дію неможливо скасувати."
-    }
+    },
+    "sort_label": "Сортування",
+    "sort_date_desc": "Дата, спочатку нові",
+    "sort_date_asc": "Дата, спочатку старі",
+    "sort_name": "Ім'я",
+    "sort_size": "Розмір, спочатку великі",
+    "sort_camera": "Камера",
+    "view_label": "Вигляд",
+    "view_large": "Великі мініатюри",
+    "view_small": "Малі мініатюри",
+    "view_list": "Список",
+    "select_all": "Вибрати все",
+    "select_item": "Вибрати знімок",
+    "open_image": "Відкрити",
+    "camera_local": "Локальна камера",
+    "bulk_download": "Завантажити zip",
+    "bulk_delete": "Видалити",
+    "bulk_clear": "Зняти вибір",
+    "selected_summary": {
+      "one": "Вибрано {count}, {size}",
+      "few": "Вибрано {count}, {size}",
+      "many": "Вибрано {count}, {size}",
+      "other": "Вибрано {count}, {size}"
+    },
+    "zip_limit_message": "Завантаження zip обмежене {max}. Вибрано {size}: виберіть менше знімків або завантажте їх частинами.",
+    "bulk_too_many": "Не більше {max} знімків за раз: виберіть менше.",
+    "zip_started": {
+      "one": "Завантаження {count} знімка розпочато",
+      "few": "Завантаження {count} знімків розпочато",
+      "many": "Завантаження {count} знімків розпочато",
+      "other": "Завантаження {count} знімка розпочато"
+    },
+    "download_failed": "Не вдалося завантажити",
+    "bulk_delete_confirm": {
+      "one": "Видалити {count} знімок? Це не можна скасувати.",
+      "few": "Видалити {count} знімки? Це не можна скасувати.",
+      "many": "Видалити {count} знімків? Це не можна скасувати.",
+      "other": "Видалити {count} знімка? Це не можна скасувати."
+    },
+    "bulk_deleted": {
+      "one": "Видалено {count} знімок",
+      "few": "Видалено {count} знімки",
+      "many": "Видалено {count} знімків",
+      "other": "Видалено {count} знімка"
+    },
+    "bulk_delete_partial": "Видалено {done}, не вдалося видалити {failed}",
+    "lightbox_label": "Перегляд знімка",
+    "lightbox_close": "Закрити",
+    "lightbox_prev": "Попередній знімок",
+    "lightbox_next": "Наступний знімок"
   },
   "devices": {
     "subtitle": "Периферійні пристрої та модулі, прив'язані до активного профілю радіостанції",

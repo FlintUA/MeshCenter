@@ -508,7 +508,7 @@ def test_dockerfile_has_oci_labels_that_come_from_the_build_args():
         "org.opencontainers.image.version": '"${MESHCENTER_VERSION}"',
         "org.opencontainers.image.revision": '"${MESHCENTER_REVISION}"',
         "org.opencontainers.image.source": '"https://github.com/FlintUA/MeshCenter"',
-        "org.opencontainers.image.licenses": '"MIT AND GPL-3.0-only"',
+        "org.opencontainers.image.licenses": '"MIT AND GPL-3.0-only AND LGPL-2.1-or-later"',
     }.items():
         assert f"{key}={value}" in label_block, key
     # declared after the dependency layers, so a new revision never rebuilds them

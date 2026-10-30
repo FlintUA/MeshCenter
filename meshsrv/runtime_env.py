@@ -64,8 +64,8 @@ def capabilities() -> Dict[str, Any]:
         # everywhere (System card via /api/system/info, and the footer) together.
         "has_cpu_temp": not container,
         "hardware_io": not container,
-        # network (RTSP) cameras need no host hardware; they do need ffmpeg, which the Docker image does
-        # not include yet (+625 MB with Debian's package), so there they show "ffmpeg not available"
+        # network (RTSP) cameras need no host hardware; they do need ffmpeg, which the Docker image carries as a
+        # minimal LGPL build (Dockerfile stage 1); an image without it shows "ffmpeg not available"
         "network_camera": True,
         "trust_host_clock": trust_host_clock(),
     }

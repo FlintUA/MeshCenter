@@ -161,3 +161,23 @@ jobs:
           name: release-archives
           path: dist/*.tar.gz
           retention-days: 14
+
+  # CAM2 Phase 4: builds the Docker image (with its own minimal LGPL ffmpeg) and runs the ffmpeg gate against it:
+  # the camera code's real ffmpeg argument lists against a fake RTSP camera, the LGPL/configure checks, the size cap.
+  docker-ffmpeg-gate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build the image
+        run: docker build --platform linux/amd64 --build-arg MESHCENTER_VERSION=ci -t meshcenter:ffmpeg-gate .
+
+      - name: ffmpeg gate
+        run: python scripts/check_docker_ffmpeg.py meshcenter:ffmpeg-gate

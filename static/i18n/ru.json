@@ -55,7 +55,8 @@
     "title_delete_waypoints": "Удалить waypoints",
     "title_delete_image": "Удалить изображение",
     "title_delete_all_images": "Удалить все изображения",
-    "rollback": "Откатить"
+    "rollback": "Откатить",
+    "title_delete_images": "Удалить снимки"
   },
   "nav": {
     "chats": "Чаты",
@@ -682,7 +683,9 @@
     "contrast": "Контраст",
     "saturation": "Насыщенность",
     "sharpness": "Резкость",
-    "exposure": "Экспозиция"
+    "exposure": "Экспозиция",
+    "fullscreen_enter": "На весь экран",
+    "fullscreen_exit": "Выйти из полноэкранного режима"
   },
   "media": {
     "media_gallery": "Галерея медиа",
@@ -719,7 +722,56 @@
       "few": "Удалить ВСЕ {count} изображения? Это действие нельзя отменить.",
       "many": "Удалить ВСЕ {count} изображений? Это действие нельзя отменить.",
       "other": "Удалить ВСЕ {count} изображений? Это действие нельзя отменить."
-    }
+    },
+    "sort_label": "Сортировка",
+    "sort_date_desc": "Дата, сначала новые",
+    "sort_date_asc": "Дата, сначала старые",
+    "sort_name": "Имя",
+    "sort_size": "Размер, сначала большие",
+    "sort_camera": "Камера",
+    "view_label": "Вид",
+    "view_large": "Крупные миниатюры",
+    "view_small": "Мелкие миниатюры",
+    "view_list": "Список",
+    "select_all": "Выбрать все",
+    "select_item": "Выбрать снимок",
+    "open_image": "Открыть",
+    "camera_local": "Локальная камера",
+    "bulk_download": "Скачать zip",
+    "bulk_delete": "Удалить",
+    "bulk_clear": "Снять выбор",
+    "selected_summary": {
+      "one": "Выбран {count}, {size}",
+      "few": "Выбрано {count}, {size}",
+      "many": "Выбрано {count}, {size}",
+      "other": "Выбрано {count}, {size}"
+    },
+    "zip_limit_message": "Скачивание zip ограничено {max}. Выбрано {size}: выберите меньше снимков или скачайте их частями.",
+    "bulk_too_many": "Не более {max} снимков за раз: выберите меньше.",
+    "zip_started": {
+      "one": "Скачивание {count} снимка начато",
+      "few": "Скачивание {count} снимков начато",
+      "many": "Скачивание {count} снимков начато",
+      "other": "Скачивание {count} снимка начато"
+    },
+    "download_failed": "Не удалось скачать",
+    "bulk_delete_confirm": {
+      "one": "Удалить {count} снимок? Это нельзя отменить.",
+      "few": "Удалить {count} снимка? Это нельзя отменить.",
+      "many": "Удалить {count} снимков? Это нельзя отменить.",
+      "other": "Удалить {count} снимка? Это нельзя отменить."
+    },
+    "bulk_deleted": {
+      "one": "Удалён {count} снимок",
+      "few": "Удалено {count} снимка",
+      "many": "Удалено {count} снимков",
+      "other": "Удалено {count} снимка"
+    },
+    "bulk_delete_partial": "Удалено {done}, не удалось удалить {failed}",
+    "lightbox_label": "Просмотр снимка",
+    "lightbox_close": "Закрыть",
+    "lightbox_prev": "Предыдущий снимок",
+    "lightbox_next": "Следующий снимок"
   },
   "devices": {
     "subtitle": "Периферийные устройства и модули, привязанные к активному профилю радиостанции",

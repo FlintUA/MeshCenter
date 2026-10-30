@@ -5,7 +5,10 @@ from pathlib import Path
 from datetime import datetime
 import base64
 import os
+import secrets
 import threading
+import time
+import zipfile
 
 from camera import mjpeg_fallback
 from camera.ip_snapshot import SnapshotError
@@ -13,6 +16,107 @@ from camera.camera_manager import build_camera_manager, network_drivers_from_sta
 from camera.rtsp_driver import StreamNotReady, ViewerLimitReached
 from meshsrv import error_reporting, session_guard
 from storage.json_store import safe_read_json, safe_write_json
+
+
+# Gallery bulk actions (G1): at most this many pictures per request, and one zip download is capped (a Pi Zero streams it
+# straight from disk, but a phone should not be handed gigabytes by one tap; the gallery tells the user before they try).
+GALLERY_BULK_MAX = 500
+GALLERY_ZIP_MAX_BYTES = 250 * 1024 * 1024
+ZIP_TICKET_TTL_S = 60.0
+ZIP_TICKETS_MAX = 8
+
+
+class _ZipTickets:
+    """One-time download links for a zip: the selection is checked (and the size cap enforced) when the ticket is
+    issued with a normal CSRF-protected POST; the browser then downloads with a plain GET, which cannot carry a header."""
+
+    def __init__(self, ttl_s=ZIP_TICKET_TTL_S, limit=ZIP_TICKETS_MAX, clock=time.monotonic):
+        self._ttl_s, self._limit, self._clock = ttl_s, limit, clock
+        self._items = {}
+        self._lock = threading.Lock()
+
+    def _sweep(self, now):
+        for key in [k for k, (_names, until) in self._items.items() if until < now]:
+            del self._items[key]
+
+    def issue(self, names):
+        with self._lock:
+            now = self._clock()
+            self._sweep(now)
+            while len(self._items) >= self._limit:
+                del self._items[min(self._items, key=lambda k: self._items[k][1])]
+            ticket = secrets.token_urlsafe(24)
+            self._items[ticket] = (list(names), now + self._ttl_s)
+            return ticket
+
+    def take(self, ticket):
+        with self._lock:
+            self._sweep(self._clock())
+            entry = self._items.pop(ticket, None)
+            return None if entry is None else entry[0]
+
+
+_zip_tickets = _ZipTickets()
+
+
+class _ChunkSink:
+    """A write-only stream for zipfile: collects what it writes so the generator can hand it on (zipfile writes the
+    data descriptors itself when the target cannot seek)."""
+
+    def __init__(self):
+        self.chunks = []
+        self.position = 0
+
+    def write(self, data):
+        self.chunks.append(bytes(data))
+        self.position += len(data)
+        return len(data)
+
+    def tell(self):
+        return self.position
+
+    def flush(self):
+        pass
+
+    def drain(self):
+        data, self.chunks = b"".join(self.chunks), []
+        return data
+
+
+def stream_zip(found, chunk=64 * 1024):
+    """Yield a zip (stored, JPEGs do not compress) of [(path, name, size)] without a temp file or the whole thing in
+    memory. Entries are named by the picture's own file name (a counter keeps duplicates apart)."""
+    sink = _ChunkSink()
+    used = set()
+    with zipfile.ZipFile(sink, "w", zipfile.ZIP_STORED) as archive:
+        for path, name, _size in found:
+            base = os.path.basename(name) or "picture.jpg"
+            entry, count = base, 1
+            while entry in used:
+                count += 1
+                stem, ext = os.path.splitext(base)
+                entry = f"{stem}_{count}{ext}"
+            used.add(entry)
+            info = zipfile.ZipInfo.from_file(path, entry)
+            info.compress_type = zipfile.ZIP_STORED
+            try:
+                with open(path, "rb") as source, archive.open(info, "w", force_zip64=True) as target:
+                    while True:
+                        block = source.read(chunk)
+                        if not block:
+                            break
+                        target.write(block)
+                        data = sink.drain()
+                        if data:
+                            yield data
+            except OSError:
+                continue  # a picture removed while the zip was being made: leave it out
+            data = sink.drain()
+            if data:
+                yield data
+    data = sink.drain()
+    if data:
+        yield data
 
 
 def register_camera_routes(app, camera, camera_manager_state, device_manager, handle_errors, ip_snapshot=None):
@@ -386,6 +490,15 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
         if filepath is None or not os.path.isfile(filepath):
             return jsonify({"ok": False, "error": "File not found"}), 404
 
+        if request.args.get("thumb") and camera.THUMBS_DIRNAME not in filepath.split(os.sep):
+            # the ~480 px thumbnail (made on the first request when the background backfill has not reached it yet);
+            # the original when it cannot be made
+            thumb = camera.ensure_thumbnail(filepath)
+            if thumb:
+                response = send_file(thumb, mimetype="image/jpeg", max_age=86400, conditional=True)
+                response.headers["Cache-Control"] = "private, max-age=86400"
+                return response
+
         return send_file(filepath, mimetype="image/jpeg")
 
     @app.route("/api/camera/screenshots", methods=["GET"])
@@ -400,6 +513,50 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
         """Удалить скриншот"""
         result, status = camera.delete_screenshot(filename)
         return jsonify(result), status
+
+    @app.route("/api/camera/screenshots/delete", methods=["POST"])
+    @handle_errors
+    def api_camera_screenshots_delete_selected():
+        """Delete the selected pictures: {"filenames": [relative names]}, at most GALLERY_BULK_MAX at once."""
+        data = request.get_json(silent=True)
+        names = data.get("filenames") if isinstance(data, dict) else None
+        if not isinstance(names, list) or not names or len(names) > GALLERY_BULK_MAX:
+            return jsonify({"ok": False, "error": f"Send 1 to {GALLERY_BULK_MAX} filenames", "error_code": "invalid_selection"}), 400
+        result, status = camera.delete_screenshots(names)
+        return jsonify(result), status
+
+    @app.route("/api/camera/screenshots/zip", methods=["POST"])
+    @handle_errors
+    def api_camera_screenshots_zip_ticket():
+        """Step 1 of a bulk download: check the selection and the size cap, hand back a one-time link. The browser
+        then downloads the zip natively (GET, streamed, nothing is held in memory on either side)."""
+        data = request.get_json(silent=True)
+        names = data.get("filenames") if isinstance(data, dict) else None
+        if not isinstance(names, list) or not names or len(names) > GALLERY_BULK_MAX:
+            return jsonify({"ok": False, "error": f"Send 1 to {GALLERY_BULK_MAX} filenames", "error_code": "invalid_selection"}), 400
+        found = camera.resolve_screenshots(names)
+        if not found:
+            return jsonify({"ok": False, "error": "None of the pictures exist", "error_code": "not_found"}), 404
+        total = sum(size for _path, _name, size in found)
+        if total > GALLERY_ZIP_MAX_BYTES:
+            return jsonify({"ok": False, "error": "The selection is too large for one download", "error_code": "zip_too_large",
+                            "total_bytes": total, "max_bytes": GALLERY_ZIP_MAX_BYTES}), 413
+        ticket = _zip_tickets.issue([name for _path, name, _size in found])
+        return jsonify({"ok": True, "url": f"/api/camera/screenshots/zip/{ticket}", "count": len(found), "total_bytes": total})
+
+    @app.route("/api/camera/screenshots/zip/<ticket>", methods=["GET"])
+    def api_camera_screenshots_zip_download(ticket):
+        names = _zip_tickets.take(ticket)
+        if names is None:
+            return jsonify({"ok": False, "error": "This download link expired", "error_code": "ticket_expired"}), 410
+        found = camera.resolve_screenshots(names)
+        if not found:
+            return jsonify({"ok": False, "error": "None of the pictures exist", "error_code": "not_found"}), 404
+        stamp = time.strftime("%Y-%m-%d_%H-%M-%S")
+        response = Response(stream_zip(found), mimetype="application/zip")
+        response.headers["Content-Disposition"] = f'attachment; filename="MeshCenter_pictures_{stamp}.zip"'
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @app.route("/api/camera/screenshots", methods=["DELETE"])
     @handle_errors

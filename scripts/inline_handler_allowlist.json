@@ -210,9 +210,5 @@
   {
     "file": "static/chat.js",
     "snippet": "onclick='openNodeMap(${pos.latitude}, ${pos.longitude}, ${JSON.stringify(String(node.node_id || \"\"))})'"
-  },
-  {
-    "file": "static/media.js",
-    "snippet": "onclick='deleteMediaItem(${handlerFilename}, event)'"
   }
 ]

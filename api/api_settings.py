@@ -58,6 +58,12 @@ DEFAULT_SETTINGS = {
         "profile_defaults": {},
     },
 
+    "media": {
+        # Gallery view preferences (not content): how the pictures are ordered and shown.
+        "sort": "date_desc",
+        "view": "large",
+    },
+
     "timers": {
         # Legacy/global fallback used until a radio-specific preference exists.
         "notify_enabled": False,
@@ -161,6 +167,8 @@ def _normalize_coordinate(value, minimum, maximum):
 
 
 SUPPORTED_LANGUAGES = ("auto", "en", "de", "ru", "uk")
+MEDIA_SORTS = ("date_desc", "date_asc", "name", "size", "camera")
+MEDIA_VIEWS = ("large", "small", "list")
 
 # Kept as a plain tuple (like SUPPORTED_LANGUAGES) rather than importing the
 # weather package here - normalize_settings() only needs to know which ids
@@ -441,6 +449,18 @@ def normalize_settings(settings):
             ),
         }
 
+    # ---------------- Media gallery preferences ----------------
+
+    media_settings = settings.get("media", {})
+    if not isinstance(media_settings, dict):
+        media_settings = {}
+    media_sort = str(media_settings.get("sort", "date_desc")).strip().lower()
+    if media_sort not in MEDIA_SORTS:
+        media_sort = "date_desc"
+    media_view = str(media_settings.get("view", "large")).strip().lower()
+    if media_view not in MEDIA_VIEWS:
+        media_view = "large"
+
     # ---------------- Timer form defaults ----------------
 
     timer_settings = settings.get("timers", {})
@@ -588,6 +608,11 @@ def normalize_settings(settings):
             "last_duration_seconds": waypoint_duration_seconds,
             "post_notification": waypoint_post_notification,
             "profile_defaults": waypoint_profile_defaults,
+        },
+
+        "media": {
+            "sort": media_sort,
+            "view": media_view,
         },
 
         "timers": {

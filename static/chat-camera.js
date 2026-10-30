@@ -866,6 +866,7 @@ async function takeScreenshot(source = 'video') {
 }
 
 function stopVideoFeed() {
+    if (typeof exitCameraFullscreen === 'function') exitCameraFullscreen();
     if (window.MCIpCamera) window.MCIpCamera.stop();
     const img = document.getElementById('videoFeed');
     if (img) {
@@ -1081,3 +1082,85 @@ async function switchCameraMode(mode) {
     }
 }
 
+
+// ============================================================
+// FULL SCREEN (G1)
+// The whole frame (the stream <video>, the snapshot / MJPEG <img>, the status overlay) goes full screen, so it works
+// for MediaSource playback, snapshot mode and local cameras alike. Esc leaves it (the browser handles that in real
+// full screen; the page handles it in the fallback). Where the browser cannot full-screen an element (an iPhone only
+// does it for a <video>), the same frame is stretched over the whole page instead ("pseudo" full screen).
+// ============================================================
+
+function cameraFrameWrap() {
+    return document.querySelector('#videoView .video-frame-wrap');
+}
+
+function cameraFullscreenElement() {
+    return document.fullscreenElement || document.webkitFullscreenElement || null;
+}
+
+function isCameraFullscreen() {
+    const wrap = cameraFrameWrap();
+    return Boolean(wrap && (cameraFullscreenElement() === wrap || wrap.classList.contains('is-pseudo-fullscreen')));
+}
+
+function syncCameraFullscreenUi() {
+    const wrap = cameraFrameWrap();
+    const button = document.getElementById('cameraFullscreenBtn');
+    const on = isCameraFullscreen();
+    if (wrap) wrap.classList.toggle('is-fullscreen', on);
+    document.body.classList.toggle('camera-fullscreen-active', on);
+    if (button) {
+        const label = window.I18N.t(on ? 'camera.fullscreen_exit' : 'camera.fullscreen_enter');
+        button.setAttribute('aria-pressed', String(on));
+        button.setAttribute('aria-label', label);
+        button.title = label;
+    }
+}
+
+function enterCameraPseudoFullscreen(wrap) {
+    wrap.classList.add('is-pseudo-fullscreen');
+    syncCameraFullscreenUi();
+}
+
+function exitCameraFullscreen() {
+    const wrap = cameraFrameWrap();
+    if (wrap) wrap.classList.remove('is-pseudo-fullscreen');
+    if (cameraFullscreenElement()) {
+        const exit = document.exitFullscreen || document.webkitExitFullscreen;
+        try {
+            const result = exit && exit.call(document);
+            if (result && typeof result.catch === 'function') result.catch(() => {});
+        } catch (error) { /* already out */ }
+    }
+    syncCameraFullscreenUi();
+}
+
+function toggleCameraFullscreen() {
+    const wrap = cameraFrameWrap();
+    if (!wrap) return;
+    if (isCameraFullscreen()) {
+        exitCameraFullscreen();
+        return;
+    }
+    const request = wrap.requestFullscreen || wrap.webkitRequestFullscreen;
+    if (!request) {
+        enterCameraPseudoFullscreen(wrap);
+        return;
+    }
+    try {
+        const result = request.call(wrap);
+        if (result && typeof result.catch === 'function') result.catch(() => enterCameraPseudoFullscreen(wrap));
+    } catch (error) {
+        enterCameraPseudoFullscreen(wrap);
+    }
+}
+
+document.addEventListener('fullscreenchange', syncCameraFullscreenUi);
+document.addEventListener('webkitfullscreenchange', syncCameraFullscreenUi);
+document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && cameraFrameWrap() && cameraFrameWrap().classList.contains('is-pseudo-fullscreen')) exitCameraFullscreen();
+});
+document.addEventListener('click', (event) => {
+    if (event.target && typeof event.target.closest === 'function' && event.target.closest('#cameraFullscreenBtn')) toggleCameraFullscreen();
+});

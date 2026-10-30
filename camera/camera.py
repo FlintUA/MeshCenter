@@ -682,6 +682,7 @@ def iter_screenshot_files():
         return items
 
     for root, dirs, files in os.walk(SCREENSHOTS_DIR):
+        dirs[:] = [d for d in dirs if d != THUMBS_DIRNAME]  # the thumbnails are no pictures of their own
         for filename in files:
             if not filename.lower().endswith(".jpg"):
                 continue
@@ -698,6 +699,13 @@ def iter_screenshot_files():
     return items
 
 
+THUMBS_DIRNAME = ".thumbs"
+THUMB_LONG_EDGE = 480
+THUMB_QUALITY = 78
+THUMB_BACKFILL_PAUSE_S = 0.3  # between two pictures of the slow background backfill (a Pi Zero must stay responsive)
+_thumb_lock = threading.Lock()
+_backfill_state = {"running": False}
+
 SIDECAR_SUFFIX = ".json"
 SIDECAR_KEYS = ("source_id", "source_name", "taken_at", "method", "profile", "width", "height")
 
@@ -708,13 +716,94 @@ def sidecar_path(image_path):
     return image_path + SIDECAR_SUFFIX
 
 
-def remove_screenshot_file(image_path):
-    """Remove a picture and its metadata file; raises OSError only when the picture itself cannot be removed."""
-    os.remove(image_path)
+def thumb_paths(image_path):
+    """(thumbnail jpg, its small info file) of a picture: both live in `<screenshots>/.thumbs/<same relative path>`."""
+    rel = os.path.relpath(image_path, SCREENSHOTS_DIR)
+    thumb = os.path.join(SCREENSHOTS_DIR, THUMBS_DIRNAME, rel)
+    return thumb, thumb + SIDECAR_SUFFIX
+
+
+def ensure_thumbnail(image_path):
+    """The ~480 px thumbnail of a picture, made when it is missing or older than the picture. One at a time (a Pi Zero
+    must not decode several 4K JPEGs at once). Returns its path, or None when it cannot be made (the caller then serves
+    the original). The picture's own size is kept next to it so the list can show the resolution without opening it."""
+    thumb, info = thumb_paths(image_path)
     try:
-        os.remove(sidecar_path(image_path))
+        if os.path.getmtime(thumb) >= os.path.getmtime(image_path):
+            return thumb
     except OSError:
-        pass  # most pictures (CSI/USB) have none
+        pass
+    with _thumb_lock:
+        try:
+            if os.path.getmtime(thumb) >= os.path.getmtime(image_path):
+                return thumb
+        except OSError:
+            pass
+        try:
+            from PIL import Image
+
+            os.makedirs(os.path.dirname(thumb), exist_ok=True)
+            with Image.open(image_path) as img:
+                full_size = img.size
+                img.draft("RGB", (THUMB_LONG_EDGE * 2, THUMB_LONG_EDGE * 2))  # JPEG decodes at 1/2, 1/4, 1/8 size: much faster
+                img = img.convert("RGB")
+                img.thumbnail((THUMB_LONG_EDGE, THUMB_LONG_EDGE), Image.BILINEAR)
+                temp = thumb + ".tmp"
+                img.save(temp, "JPEG", quality=THUMB_QUALITY)
+            os.replace(temp, thumb)
+            with open(info, "w", encoding="utf-8") as handle:
+                json.dump({"width": full_size[0], "height": full_size[1]}, handle)
+            if not os.path.exists(image_path):  # deleted while its thumbnail was being made: no orphan
+                for extra in (thumb, info):
+                    try:
+                        os.remove(extra)
+                    except OSError:
+                        pass
+                return None
+            return thumb
+        except Exception as e:  # noqa: BLE001 - an unreadable picture just has no thumbnail
+            print(f"[GALLERY] No thumbnail for {os.path.basename(image_path)}: {type(e).__name__}", flush=True)
+            return None
+
+
+def read_thumb_info(image_path):
+    """{"width", "height"} of the picture as recorded when its thumbnail was made, or {}."""
+    try:
+        with open(thumb_paths(image_path)[1], "r", encoding="utf-8") as handle:
+            data = json.loads(handle.read(256))
+    except (OSError, ValueError):
+        return {}
+    return {k: int(data[k]) for k in ("width", "height") if isinstance(data.get(k), int)}
+
+
+def start_thumbnail_backfill(missing):
+    """Make the missing thumbnails on ONE slow background thread (started by the first gallery listing that finds
+    some); `missing` is a list of picture paths. A second call while it runs does nothing."""
+    if not missing or _backfill_state["running"]:
+        return False
+    _backfill_state["running"] = True
+
+    def work():
+        try:
+            for path in missing:
+                if os.path.isfile(path):
+                    ensure_thumbnail(path)
+                time.sleep(THUMB_BACKFILL_PAUSE_S)
+        finally:
+            _backfill_state["running"] = False
+
+    threading.Thread(target=work, daemon=True, name="gallery-thumb-backfill").start()
+    return True
+
+
+def remove_screenshot_file(image_path):
+    """Remove a picture, its metadata file and its thumbnail; raises OSError only when the picture itself cannot be removed."""
+    os.remove(image_path)
+    for extra in (sidecar_path(image_path), *thumb_paths(image_path)):
+        try:
+            os.remove(extra)
+        except OSError:
+            pass  # most pictures (CSI/USB) have no metadata file; a thumbnail may not exist yet
 
 
 def read_screenshot_meta(image_path):
@@ -819,8 +908,15 @@ def capture_screenshot():
 def list_screenshots():
     try:
         files = []
+        missing = []
 
         for full_path, rel_path, stat in iter_screenshot_files():
+            meta = read_screenshot_meta(full_path)
+            thumb_info = read_thumb_info(full_path)
+            width = meta.get("width") if isinstance(meta.get("width"), int) else thumb_info.get("width")
+            height = meta.get("height") if isinstance(meta.get("height"), int) else thumb_info.get("height")
+            if not thumb_info:
+                missing.append(full_path)
             files.append({
                 "filename": rel_path,
                 "display_name": os.path.basename(rel_path),
@@ -829,10 +925,15 @@ def list_screenshots():
                 "modified": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(stat.st_mtime)),
                 "date": time.strftime("%Y-%m-%d", time.localtime(stat.st_mtime)),
                 "url": f"/api/camera/screenshot/{rel_path}",
-                "meta": read_screenshot_meta(full_path),
+                "thumb_url": f"/api/camera/screenshot/{rel_path}?thumb=1",
+                "camera": meta.get("source_name") if isinstance(meta.get("source_name"), str) else "",
+                "width": width,
+                "height": height,
+                "meta": meta,
             })
 
         files.sort(key=lambda x: x["modified_ts"], reverse=True)
+        start_thumbnail_backfill(missing)
 
         return {
             "screenshots": files,
@@ -851,6 +952,39 @@ def delete_screenshot(filename):
 
     remove_screenshot_file(filepath)
     return {"ok": True, "message": f"Deleted {filename}"}, 200
+
+
+def delete_screenshots(filenames):
+    """Delete the listed pictures (relative names from the listing). Names that are not pictures are reported, never
+    followed outside the gallery."""
+    deleted, failed = [], []
+    for name in filenames:
+        path = safe_screenshot_path(str(name)) if isinstance(name, str) else None
+        if path is None or not path.lower().endswith(".jpg") or THUMBS_DIRNAME in path.split(os.sep) or not os.path.isfile(path):
+            failed.append(str(name)[:200])
+            continue
+        try:
+            remove_screenshot_file(path)
+            deleted.append(name)
+        except OSError:
+            failed.append(name)
+    return {"ok": True, "deleted_count": len(deleted), "deleted": deleted, "failed": failed}, 200
+
+
+def resolve_screenshots(filenames):
+    """[(abs path, relative name, size)] of the pictures that exist; unknown or unsafe names are skipped."""
+    found, seen = [], set()
+    for name in filenames:
+        path = safe_screenshot_path(name) if isinstance(name, str) else None
+        if path is None or name in seen or not path.lower().endswith(".jpg") or THUMBS_DIRNAME in path.split(os.sep):
+            continue
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            continue
+        seen.add(name)
+        found.append((path, name.replace("\\", "/"), size))
+    return found
 
 
 def delete_all_screenshots():

@@ -55,7 +55,8 @@
     "title_delete_waypoints": "Delete waypoints",
     "title_delete_image": "Delete image",
     "title_delete_all_images": "Delete all images",
-    "rollback": "Roll back"
+    "rollback": "Roll back",
+    "title_delete_images": "Delete pictures"
   },
   "nav": {
     "chats": "Chats",
@@ -682,7 +683,9 @@
     "contrast": "Contrast",
     "saturation": "Saturation",
     "sharpness": "Sharpness",
-    "exposure": "Exposure"
+    "exposure": "Exposure",
+    "fullscreen_enter": "Full screen",
+    "fullscreen_exit": "Exit full screen"
   },
   "media": {
     "media_gallery": "Media Gallery",
@@ -719,7 +722,56 @@
       "few": "Delete ALL {count} images? This action cannot be undone.",
       "many": "Delete ALL {count} images? This action cannot be undone.",
       "other": "Delete ALL {count} images? This action cannot be undone."
-    }
+    },
+    "sort_label": "Sort",
+    "sort_date_desc": "Date, newest first",
+    "sort_date_asc": "Date, oldest first",
+    "sort_name": "Name",
+    "sort_size": "Size, largest first",
+    "sort_camera": "Camera",
+    "view_label": "View",
+    "view_large": "Large thumbnails",
+    "view_small": "Small thumbnails",
+    "view_list": "List",
+    "select_all": "Select all",
+    "select_item": "Select picture",
+    "open_image": "Open",
+    "camera_local": "Local camera",
+    "bulk_download": "Download zip",
+    "bulk_delete": "Delete",
+    "bulk_clear": "Clear selection",
+    "selected_summary": {
+      "one": "{count} selected, {size}",
+      "few": "{count} selected, {size}",
+      "many": "{count} selected, {size}",
+      "other": "{count} selected, {size}"
+    },
+    "zip_limit_message": "A zip download is limited to {max}. You selected {size}: select fewer pictures, or download them in parts.",
+    "bulk_too_many": "At most {max} pictures at once: select fewer.",
+    "zip_started": {
+      "one": "Download of {count} picture started",
+      "few": "Download of {count} pictures started",
+      "many": "Download of {count} pictures started",
+      "other": "Download of {count} pictures started"
+    },
+    "download_failed": "Download failed",
+    "bulk_delete_confirm": {
+      "one": "Delete {count} picture? This cannot be undone.",
+      "few": "Delete {count} pictures? This cannot be undone.",
+      "many": "Delete {count} pictures? This cannot be undone.",
+      "other": "Delete {count} pictures? This cannot be undone."
+    },
+    "bulk_deleted": {
+      "one": "{count} picture deleted",
+      "few": "{count} pictures deleted",
+      "many": "{count} pictures deleted",
+      "other": "{count} pictures deleted"
+    },
+    "bulk_delete_partial": "{done} deleted, {failed} could not be deleted",
+    "lightbox_label": "Picture viewer",
+    "lightbox_close": "Close",
+    "lightbox_prev": "Previous picture",
+    "lightbox_next": "Next picture"
   },
   "devices": {
     "subtitle": "Peripheral devices and modules assigned to the active radio profile",

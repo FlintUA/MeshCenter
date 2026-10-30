@@ -71,6 +71,7 @@
         queued: 'queued',
         waiting_response: 'waiting_response',
         retry_available: 'retry_available',
+        no_answer: 'no_answer',
     };
 
     // ---- single internal state object --------------------------------------
@@ -161,7 +162,7 @@
                 // idle (never requested) or retry_available (rate-limit window
                 // elapsed). For retry_available the worker's authoritative
                 // `can_request_key` is the final word; idle always permits.
-                var canRequest = keyRequestState === 'retry_available'
+                var canRequest = (keyRequestState === 'retry_available' || keyRequestState === 'no_answer')
                     ? backendCanRequestKey !== false
                     : true;
                 return { can_send_file: false, can_request_key: canRequest, file_unavailable_reason: 'key_unknown' };
@@ -253,6 +254,9 @@
             map[id] = {
                 key_request_state: kr.key_request_state || 'idle',
                 can_request_key: kr.can_request_key === true,
+                retry_attempt: Number(kr.retry_attempt) || 0,
+                retry_max: Number(kr.retry_max) || 0,
+                retry_in_s: typeof kr.retry_in_s === 'number' ? kr.retry_in_s : null,
             };
         });
         return map;
@@ -369,6 +373,9 @@
             t.is_local = Boolean(localId && id === localId);
             var kr = krMap[id];
             t.key_request_state = kr ? kr.key_request_state : 'idle';
+            t.retry_attempt = kr ? kr.retry_attempt : 0;
+            t.retry_max = kr ? kr.retry_max : 0;
+            t.retry_in_s = kr ? kr.retry_in_s : null;
             var cap = computeCapability({
                 kind: 'node',
                 is_local: t.is_local,

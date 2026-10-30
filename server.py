@@ -93,6 +93,7 @@ from meshsrv.transport_router import TransportRouter
 from meshsrv.schedule_engine import start as start_schedule_engine
 from meshsrv import schedule_engine as _schedule_engine_module
 from meshsrv.attachments import mca_runtime
+from meshsrv.attachments import key_request_retry as mca_key_request_retry
 from meshsrv import update_service
 from meshsrv import runtime_env
 if runtime_env.is_container():
@@ -10036,7 +10037,10 @@ def start_runtime():
         print(f"[MCA] WARNING: {_mca_warning}", flush=True)
         log_system_event("MCAttach control channel not configured", "WARNING", _mca_warning, source="mca")
     try:
-        mca_runtime.start_attachments_service(DATA_DIR, transport_router, MCA_CONTROL_CHANNEL_INDEX)
+        mca_runtime.start_attachments_service(
+            DATA_DIR, transport_router, MCA_CONTROL_CHANNEL_INDEX,
+            contact_exists=lambda contact_id: mca_key_request_retry.node_known(contact_id, list(nodes)),  # a removed node ends its KEY_REQUEST retries
+        )
     except Exception as e:
         print(f"[MCA] failed to start AttachmentsService: {e}", flush=True)
 

@@ -414,11 +414,16 @@
     "upload_not_ready": "Upload: not ready",
     "err_ttl_custom": "Enter a positive whole number of seconds for the custom expiry",
     "request_key_again": "Request key again",
+    "key_request_retry_status": "Waiting for response - attempt {attempt} of {max}, next in {minutes} min",
+    "cancel_key_request": "Stop requests",
+    "cancelling_key_request": "Stopping key requests…",
+    "key_request_cancelled": "Key requests stopped",
     "key_request_state": {
       "idle": "Key unknown",
       "queued": "Key request sent",
       "waiting_response": "Waiting for response",
-      "retry_available": "Retry available"
+      "retry_available": "Retry available",
+      "no_answer": "No answer"
     },
     "unavailable": {
       "local_node": "This is your own node",

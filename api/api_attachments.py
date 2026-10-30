@@ -260,11 +260,20 @@ def _serialize_key_request(address, capability):
     rate-limit window, a public identity, X25519 material, a key path, or any
     DB row (§11). Addresses with no activity are simply absent from the
     snapshot (and therefore this wire) - the frontend defaults them to `idle`."""
-    return {
+    body = {
         "contact_id": address,
         "key_request_state": capability.key_request_state.value,
         "can_request_key": capability.can_request_key,
     }
+    if capability.retry_attempt:
+        # the automatic retry series (key_request_retry.py): the attempt number and the whole seconds until the
+        # next look, derived now - never the stored timestamp
+        body["retry_attempt"] = capability.retry_attempt
+        body["retry_max"] = capability.retry_max
+        in_s = capability.retry_in_s(time.time())
+        if in_s is not None:
+            body["retry_in_s"] = in_s
+    return body
 
 
 def _contact_not_found():
@@ -1159,6 +1168,28 @@ def register_attachments_routes(app, handle_errors):
                 "adapter_id": mca_runtime.ADAPTER_ID,
                 "route_id": contact_id,
             },
+            created_at=time.time(),
+        )
+        try:
+            command_id = facade.submit(command)
+        except CommandQueueFull:
+            return _json_error("command_queue_full", "command queue is full"), 429
+        return jsonify({"ok": True, "command_id": command_id}), 202
+
+    @app.route("/api/mca/contacts/<contact_id>/cancel-key-request", methods=["POST"])
+    @handle_errors
+    @_mca_error_boundary
+    def cancel_contact_key_request(contact_id):
+        """Stop the automatic KEY_REQUEST retries of a contact (the series is ended on the worker; idempotent)."""
+        facade = _facade()
+        if facade is None:
+            return _not_ready()
+        if not _is_contact_id(contact_id):
+            return _json_error("invalid_contact_id", "invalid contact id"), 400
+        command = Command(
+            command_id=mint_command_id(),
+            kind="contact_cancel_key_request",
+            payload={"contact_id": contact_id, "adapter_id": mca_runtime.ADAPTER_ID},
             created_at=time.time(),
         )
         try:

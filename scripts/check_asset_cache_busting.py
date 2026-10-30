@@ -77,6 +77,8 @@ CURRENT_ASSETS = {
     'static/style-part2.css',
     'static/style-part3.css',
     'static/targets.js',
+    'static/media.js',
+    'static/media-views.js',
     'static/ui-kit.css',
 }
 

@@ -164,7 +164,25 @@ def test_duplicate_names_in_a_zip_are_kept_apart(tmp_path):
 
 
 def test_media_settings_are_normalized():
-    assert normalize_settings({})["media"] == {"sort": "date_desc", "view": "large"}
-    assert normalize_settings({"media": {"sort": "SIZE", "view": "list"}})["media"] == {"sort": "size", "view": "list"}
-    assert normalize_settings({"media": {"sort": "bogus", "view": 7}})["media"] == {"sort": "date_desc", "view": "large"}
-    assert normalize_settings({"media": "x"})["media"] == {"sort": "date_desc", "view": "large"}
+    default = {"sort": "date_desc", "view_desktop": "large", "view_mobile": "large"}
+    assert normalize_settings({})["media"] == default
+    assert normalize_settings({"media": {"sort": "SIZE", "view_desktop": "list", "view_mobile": "small"}})["media"] == {
+        "sort": "size", "view_desktop": "list", "view_mobile": "small"}
+    assert normalize_settings({"media": {"sort": "bogus", "view_desktop": 7, "view_mobile": "nope"}})["media"] == default
+    assert normalize_settings({"media": "x"})["media"] == default
+
+
+def test_the_view_is_remembered_per_device_and_the_old_single_view_seeds_both():
+    legacy = normalize_settings({"media": {"view": "list"}})["media"]
+    assert legacy["view_desktop"] == "list" and legacy["view_mobile"] == "list" and "view" not in legacy
+    mixed = normalize_settings({"media": {"view": "list", "view_mobile": "small"}})["media"]
+    assert mixed["view_desktop"] == "list" and mixed["view_mobile"] == "small", "a field a device chose wins over the old value"
+
+
+def test_choosing_on_one_device_leaves_the_other_and_the_shared_sort_alone():
+    from api.api_settings import _deep_merge
+    stored = normalize_settings({"media": {"sort": "name", "view_desktop": "list", "view_mobile": "small"}})
+    after_phone = normalize_settings(_deep_merge(stored, {"media": {"view_mobile": "large"}}))["media"]
+    assert after_phone == {"sort": "name", "view_desktop": "list", "view_mobile": "large"}
+    after_sort = normalize_settings(_deep_merge(stored, {"media": {"sort": "size"}}))["media"]
+    assert after_sort == {"sort": "size", "view_desktop": "list", "view_mobile": "small"}

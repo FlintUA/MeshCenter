@@ -1873,7 +1873,7 @@
     "err_storage": "Не вдалося зберегти: помилка запису.",
     "err_generic": "Не вдалося зберегти камеру.",
     "err_generic_code": "Не вдалося зберегти камеру (код: {code}, HTTP {status}).",
-    "profile_sub_short": "Суб (рекомендовано)",
+    "profile_sub_short": "Субпотік",
     "profile_main_short": "Основний",
     "snapshot_mode_label": "Режим знімків, близько 1 кадра/с",
     "snapshot_status": "Знімки",
@@ -1931,11 +1931,6 @@
   },
   "ipctl": {
     "info_stream": "Потік",
-    "info_resolution": "Роздільна здатність",
-    "info_fps": "Частота кадрів",
-    "info_codec": "Кодек",
-    "info_bitrate": "Бітрейт",
-    "info_state": "Стан",
     "snapshot_title": "Знімки",
     "snapshot_button": "Зробити знімок",
     "snapshot_busy": "Роблю знімок...",
@@ -1967,8 +1962,6 @@
     "snapshot_hint_stream_running": "Знімок береться з працюючого перегляду і зберігається в Медіа.",
     "snapshot_hint_stream_stopped": "Спочатку запустіть перегляд: знімок береться з працюючого перегляду.",
     "info_reconnect": "Перепідключити",
-    "info_refresh": "Оновлення",
-    "refresh_value": "1 раз на секунду",
     "stream_hint_snapshot_ffmpeg": "Для живого відео потрібен ffmpeg, якого в цій системі поки немає: картинки робить сама камера, потік вибрати не можна.",
     "stream_hint_snapshot_browser": "Цей браузер не вміє показувати живе відео: картинки робить сама камера, потік вибрати не можна."
   }

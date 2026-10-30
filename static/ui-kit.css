@@ -5216,39 +5216,10 @@ video.camera-stream {
     flex-wrap: wrap;
 }
 
-/* A wide card (side panels hidden): Mode becomes two columns - the facts compact on the left, Take picture with its
-   quality and hint on the right - instead of a tall single column with an empty right half. Sized by the card
-   (container query), not the window, since the card is 424 px wide with both side panels open. */
+/* The Mode panel's width follows the card (container query), not the window: the card is only 424 px wide with both
+   side panels open. */
 .ip-camera-controls {
     container-type: inline-size;
-}
-
-@container (min-width: 640px) {
-    /* ONE column: the stream facts, then Pictures as a normal section under them over the full width (it used to sit
-       in a narrow second column, where Take picture and the quality selector stood on top of each other, misaligned) */
-    #ipPanelMode .ip-info-grid {
-        grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-        gap: 0 20px;
-        margin-bottom: 12px;
-    }
-
-    #ipPanelMode .ip-info-grid > .ip-info-row:first-child {
-        grid-column: 1 / -1;
-    }
-
-    #ipPanelMode .ip-info-row {
-        grid-template-columns: max-content minmax(0, 1fr);
-        min-height: 28px;
-        column-gap: 12px;
-    }
-
-    #ipPanelMode .ip-info-label {
-        white-space: nowrap;
-    }
-
-    #ipPanelMode .ip-image-note {
-        margin-top: 6px;
-    }
 }
 
 /* the picture box follows the picture's own aspect ratio (--camera-aspect / --camera-ratio, set when the first
@@ -5284,54 +5255,47 @@ video.camera-stream {
     display: none;
 }
 
-/* Mode: a tidy label / value grid. Two columns on a desktop, one on a phone. Labels are muted and left-aligned,
-   the value sits right next to its label. */
-.ip-info-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px 24px;
-    margin-bottom: 12px;
-}
-
-/* the stream picker has the room it needs on a row of its own; the facts below it run in two columns */
-.ip-info-grid > .ip-info-row:first-child {
-    grid-column: 1 / -1;
-}
-
-.ip-info-row {
-    display: grid;
-    grid-template-columns: 6.5em minmax(0, 1fr);
-    align-items: center;
-    column-gap: 10px;
-    min-height: 32px;
-    font-size: 0.9em;
-}
-
-.ip-info-label,
-.ip-hint {
-    color: var(--mc-text-secondary, #6b7280);
-    text-align: left;
-    overflow-wrap: anywhere;
-}
-
-.ip-info-value {
-    font-weight: 600;
-    text-align: left;
-    min-width: 0;
-    overflow-wrap: anywhere;
-}
-
-.ip-info-stream {
+/* Mode: ONE compact row (Stream select, Take picture, Picture quality select) that wraps cleanly on a narrow card, and
+   one small muted hint line under it. The stream facts live in the status line of the tab bar. */
+.ip-mode-row {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 6px 8px;
+    gap: 10px 8px;
 }
 
-.ip-info-stream .ip-select {
-    flex: 0 1 auto;
+.ip-field {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.ip-field-label {
+    color: var(--mc-text-secondary, #6b7280);
+    font-size: 0.9em;
+    white-space: nowrap;
+}
+
+.ip-field .ip-select {
+    min-height: 44px;
+    font-size: 13px;
+    min-width: 0;
     max-width: 100%;
-    font-weight: 400;
+}
+
+.ip-field-stream {
+    flex: 1 1 96px;
+    flex-wrap: nowrap;
+}
+
+.ip-field-stream .ip-select {
+    flex: 1 1 auto;
+    width: 100%;
+}
+
+.ip-mode-row .ip-quality {
+    flex: 0 1 auto;
 }
 
 .ip-reconnect-btn {
@@ -5339,33 +5303,9 @@ video.camera-stream {
     white-space: nowrap;
 }
 
-.ip-stream-hint {
-    flex: 1 1 100%;
-    margin: 0;
-    font-weight: 400;
-}
-
 .ip-stream-hint[hidden],
-.ip-info-row[hidden],
 .dock-right [hidden] {
     display: none !important;
-}
-
-.ip-section {
-    padding-top: 10px;
-    border-top: 1px solid var(--mc-border-soft, #e5e8ec);
-}
-
-.ip-section-title {
-    margin-bottom: 8px;
-    font-weight: 600;
-}
-
-.ip-snapshot-row {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 10px 16px;
 }
 
 /* sized to its own text (the standard button rules give it a fixed width that clipped the longer translations) */
@@ -5374,21 +5314,23 @@ video.camera-stream {
     width: auto;
     max-width: 100%;
     flex: 0 0 auto;
-    padding-inline: 18px;
+    padding-inline: 14px;
     white-space: nowrap;
 }
 
-.ip-quality {
-    display: flex;
-    flex: 1 1 auto;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-    font-size: 0.9em;
+/* a narrow card (a phone): a select says what it is by itself, the label is kept for screen readers only */
+@container (max-width: 480px) {
+    .ip-field > .ip-field-label {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+    }
 }
 
-/* Take picture and the quality selector share one row, the selector right after the button at the same height */
-.ip-quality .ip-select {
+.ip-select {
     min-height: 44px;
     min-width: 0;
 }
@@ -5416,7 +5358,9 @@ video.camera-stream {
 
 .ip-hint {
     margin-top: 8px;
+    color: var(--mc-text-secondary, #6b7280);
     font-size: 0.85em;
+    overflow-wrap: anywhere;
 }
 
 .ip-lens-value {
@@ -5717,10 +5661,6 @@ html[data-theme="dark"] .telemetry-btn.power .telemetry-value {
 
     .video-view .video-header-actions .camera-source-select {
         width: 100%;
-    }
-
-    .ip-info-grid {
-        grid-template-columns: minmax(0, 1fr);
     }
 
     .camera-ip-mode .ip-camera-controls {

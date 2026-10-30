@@ -1873,8 +1873,8 @@
     "err_storage": "Could not save. The storage write failed.",
     "err_generic": "The camera could not be saved.",
     "err_generic_code": "The camera could not be saved (code: {code}, HTTP {status}).",
-    "profile_sub_short": "Sub (recommended)",
-    "profile_main_short": "Main",
+    "profile_sub_short": "Sub stream",
+    "profile_main_short": "Main stream",
     "snapshot_mode_label": "Snapshot mode, about 1 frame/s",
     "snapshot_status": "Snapshots",
     "snapshot_unavailable": "The camera picture is not available right now. Trying again...",
@@ -1931,11 +1931,6 @@
   },
   "ipctl": {
     "info_stream": "Stream",
-    "info_resolution": "Resolution",
-    "info_fps": "Frame rate",
-    "info_codec": "Codec",
-    "info_bitrate": "Bitrate",
-    "info_state": "Status",
     "snapshot_title": "Pictures",
     "snapshot_button": "Take picture",
     "snapshot_busy": "Taking the picture...",
@@ -1967,8 +1962,6 @@
     "snapshot_hint_stream_running": "The picture is taken from the running preview and saved to Media.",
     "snapshot_hint_stream_stopped": "Start the preview first: the picture is taken from the running preview.",
     "info_reconnect": "Reconnect",
-    "info_refresh": "Refresh",
-    "refresh_value": "1 per second",
     "stream_hint_snapshot_ffmpeg": "Live video needs ffmpeg, which this system does not have yet: the camera makes the pictures itself, so the stream cannot be chosen.",
     "stream_hint_snapshot_browser": "This browser cannot play live video: the camera makes the pictures itself, so the stream cannot be chosen."
   }

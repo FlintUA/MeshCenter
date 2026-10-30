@@ -143,7 +143,10 @@
 
     // On a phone the stream picker is narrow: the short labels ("Sub (recommended)") keep it readable.
     function narrowViewport() {
-        return typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 768px)').matches;
+        if (typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 768px)').matches) return true;
+        // the controls card is only about 424 px wide with both side panels open, whatever the window: short labels there too
+        const controls = el('ipCameraControls');
+        return Boolean(controls && controls.clientWidth > 0 && controls.clientWidth < 520);
     }
 
     function labelProfiles() {
@@ -756,6 +759,8 @@
             if (typeof mq.addEventListener === 'function') mq.addEventListener('change', labelProfiles);
         }
         labelProfiles();
+        const controls = el('ipCameraControls');
+        if (controls && typeof ResizeObserver === 'function') new ResizeObserver(labelProfiles).observe(controls);
     }
     document.addEventListener('visibilitychange', resumeAfterReturn);
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wireControls);

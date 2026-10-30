@@ -166,19 +166,18 @@ const tick = (ms = 5) => new Promise((resolve) => setTimeout(resolve, ms));
     assert.ok(env.registry.ipCameraProfile && env.registry.ipCameraReconnectBtn, 'stream picker and Reconnect are in the Mode panel');
     assert.equal(env.registry.ipCameraProfile.children.length, 2);
     assert.equal(env.registry.ipCameraReconnectBtn.style.display, 'none', 'Reconnect only while the stream is down');
-    assert.equal(env.registry.ipInfoResolution.textContent, '640x360');
-    assert.equal(env.registry.ipInfoFps.textContent, '15.1 FPS');
-    assert.equal(env.registry.ipInfoCodec.textContent, 'H264');
-    assert.equal(env.registry.ipInfoBitrate.textContent, '139 kbps');
-    assert.equal(env.registry.ipSnapshotHint.textContent, 'ipctl.snapshot_hint_api_full', 'Reolink control: the camera makes the full picture');
+    for (const id of ['ipInfoResolution', 'ipInfoFps', 'ipInfoCodec', 'ipInfoBitrate', 'ipInfoState', 'ipInfoRefresh']) {
+        assert.equal(env.registry[id], undefined, id + ': the facts grid is gone (the status line in the tab bar carries them)');
+    }
+    assert.ok(env.registry.ipSnapshotBtn && env.registry.ipSnapshotQuality, 'Stream, Take picture and Picture quality are all in the panel');
+    assert.equal(env.registry.ipSnapshotHint.textContent, 'ipctl.snapshot_hint_api_full ipctl.image_note', 'one muted line: what Take picture does + where the image settings are');
     assert.equal(env.registry.ipSnapshotQuality.value, 'full');
-    env.api.update({ ...STATUS, fps: 14.2, resolution: '1280x720' }); // the 2 s status poll: text updates, no rebuild
-    assert.equal(env.registry.ipInfoFps.textContent, '14.2 FPS');
+    env.api.update({ ...STATUS, fps: 14.2, resolution: '1280x720' }); // the 2 s status poll: no rebuild
     const modePanel = env.registry.ipPanelMode;
     env.api.update({ ...STATUS });
     assert.equal(env.registry.ipPanelMode, modePanel, 'the panel is not rebuilt on every status');
     env.api.update({ ...STATUS, snapshot_quality: 'small' });
-    assert.equal(env.registry.ipSnapshotHint.textContent, 'ipctl.snapshot_hint_api_small');
+    assert.equal(env.registry.ipSnapshotHint.textContent, 'ipctl.snapshot_hint_api_small ipctl.image_note');
     env.api.update({ ...STATUS, state: 'reconnecting' });
     assert.equal(env.registry.ipCameraReconnectBtn.style.display, '', 'Reconnect shows while the stream is down');
 
@@ -188,41 +187,32 @@ const tick = (ms = 5) => new Promise((resolve) => setTimeout(resolve, ms));
     assert.equal(plain.registry.cameraControlTabLens.hidden, true);
     assert.equal(plain.registry.ipSnapshotQuality, undefined);
     // no API: the hint says where the picture comes from, and that the preview has to run
-    assert.equal(plain.registry.ipSnapshotHint.textContent, 'ipctl.snapshot_hint_stream_running');
+    assert.equal(plain.registry.ipSnapshotHint.textContent, 'ipctl.snapshot_hint_stream_running ipctl.image_note');
     plain.api.update({ ...STATUS, zoom_control: false, control_type: 'none', state: 'stopped' });
-    assert.equal(plain.registry.ipSnapshotHint.textContent, 'ipctl.snapshot_hint_stream_stopped');
+    assert.equal(plain.registry.ipSnapshotHint.textContent, 'ipctl.snapshot_hint_stream_stopped ipctl.image_note');
     plain.api.update(null);
     assert.equal(plain.container.hidden, true, 'hidden for a camera that is not a network camera');
 }
 
-// UX4: snapshot mode - the picture's size and refresh instead of codec / fps / bitrate; the stream picker is locked with a hint
+// UX4: snapshot mode - the stream picker is locked with a hint (the picture's size and refresh are in the status line)
 {
     const env = makeEnv({ fetchImpl: async () => json(200, { ok: true }) });
     let snap = null;
     env.win.MCIpCamera.snapshotInfo = () => snap;
     env.api.update(STATUS);
-    assert.equal(env.registry.ipRowRefresh.hidden, true, 'a stream: no refresh row');
-    assert.equal(env.registry.ipRowFps.hidden, false);
     assert.equal(env.registry.ipCameraProfile.disabled, false);
     assert.equal(env.registry.ipStreamHint.hidden, true);
     snap = { reason: 'ffmpeg', width: 1920, height: 1080, intervalMs: 1000 };
     env.api.update(STATUS);
-    assert.equal(env.registry.ipInfoResolution.textContent, '1920x1080', 'the picture own size');
-    assert.equal(env.registry.ipInfoRefresh.textContent, 'ipctl.refresh_value');
-    assert.equal(env.registry.ipRowRefresh.hidden, false);
-    for (const row of ['ipRowFps', 'ipRowCodec', 'ipRowBitrate']) assert.equal(env.registry[row].hidden, true, row + ' is hidden for pictures');
     assert.equal(env.registry.ipCameraProfile.disabled, true, 'the sub / main choice is locked');
     assert.equal(env.registry.ipStreamHint.hidden, false);
     assert.equal(env.registry.ipStreamHint.textContent, 'ipctl.stream_hint_snapshot_ffmpeg');
-    assert.equal(env.registry.ipInfoState.textContent, 'ipcamera.snapshot_status');
     snap = { reason: 'browser', width: null, height: null, intervalMs: 1000 };
     env.api.update(STATUS);
     assert.equal(env.registry.ipStreamHint.textContent, 'ipctl.stream_hint_snapshot_browser');
-    assert.equal(env.registry.ipInfoResolution.textContent, '-', 'no picture yet: no invented size');
     snap = null;
     env.api.update(STATUS);
     assert.equal(env.registry.ipCameraProfile.disabled, false, 'a stream again: the choice is back');
-    assert.equal(env.registry.ipRowFps.hidden, false);
 }
 
 // the Lens tab: read on open, send on release only

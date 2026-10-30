@@ -112,7 +112,7 @@ Build from a **release tag**, not from whatever `main` happens to be:
 ```bash
 git clone https://github.com/FlintUA/MeshCenter
 cd MeshCenter
-git checkout v1.13.6
+git checkout v1.13.7
 ```
 
 (`git checkout` of a tag prints a "detached HEAD" notice - that is fine.)
@@ -120,20 +120,20 @@ git checkout v1.13.6
 On Linux/macOS or Git Bash the helper script picks the version from the tag:
 
 ```bash
-deploy/docker/build.sh              # builds meshcenter:1.13.6
+deploy/docker/build.sh              # builds meshcenter:1.13.7
 ```
 
 On Windows without a POSIX shell (PowerShell / cmd) run the command it wraps:
 
 ```bash
-docker build --platform linux/amd64 --build-arg MESHCENTER_VERSION=1.13.6 -t meshcenter:1.13.6 .
+docker build --platform linux/amd64 --build-arg MESHCENTER_VERSION=1.13.7 -t meshcenter:1.13.7 .
 ```
 
 The version number you pass is what MeshCenter shows in its footer, so use a real
-version (`1.13.6`), never a name like `test`. From v1.13.0 on the image also carries
+version (`1.13.7`), never a name like `test`. From v1.13.0 on the image also carries
 OCI labels (`org.opencontainers.image.version`, `.revision` = the exact commit,
 `.source`, `.title`, `.licenses`), readable with
-`docker image inspect meshcenter:1.13.6 --format '{{json .Config.Labels}}'`;
+`docker image inspect meshcenter:1.13.7 --format '{{json .Config.Labels}}'`;
 `build.sh` fills the revision itself. With the plain `docker build` command add
 `--build-arg MESHCENTER_REVISION=$(git rev-parse HEAD)` (optional; it defaults to
 `unknown`). Images built from older versions have no labels: the tag and the footer
@@ -142,7 +142,7 @@ in the web UI are the source of truth.
 ### 3. Save the image and copy it to the NAS
 
 ```bash
-docker save meshcenter:1.13.6 -o meshcenter-1.13.6.tar
+docker save meshcenter:1.13.7 -o meshcenter-1.13.7.tar
 ```
 
 Use `-o` (not `> file`): in PowerShell, `>` re-encodes the stream and corrupts the
@@ -152,13 +152,13 @@ Copy it to the NAS with File Station (upload) or `scp`. Then import it, either:
 
 * **by SSH** (this is what the NAS acceptance used), as root:
   ```bash
-  sudo docker load -i /volume2/docker/meshcenter/meshcenter-1.13.6.tar
+  sudo docker load -i /volume2/docker/meshcenter/meshcenter-1.13.7.tar
   ```
 * **or in Container Manager**: *Image → Add → Add from file* and pick the `.tar`.
   Use the plain `.tar` that `docker save` wrote; it has not been verified which
   other extensions the GUI accepts, so do not gzip it for the GUI.
 
-Either way the image `meshcenter:1.13.6` should now be listed under *Image*.
+Either way the image `meshcenter:1.13.7` should now be listed under *Image*.
 
 ### 4. Create the folders and give the container the right owner
 
@@ -188,7 +188,7 @@ name: meshcenter
 services:
   meshcenter:
     container_name: meshcenter
-    image: meshcenter:1.13.6
+    image: meshcenter:1.13.7
     user: "1026:100"                 # the owner of ./config and ./data
     restart: unless-stopped
     ports:
@@ -196,7 +196,7 @@ services:
     environment:
       TZ: Europe/Berlin              # your IANA time zone
       MESHCENTER_TRUST_HOST_CLOCK: "1"   # DSM keeps the NAS clock synchronized
-      MESHCENTER_VERSION: "1.13.6"
+      MESHCENTER_VERSION: "1.13.7"
     volumes:
       - ./config:/config
       - ./data:/data
@@ -247,22 +247,22 @@ Open `http://<nas-ip>:5080/`.
 * **Update:** build and save the new image on the PC (steps 2-3: `git fetch --tags
   && git checkout v<new>`, then `docker save`) and copy the `.tar` into
   `/volume2/docker/meshcenter/`. Then on the NAS (SSH), with the new version in
-  place of `1.13.6`:
+  place of `1.13.7`:
 
   ```bash
   cd /volume2/docker/meshcenter
-  sha256sum meshcenter-1.13.6.tar        # compare with the value you got with the tar
-  sudo docker load -i meshcenter-1.13.6.tar
-  sed -i 's|image: meshcenter:.*|image: meshcenter:1.13.6|; s|MESHCENTER_VERSION: ".*"|MESHCENTER_VERSION: "1.13.6"|' compose.yaml
-  grep -E 'image|MESHCENTER_VERSION' compose.yaml   # both lines show 1.13.6
+  sha256sum meshcenter-1.13.7.tar        # compare with the value you got with the tar
+  sudo docker load -i meshcenter-1.13.7.tar
+  sed -i 's|image: meshcenter:.*|image: meshcenter:1.13.7|; s|MESHCENTER_VERSION: ".*"|MESHCENTER_VERSION: "1.13.7"|' compose.yaml
+  grep -E 'image|MESHCENTER_VERSION' compose.yaml   # both lines show 1.13.7
   sudo docker compose up -d
   ```
 
   Then open **About** (or the version in the Workspace menu) and check that it
-  shows `1.13.6`. `config/` and `data/` are untouched.
+  shows `1.13.7`. `config/` and `data/` are untouched.
 
   > **Warning: load first, then `up -d`.** If the new image is not loaded yet,
-  > `docker compose up -d` tries to pull `meshcenter:1.13.6` from the internet and
+  > `docker compose up -d` tries to pull `meshcenter:1.13.7` from the internet and
   > stops with `pull access denied` (the image is never published).
 
   The checksum is the one that came with the tar (the `.sha256` file next to it, or
@@ -328,11 +328,11 @@ Docker commands on DSM need root: run `sudo -i` once after logging in over SSH
    The container never changes ownership itself; if it cannot write it stops
    with a clear message.
 3. Put the repository in `src/` (`git clone https://github.com/FlintUA/MeshCenter src`,
-   then `git -C src checkout v1.13.6`), and copy `src/deploy/docker/compose.yaml`
+   then `git -C src checkout v1.13.7`), and copy `src/deploy/docker/compose.yaml`
    and `src/deploy/docker/.env.example` (as `.env`) next to it. In `compose.yaml`
    set `build.context: ./src`.
 4. Edit `.env`: `PUID`/`PGID` from step 2, `TZ`, `MESHCENTER_VERSION`
-   (e.g. `1.13.6`, the output of `git -C src describe --tags` without the `v`).
+   (e.g. `1.13.7`, the output of `git -C src describe --tags` without the `v`).
 5. Build and start (SSH, in `/volume2/docker/meshcenter`):
    ```bash
    sudo docker compose build

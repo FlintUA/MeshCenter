@@ -370,4 +370,151 @@ for (const loc of ['en', 'de', 'ru', 'uk']) {
     assert.ok(cat.ipcamera.control_trust_message.includes('{fingerprint}') && cat.ipcamera.control_denied.includes('{right}'), loc + ' placeholders kept');
 }
 
+// ---------------------------------------------------------------- the MSE player: profile switch and errors (CAM2 live findings)
+// A fake MediaSource / SourceBuffer / <video> around the REAL static/camera-ip.js. The camera's two profiles have different
+// codec strings (sub avc1.640028, main avc1.640033 level 5.1).
+async function mseSession({ codecs = ['avc1.640028'], supported = () => true, snapshotCapability = true } = {}) {
+    const made = [];
+    const types = [];
+    const postedProfiles = [];
+    const urls = [];
+    let streamRequests = 0;
+    class FakeMediaSource {
+        constructor() {
+            this.readyState = 'open';
+            this.listeners = {};
+            this.buffers = [];
+            made.push(this);
+            setTimeout(() => this.emit('sourceopen'), 0);
+        }
+        addEventListener(name, fn) { (this.listeners[name] = this.listeners[name] || []).push(fn); }
+        emit(name) { (this.listeners[name] || []).slice().forEach((fn) => fn({})); }
+        addSourceBuffer(type) {
+            types.push(type);
+            const buffer = {
+                updating: false, buffered: { length: 0 }, listeners: {},
+                addEventListener(n, fn) { (this.listeners[n] = this.listeners[n] || []).push(fn); },
+                emit(n) { (this.listeners[n] || []).slice().forEach((fn) => fn({})); },
+                appendBuffer() {},
+            };
+            this.buffers.push(buffer);
+            return buffer;
+        }
+    }
+    FakeMediaSource.isTypeSupported = (type) => supported(type);
+    let counter = 0;
+    const videoListeners = {};
+    const video = {
+        classList: { add() {}, remove() {}, toggle() {} },
+        firstChild: null, removeChild() {}, appendChild() {},
+        addEventListener(n, fn) { (videoListeners[n] = videoListeners[n] || []).push(fn); },
+        play: () => Promise.resolve(), pause() {}, load() {}, removeAttribute() {},
+        set src(v) { this._src = v; },
+    };
+    const ctx = makeWindow({
+        MediaSource: FakeMediaSource, AbortController,
+        setCameraFeedLoading() {},
+        URL: { createObjectURL: () => 'blob:ms' + (counter += 1), revokeObjectURL() {} },
+    });
+    let profile = 'sub';
+    ctx.win.fetch = async (url, options) => {
+        urls.push(url);
+        if (url.startsWith('/api/camera/stream/fmp4')) {
+            const codec = codecs[Math.min(streamRequests, codecs.length - 1)];
+            streamRequests += 1;
+            return { ok: true, status: 200, headers: { get: (h) => (h === 'X-Codec' ? codec : null) },
+                body: { getReader: () => ({ read: () => new Promise(() => {}) }) } };
+        }
+        if (url.startsWith('/api/camera/stream/profile')) {
+            profile = JSON.parse(options.body).profile;
+            postedProfiles.push(profile);
+            return { ok: true, status: 200, json: async () => ({ ok: true }) };
+        }
+        if (url.startsWith('/api/camera/snapshot')) return { ok: true, status: 200, blob: async () => ({ size: 3 }), json: async () => ({}) };
+        return { ok: true, status: 200, json: async () => ({ source_type: 'rtsp', state: 'live', profile, codec: 'h264', ffmpeg_available: true,
+            mjpeg_fallback: 'disabled_low_power', snapshot_fallback: snapshotCapability }) };
+    };
+    ctx.elements.videoFeedIp = video;
+    ctx.elements.videoFeed = { classList: { add() {}, remove() {}, toggle() {} }, set src(v) {} };
+    vm.runInContext(read('camera-ip.js'), ctx.win);
+    await ctx.win.MCIpCamera.start();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    return { ctx, made, types, postedProfiles, urls, video, videoListeners, player: ctx.win.MCIpCamera };
+}
+
+// a profile switch builds a NEW MediaSource and SourceBuffer with the new codec string and never ends in pictures
+{
+    const run = await mseSession({ codecs: ['avc1.640028', 'avc1.640033'] });
+    assert.equal(run.made.length, 1);
+    assert.deepEqual(run.types, ['video/mp4; codecs="avc1.640028"']);
+    await run.player.changeProfile('main');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.deepEqual(run.postedProfiles, ['main']);
+    assert.equal(run.made.length, 2, 'a fresh MediaSource for the new stream');
+    assert.deepEqual(run.types, ['video/mp4; codecs="avc1.640028"', 'video/mp4; codecs="avc1.640033"'], 'the new init segment gets its own SourceBuffer and codec');
+    assert.equal(run.player.snapshotInfo(), null, 'no snapshot mode after a switch');
+    assert.ok(!run.urls.some((u) => u.startsWith('/api/camera/snapshot')));
+    await run.player.changeProfile('sub');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(run.made.length, 3, 'and back again');
+    run.player.stop();
+}
+// an empty X-Codec (the server is between two profiles) is "not ready": ask again, never pictures, never "browser cannot play"
+{
+    const run = await mseSession({ codecs: ['', 'avc1.640033'] });
+    assert.equal(run.made.length, 0, 'nothing is built from an empty codec');
+    assert.equal(run.player.snapshotInfo(), null, 'not snapshot mode');
+    assert.ok(!run.urls.some((u) => u.startsWith('/api/camera/snapshot')));
+    await new Promise((resolve) => setTimeout(resolve, 2300));
+    assert.equal(run.made.length, 1, 'the retry builds the player once the codec is known');
+    assert.deepEqual(run.types, ['video/mp4; codecs="avc1.640033"']);
+    run.player.stop();
+}
+// the capability check stays: a codec this browser really cannot play (non-empty, isTypeSupported false) uses pictures
+{
+    const run = await mseSession({ codecs: ['avc1.640033'], supported: () => false });
+    assert.equal(run.made.length, 0);
+    const info = run.player.snapshotInfo();
+    assert.ok(info && info.reason === 'browser', 'unsupported codec -> snapshot mode from the capability check');
+    run.player.stop();
+}
+// an MSE error while playing rebuilds the player with a new MediaSource; it never ends in snapshot mode
+for (const source of ['buffer', 'mediaSource', 'video']) {
+    const run = await mseSession({ codecs: ['avc1.640033', 'avc1.640033'] });
+    assert.equal(run.made.length, 1);
+    if (source === 'video') (run.videoListeners.error || []).forEach((fn) => fn({}));
+    else if (source === 'buffer') run.made[0].buffers[0].emit('error');
+    else run.made[0].emit('sourceclose');
+    assert.equal(run.player.snapshotInfo(), null, source + ' error: no snapshot mode');
+    assert.equal(run.player.mseFailures(), 1);
+    await new Promise((resolve) => setTimeout(resolve, 2300));
+    assert.equal(run.made.length, 2, source + ' error: a fresh MediaSource after the retry delay');
+    assert.equal(run.player.snapshotInfo(), null);
+    assert.ok(!run.urls.some((u) => u.startsWith('/api/camera/snapshot')), source + ' error: never pictures');
+    run.player.stop();
+}
+// two error events for one failure start one reconnect, not two
+{
+    const run = await mseSession({ codecs: ['avc1.640033'] });
+    run.made[0].buffers[0].emit('error');
+    run.made[0].emit('sourceclose');
+    (run.videoListeners.error || []).forEach((fn) => fn({}));
+    await new Promise((resolve) => setTimeout(resolve, 2300));
+    assert.equal(run.made.length, 2, 'one retry, one new MediaSource');
+    run.player.stop();
+}
+// no MediaSource at all is the other reason for pictures (the capability check)
+{
+    const ctx = makeWindow({ AbortController, setCameraFeedLoading() {}, URL: { createObjectURL: () => 'blob:x', revokeObjectURL() {} } });
+    ctx.win.fetch = async (url) => (url.startsWith('/api/camera/snapshot')
+        ? { ok: true, status: 200, blob: async () => ({ size: 3 }), json: async () => ({}) }
+        : { ok: true, status: 200, json: async () => ({ source_type: 'rtsp', state: 'idle', profile: 'sub', ffmpeg_available: true, mjpeg_fallback: 'disabled_low_power', snapshot_fallback: true }) });
+    ctx.elements.videoFeed = { classList: { add() {}, remove() {}, toggle() {} }, set src(v) {} };
+    ctx.elements.videoFeedIp = { classList: { add() {}, remove() {}, toggle() {} }, firstChild: null, removeAttribute() {}, load() {}, pause() {}, addEventListener() {} };
+    vm.runInContext(read('camera-ip.js'), ctx.win);
+    await ctx.win.MCIpCamera.start();
+    assert.equal(ctx.win.MCIpCamera.snapshotInfo().reason, 'browser', 'no MediaSource -> pictures');
+    ctx.win.MCIpCamera.stop();
+}
+
 console.log('test_camera_ip.mjs: ok');

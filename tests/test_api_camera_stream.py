@@ -297,3 +297,16 @@ def test_a_stream_ends_after_its_max_age_so_the_next_request_is_authorised_again
         assert time.monotonic() - started < 10
     assert received > 0 and 0.4 < time.monotonic() - started < 5
     assert env["limiter"].count() == 0
+
+
+def test_open_fmp4_never_hands_out_an_empty_codec_string(env, monkeypatch):
+    """A viewer that arrives while the stream facts are being rebuilt (profile switch) gets "not ready" (503, the player
+    asks again), never a 200 with an empty X-Codec that the player would read as "this browser cannot play it"."""
+    from camera.rtsp_driver import StreamNotReady
+
+    upstream = env["driver"].upstream
+    monkeypatch.setattr(upstream, "wait_ready", lambda timeout: True)
+    monkeypatch.setattr(upstream, "status", lambda: {"state": "connecting", "error_code": "", "mse_codec": None})
+    with pytest.raises(StreamNotReady):
+        env["driver"].open_fmp4()
+    assert env["limiter"].count() == 0, "the viewer slot is given back"

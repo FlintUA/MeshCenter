@@ -410,10 +410,15 @@ class RtspUpstream:
             self._backoff.reset()
             self._wake = True
             self.error_code = ""
+            # the old profile's init segment and stream facts must not be served for the new one (a viewer that
+            # connects in the gap would get the old codec string, or none, and the player would misjudge it)
+            self.info = {}
+            self._fps_window.clear()
             if self.state in TERMINAL_ERRORS or self.state == "reconnecting":
                 self.state = "connecting"
             process = self._process
             self._cond.notify_all()
+        self.relay.end_session()  # viewers of the old profile end now (they reconnect and get the new init segment)
         if process is not None:
             terminate_process(process)  # the supervisor loop reconnects with the new path
 
@@ -546,6 +551,7 @@ class RtspUpstream:
             self.info = {}
             self._fps_window.clear()
             self._stderr_tail.clear()
+        self.relay.end_session()  # no stale init segment from the previous connection (profile switch, reconnect)
         try:
             process = self._spawn(argv)
         except Exception as error:

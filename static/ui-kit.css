@@ -5224,17 +5224,12 @@ video.camera-stream {
 }
 
 @container (min-width: 640px) {
-    #ipPanelMode {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(220px, 300px);
-        column-gap: 24px;
-        align-items: start;
-    }
-
+    /* ONE column: the stream facts, then Pictures as a normal section under them over the full width (it used to sit
+       in a narrow second column, where Take picture and the quality selector stood on top of each other, misaligned) */
     #ipPanelMode .ip-info-grid {
         grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
         gap: 0 20px;
-        margin-bottom: 0;
+        margin-bottom: 12px;
     }
 
     #ipPanelMode .ip-info-grid > .ip-info-row:first-child {
@@ -5251,19 +5246,7 @@ video.camera-stream {
         white-space: nowrap;
     }
 
-    #ipPanelMode .ip-section {
-        padding: 0 0 0 20px;
-        border-top: 0;
-        border-left: 1px solid var(--mc-border-soft, #e5e8ec);
-    }
-
-    #ipPanelMode .ip-snapshot-row {
-        flex-direction: column;
-        align-items: flex-start;
-    }
-
     #ipPanelMode .ip-image-note {
-        grid-column: 1 / -1;
         margin-top: 6px;
     }
 }
@@ -5382,7 +5365,7 @@ video.camera-stream {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 10px;
+    gap: 10px 16px;
 }
 
 /* sized to its own text (the standard button rules give it a fixed width that clipped the longer translations) */
@@ -5397,9 +5380,29 @@ video.camera-stream {
 
 .ip-quality {
     display: flex;
+    flex: 1 1 auto;
     align-items: center;
     gap: 8px;
+    min-width: 0;
     font-size: 0.9em;
+}
+
+/* Take picture and the quality selector share one row, the selector right after the button at the same height */
+.ip-quality .ip-select {
+    min-height: 44px;
+    min-width: 0;
+}
+
+/* a narrow card (a phone): the select says what it is by itself, so the row of button + selector stays one row */
+@container (max-width: 480px) {
+    .ip-quality > span {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+    }
 }
 
 .ip-select {

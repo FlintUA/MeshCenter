@@ -8,7 +8,7 @@ Auth/CSRF columns mirror `api/api_auth.py`'s own `_enforce_auth()`/`_enforce_csr
 
 | Path | Methods | Source | Auth | CSRF |
 |---|---|---|---|---|
-| `/` | GET | `server.py:7446` (`index`) | required | exempt |
+| `/` | GET | `server.py:7447` (`index`) | required | exempt |
 | `/api/attachments` | GET | `api/api_attachments.py:689` (`list_attachments`) | required | exempt |
 | `/api/attachments` | POST | `api/api_attachments.py:1316` (`create_attachment`) | required | required |
 | `/api/attachments/<attachment_id>` | GET | `api/api_attachments.py:744` (`get_attachment_detail`) | required | exempt |
@@ -23,7 +23,7 @@ Auth/CSRF columns mirror `api/api_auth.py`'s own `_enforce_auth()`/`_enforce_csr
 | `/api/attachments/<attachment_id>/save` | POST | `api/api_attachments.py:1086` (`save_attachment`) | required | required |
 | `/api/auth/csrf` | GET | `api/api_auth.py:544` (`api_auth_csrf`) | required | exempt |
 | `/api/auth/logout_all` | POST | `api/api_auth.py:567` (`api_logout_all`) | required | required |
-| `/api/base_status` | GET | `server.py:8655` (`api_base_status`) | required | exempt |
+| `/api/base_status` | GET | `server.py:8656` (`api_base_status`) | required | exempt |
 | `/api/camera/active` | POST | `api/api_camera_manager.py:87` (`api_camera_active`) | required | required |
 | `/api/camera/mode/<mode>` | POST | `api/api_camera.py:333` (`api_camera_set_mode`) | required | required |
 | `/api/camera/power` | GET | `api/api_camera.py:219` (`api_camera_power_get`) | required | exempt |
@@ -53,15 +53,15 @@ Auth/CSRF columns mirror `api/api_auth.py`'s own `_enforce_auth()`/`_enforce_csr
 | `/api/camera/stream/reconnect` | POST | `api/api_camera.py:210` (`api_camera_stream_reconnect`) | required | required |
 | `/api/camera/switch_mode` | POST | `api/api_camera.py:315` (`api_camera_switch_mode`) | required | required |
 | `/api/chats` | GET | `api/api_chat.py:460` (`api_chats`) | required | exempt |
-| `/api/cleanup_nodes` | POST | `server.py:8707` (`api_cleanup_nodes`) | required | required |
-| `/api/clear_chat` | POST | `server.py:8950` (`api_clear_chat`) | required | required |
-| `/api/delete_all_dm` | POST | `server.py:9429` (`api_delete_all_dm`) | required | required |
-| `/api/delete_chat` | POST | `server.py:8992` (`api_delete_chat`) | required | required |
-| `/api/devices` | GET | `server.py:8574` (`api_profile_devices`) | required | exempt |
+| `/api/cleanup_nodes` | POST | `server.py:8708` (`api_cleanup_nodes`) | required | required |
+| `/api/clear_chat` | POST | `server.py:8951` (`api_clear_chat`) | required | required |
+| `/api/delete_all_dm` | POST | `server.py:9430` (`api_delete_all_dm`) | required | required |
+| `/api/delete_chat` | POST | `server.py:8993` (`api_delete_chat`) | required | required |
+| `/api/devices` | GET | `server.py:8575` (`api_profile_devices`) | required | exempt |
 | `/api/devices/cameras` | GET | `api/api_camera_manager.py:55` (`api_devices_cameras`) | required | exempt |
 | `/api/devices/cameras/rescan` | POST | `api/api_camera_manager.py:62` (`api_devices_cameras_rescan`) | required | required |
-| `/api/devices/dashboard` | GET | `server.py:7499` (`api_devices_dashboard`) | required | exempt |
-| `/api/export/telemetry` | GET | `server.py:9182` (`api_export_telemetry`) | required | exempt |
+| `/api/devices/dashboard` | GET | `server.py:7500` (`api_devices_dashboard`) | required | exempt |
+| `/api/export/telemetry` | GET | `server.py:9183` (`api_export_telemetry`) | required | exempt |
 | `/api/hardware/bme280` | GET | `api/api_hardware_bme280.py:16` (`api_hardware_bme280_status`) | required | exempt |
 | `/api/hardware/display` | GET | `api/api_hardware_display.py:91` (`api_hardware_display`) | required | exempt |
 | `/api/hardware/display/clear` | POST | `api/api_hardware_display.py:296` (`api_hardware_display_clear`) | required | required |
@@ -76,7 +76,7 @@ Auth/CSRF columns mirror `api/api_auth.py`'s own `_enforce_auth()`/`_enforce_csr
 | `/api/hardware/i2c/scan` | POST | `api/api_hardware_i2c.py:54` (`api_hardware_i2c_scan`) | required | required |
 | `/api/hardware/rtc` | GET | `api/api_hardware_i2c.py:65` (`api_hardware_rtc_status`) | required | exempt |
 | `/api/hardware/rtc/configure` | POST | `api/api_hardware_i2c.py:73` (`api_hardware_rtc_configure`) | required | required |
-| `/api/instance` | GET | `server.py:7480` (`api_instance_identity`) | required | exempt |
+| `/api/instance` | GET | `server.py:7481` (`api_instance_identity`) | required | exempt |
 | `/api/logout` | POST | `api/api_auth.py:556` (`api_logout`) | required | required |
 | `/api/mca/commands/<command_id>` | GET | `api/api_attachments.py:917` (`mca_command`) | required | exempt |
 | `/api/mca/connectivity` | GET | `api/api_attachments.py:886` (`mca_connectivity`) | required | exempt |
@@ -105,24 +105,24 @@ Auth/CSRF columns mirror `api/api_auth.py`'s own `_enforce_auth()`/`_enforce_csr
 | `/api/meshtastic/connection` | GET | `api/api_meshtastic.py:386` (`api_meshtastic_connection`) | required | exempt |
 | `/api/meshtastic/connections/<transport>/forget` | POST | `api/api_meshtastic.py:586` (`api_meshtastic_forget_connection`) | required | required |
 | `/api/meshtastic/reconnect` | POST | `api/api_meshtastic.py:530` (`api_meshtastic_reconnect`) | required | required |
-| `/api/meshtastic/reconnect_now` | POST | `server.py:8785` (`api_meshtastic_reconnect_now`) | required | required |
+| `/api/meshtastic/reconnect_now` | POST | `server.py:8786` (`api_meshtastic_reconnect_now`) | required | required |
 | `/api/meshtastic/tcp/connect` | POST | `api/api_meshtastic.py:438` (`api_meshtastic_tcp_connect`) | required | required |
 | `/api/meshtastic/transport` | POST | `api/api_meshtastic.py:480` (`api_meshtastic_set_transport`) | required | required |
 | `/api/messages` | GET | `api/api_chat.py:482` (`api_messages`) | required | exempt |
 | `/api/messages/delete` | POST | `api/api_chat.py:547` (`api_delete_message`) | required | required |
 | `/api/messages/mark_read` | POST | `api/api_chat.py:525` (`api_mark_chat_read`) | required | required |
-| `/api/node-manager/dashboard` | GET | `server.py:7498` (`api_devices_dashboard`) | required | exempt |
-| `/api/node-manager/profiles/<profile_id>/activate` | POST | `server.py:8315` (`api_activate_radio_profile`) | required | required |
-| `/api/node-manager/radio/accept` | POST | `server.py:8159` (`api_accept_detected_radio`) | required | required |
-| `/api/node-manager/radio/detect` | POST | `server.py:7892` (`api_detect_new_radio`) | required | required |
-| `/api/node_status` | GET | `server.py:8668` (`api_node_status`) | required | exempt |
+| `/api/node-manager/dashboard` | GET | `server.py:7499` (`api_devices_dashboard`) | required | exempt |
+| `/api/node-manager/profiles/<profile_id>/activate` | POST | `server.py:8316` (`api_activate_radio_profile`) | required | required |
+| `/api/node-manager/radio/accept` | POST | `server.py:8160` (`api_accept_detected_radio`) | required | required |
+| `/api/node-manager/radio/detect` | POST | `server.py:7893` (`api_detect_new_radio`) | required | required |
+| `/api/node_status` | GET | `server.py:8669` (`api_node_status`) | required | exempt |
 | `/api/node_tools` | POST | `api/api_node_tools.py:671` (`api_node_tools`) | required | required |
 | `/api/nodes/<node_id>/icon` | DELETE | `api/api_node_icons.py:85` (`delete_node_icon`) | required | required |
 | `/api/nodes/<node_id>/icon` | GET | `api/api_node_icons.py:27` (`get_node_icon`) | required | exempt |
 | `/api/nodes/<node_id>/icon` | POST | `api/api_node_icons.py:44` (`upload_node_icon`) | required | required |
-| `/api/nodes_export` | GET | `server.py:9297` (`api_nodes_export`) | required | exempt |
-| `/api/nodes_import` | POST | `server.py:9314` (`api_nodes_import`) | required | required |
-| `/api/nodes_management` | GET | `server.py:9282` (`api_nodes_management`) | required | exempt |
+| `/api/nodes_export` | GET | `server.py:9298` (`api_nodes_export`) | required | exempt |
+| `/api/nodes_import` | POST | `server.py:9315` (`api_nodes_import`) | required | required |
+| `/api/nodes_management` | GET | `server.py:9283` (`api_nodes_management`) | required | exempt |
 | `/api/notifications` | DELETE | `api/api_system.py:524` (`api_clear_notifications`) | required | required |
 | `/api/notifications` | GET | `api/api_system.py:487` (`api_get_notifications`) | required | exempt |
 | `/api/notifications/<nid>` | DELETE | `api/api_system.py:517` (`api_delete_notification`) | required | required |
@@ -133,13 +133,13 @@ Auth/CSRF columns mirror `api/api_auth.py`'s own `_enforce_auth()`/`_enforce_csr
 | `/api/photo/save` | POST | `api/api_camera.py:469` (`api_photo_save`) | required | required |
 | `/api/photo/settings` | GET | `api/api_camera.py:411` (`api_photo_settings`) | required | exempt |
 | `/api/photo/settings` | POST | `api/api_camera.py:416` (`api_photo_update_settings`) | required | required |
-| `/api/radio_connection/reconnect` | POST | `server.py:8818` (`api_radio_connection_reconnect`) | required | required |
-| `/api/radio_connection/release` | POST | `server.py:8758` (`api_radio_connection_release`) | required | required |
-| `/api/radio_connection/status` | GET | `server.py:8720` (`api_radio_connection_status`) | required | exempt |
-| `/api/radio_health` | GET | `server.py:9538` (`api_radio_health`) | required | exempt |
-| `/api/rescan_nodes` | POST | `server.py:8897` (`api_rescan_nodes`) | required | required |
-| `/api/restart_listener` | POST | `server.py:8856` (`api_restart_listener`) | required | required |
-| `/api/restore_deleted_dm` | POST | `server.py:9510` (`api_restore_deleted_dm`) | required | required |
+| `/api/radio_connection/reconnect` | POST | `server.py:8819` (`api_radio_connection_reconnect`) | required | required |
+| `/api/radio_connection/release` | POST | `server.py:8759` (`api_radio_connection_release`) | required | required |
+| `/api/radio_connection/status` | GET | `server.py:8721` (`api_radio_connection_status`) | required | exempt |
+| `/api/radio_health` | GET | `server.py:9539` (`api_radio_health`) | required | exempt |
+| `/api/rescan_nodes` | POST | `server.py:8898` (`api_rescan_nodes`) | required | required |
+| `/api/restart_listener` | POST | `server.py:8857` (`api_restart_listener`) | required | required |
+| `/api/restore_deleted_dm` | POST | `server.py:9511` (`api_restore_deleted_dm`) | required | required |
 | `/api/schedules` | GET | `api/api_system.py:531` (`api_get_schedules`) | required | exempt |
 | `/api/schedules` | POST | `api/api_system.py:537` (`api_create_schedule`) | required | required |
 | `/api/schedules/<sid>` | DELETE | `api/api_system.py:567` (`api_delete_schedule`) | required | required |
@@ -149,7 +149,7 @@ Auth/CSRF columns mirror `api/api_auth.py`'s own `_enforce_auth()`/`_enforce_csr
 | `/api/security` | POST | `api/api_auth.py:593` (`api_update_security`) | required | required |
 | `/api/send` | POST | `api/api_chat.py:626` (`api_send`) | required | required |
 | `/api/send/retry` | POST | `api/api_chat.py:775` (`api_send_retry`) | required | required |
-| `/api/sensors` | GET | `server.py:7476` (`api_sensors`) | required | exempt |
+| `/api/sensors` | GET | `server.py:7477` (`api_sensors`) | required | exempt |
 | `/api/settings` | GET | `api/api_settings.py:668` (`api_get_settings`) | required | exempt |
 | `/api/settings` | POST | `api/api_settings.py:699` (`api_update_settings`) | required | required |
 | `/api/settings/reference-location-name` | POST | `api/api_settings.py:680` (`api_reference_location_name`) | required | required |
@@ -162,9 +162,9 @@ Auth/CSRF columns mirror `api/api_auth.py`'s own `_enforce_auth()`/`_enforce_csr
 | `/api/system/wifi/connect` | POST | `api/api_system.py:391` (`api_system_wifi_connect`) | required | required |
 | `/api/system/wifi/forget` | POST | `api/api_system.py:415` (`api_system_wifi_forget`) | required | required |
 | `/api/system/wifi/scan` | GET | `api/api_system.py:305` (`api_system_wifi_scan`) | required | exempt |
-| `/api/telemetry` | GET | `server.py:9025` (`api_telemetry`) | required | exempt |
-| `/api/telemetry/config` | POST | `server.py:9258` (`api_telemetry_config`) | required | required |
-| `/api/telemetry/history` | GET | `server.py:9095` (`api_telemetry_history`) | required | exempt |
+| `/api/telemetry` | GET | `server.py:9026` (`api_telemetry`) | required | exempt |
+| `/api/telemetry/config` | POST | `server.py:9259` (`api_telemetry_config`) | required | required |
+| `/api/telemetry/history` | GET | `server.py:9096` (`api_telemetry_history`) | required | exempt |
 | `/api/time` | GET | `api/api_system.py:481` (`api_get_time`) | required | exempt |
 | `/api/timers` | GET | `api/api_system.py:574` (`api_get_timers`) | required | exempt |
 | `/api/timers` | POST | `api/api_system.py:580` (`api_create_timer`) | required | required |
@@ -174,8 +174,8 @@ Auth/CSRF columns mirror `api/api_auth.py`'s own `_enforce_auth()`/`_enforce_csr
 | `/api/timers/<tid>/reset` | PATCH | `api/api_system.py:620` (`api_reset_timer`) | required | required |
 | `/api/timers/<tid>/resume` | PATCH | `api/api_system.py:602` (`api_resume_timer`) | required | required |
 | `/api/timers/<tid>/stop` | PATCH | `api/api_system.py:611` (`api_stop_timer`) | required | required |
-| `/api/toggle_favorite` | POST | `server.py:8692` (`api_toggle_favorite`) | required | required |
-| `/api/toggle_ignore` | POST | `server.py:8677` (`api_toggle_ignore`) | required | required |
+| `/api/toggle_favorite` | POST | `server.py:8693` (`api_toggle_favorite`) | required | required |
+| `/api/toggle_ignore` | POST | `server.py:8678` (`api_toggle_ignore`) | required | required |
 | `/api/updates/apply` | POST | `api/api_updates.py:71` (`api_updates_apply`) | required | required |
 | `/api/updates/check` | POST | `api/api_updates.py:59` (`api_updates_check`) | required | required |
 | `/api/updates/preflight` | GET | `api/api_updates.py:64` (`api_updates_preflight`) | required | exempt |
@@ -191,8 +191,8 @@ Auth/CSRF columns mirror `api/api_auth.py`'s own `_enforce_auth()`/`_enforce_csr
 | `/api/weather/config` | GET | `api/api_weather.py:127` (`api_weather_config_status`) | required | exempt |
 | `/api/weather/config` | POST | `api/api_weather.py:135` (`api_weather_save_key`) | required | required |
 | `/api/weather/current` | GET | `api/api_weather.py:107` (`api_weather_current`) | required | exempt |
-| `/healthz` | GET | `server.py:1106` (`healthz`) | required | exempt |
+| `/healthz` | GET | `server.py:1107` (`healthz`) | required | exempt |
 | `/login` | GET, POST | `api/api_auth.py:424` (`login`) | exempt | exempt |
 | `/setup` | GET, POST | `api/api_auth.py:491` (`setup`) | exempt | exempt |
-| `/static/<path:filename>` | GET | `server.py:1290` (`static_files`) | exempt | exempt |
+| `/static/<path:filename>` | GET | `server.py:1291` (`static_files`) | exempt | exempt |
 | `/video_feed` | GET | `api/api_camera.py:109` (`video_feed`) | required | exempt |

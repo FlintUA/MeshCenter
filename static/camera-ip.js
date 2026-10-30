@@ -30,6 +30,9 @@
     const SOURCEOPEN_TIMEOUT_MS = 6000;
     const FIRST_FRAME_TIMEOUT_MS = 10000;
     const MAX_QUEUED_CHUNKS = 120;
+    const WATCHDOG_MS = 2000;
+    const STABLE_PLAY_MS = 15000;
+    const FIRST_FRAME_RETRIES = 2; // a stream that shows nothing is rebuilt this often before the message appears
 
     const POLL_MS = 2000;
     const TERMINAL = ['auth_failed', 'stream_not_found', 'unsupported_codec', 'address_blocked', 'ffmpeg_missing'];
@@ -45,6 +48,9 @@
     let snapshotReason = ''; // 'ffmpeg' (the host has none) | 'browser' (it cannot play the stream)
     let snapshotSize = null; // {width, height} of the latest picture
     let snapshotUrl = null;
+    let currentMediaSource = null; // the MediaSource of the running player (a profile switch or an error builds a new one)
+    let mseFailures = 0; // runtime MSE errors since the last stable playback: spaces the reconnects
+    let watchdogTimer = null;
 
     function t(key, params) {
         return window.I18N.t(key, params);
@@ -263,6 +269,9 @@
         }
         if (retryTimer) clearTimeout(retryTimer);
         retryTimer = null;
+        if (watchdogTimer) clearInterval(watchdogTimer);
+        watchdogTimer = null;
+        currentMediaSource = null;
         const video = el('videoFeedIp');
         if (video) {
             try { video.pause(); } catch (error) { /* not playing */ }
@@ -437,6 +446,12 @@
             return isTerminal(status) ? showTerminal() : scheduleRetry(gen, attempt + 1);
         }
         const codec = response.headers.get('X-Codec') || '';
+        if (!codec) {
+            // the server has no init segment for the stream yet (a profile switch or a reconnect is in progress):
+            // that says nothing about this browser, so wait and ask again, never fall back to pictures
+            try { abortController.abort(); } catch (error) { /* ignore */ }
+            return scheduleRetry(gen, attempt + 1);
+        }
         if (!mseSupports(codec)) {
             try { abortController.abort(); } catch (error) { /* ignore */ }
             if (status && status.snapshot_fallback) return startSnapshotMode(gen);
@@ -452,6 +467,7 @@
         const MS = mseConstructor();
         const mediaSource = new MS();
         objectUrl = URL.createObjectURL(mediaSource);
+        currentMediaSource = mediaSource;
         if (window.ManagedMediaSource && MS === window.ManagedMediaSource) {
             video.disableRemotePlayback = true;
             const source = document.createElement('source');
@@ -482,6 +498,21 @@
         let appending = false;
         let playing = false;
         let streamingAllowed = true;
+        // An error while the player runs (a decode error, a SourceBuffer that cannot take the next segment, a
+        // MediaSource that was closed) is the player's problem, not a missing capability: rebuild it with a NEW
+        // MediaSource and SourceBuffer and ask the server again. Never switch to pictures from here.
+        let recovering = false;
+        const recover = () => {
+            if (gen !== generation || recovering) return;
+            recovering = true;
+            mseFailures += 1;
+            abortStream();
+            queue.length = 0;
+            scheduleRetry(gen, Math.min(mseFailures, RETRY_MS.length - 1));
+        };
+        buffer.addEventListener('error', recover);
+        mediaSource.addEventListener('sourceclose', recover);
+        video.addEventListener('error', recover);
         const pump = () => {
             if (appending || !queue.length || buffer.updating || gen !== generation || !streamingAllowed) return;
             appending = true;
@@ -492,8 +523,7 @@
                 if (error && error.name === 'QuotaExceededError') {
                     trimBuffer(buffer, video, 4);
                 } else {
-                    queue.length = 0;
-                    scheduleRetry(gen, attempt + 1);
+                    recover();
                 }
             }
         };
@@ -512,8 +542,10 @@
         mediaSource.addEventListener('startstreaming', () => { streamingAllowed = true; pump(); });
         mediaSource.addEventListener('endstreaming', () => { streamingAllowed = false; });
         // nothing playing 10 s after the stream opened: stop waiting and say why instead of spinning
+        // (a slow first keyframe, e.g. a 4K main stream after a profile switch, is rebuilt first: the message is the last resort)
         const firstFrameTimer = setTimeout(() => {
             if (gen !== generation || playing) return;
+            if (mseFailures < FIRST_FRAME_RETRIES) return recover();
             abortStream();
             teardownVideo();
             showMessage(t('ipcamera.error_not_supported'), false, true);
@@ -530,6 +562,8 @@
             video.classList.remove('camera-stream-hidden');
             if (typeof showCameraFeed === 'function') showCameraFeed();
             video.classList.remove('camera-stream-hidden');
+            setTimeout(() => { if (gen === generation) mseFailures = 0; }, STABLE_PLAY_MS);
+            startWatchdog(gen, video, () => playing, recover);
         }, { once: true });
         video.play().catch(() => { /* autoplay needs muted; the element is muted */ });
 
@@ -590,6 +624,46 @@
         } catch (error) { /* the next updateend retries */ }
     }
 
+    // Every 2 s while a stream plays: an element that errored or lost its MediaSource is rebuilt; a paused element in
+    // view (the browser pauses media in a hidden tab or pane) plays again; one that stands still although data is
+    // buffered jumps to the live edge, and one that stands still for 16 s is rebuilt.
+    function startWatchdog(gen, video, isPlaying, recover) {
+        if (watchdogTimer) clearInterval(watchdogTimer);
+        let lastTime = -1;
+        let still = 0;
+        watchdogTimer = setInterval(() => {
+            if (gen !== generation) { clearInterval(watchdogTimer); watchdogTimer = null; return; }
+            if (!isPlaying() || (typeof document.hidden === 'boolean' && document.hidden)) { still = 0; return; }
+            const inView = video.offsetParent === undefined || video.offsetParent !== null;
+            if (!inView) { still = 0; return; }
+            if (video.error || (currentMediaSource && currentMediaSource.readyState === 'closed')) return recover();
+            if (video.paused) {
+                try { const promise = video.play(); if (promise && promise.catch) promise.catch(() => { /* muted autoplay */ }); } catch (error) { /* ignore */ }
+                return;
+            }
+            const now = video.currentTime;
+            still = Math.abs(now - lastTime) < 0.01 ? still + 1 : 0;
+            lastTime = now;
+            if (still === 3 && video.buffered && video.buffered.length) {
+                const end = video.buffered.end(video.buffered.length - 1);
+                if (end - now > 1) video.currentTime = Math.max(video.buffered.start(0), end - TARGET_LEAD_S);
+            }
+            if (still >= 8) recover();
+        }, WATCHDOG_MS);
+    }
+
+    function resumeAfterReturn() {
+        if (!handles() || document.hidden) return;
+        const video = el('videoFeedIp');
+        if (mode === 'mse') {
+            const dead = !video || video.error || video.ended || !currentMediaSource || currentMediaSource.readyState !== 'open';
+            if (dead) start();
+            else if (video.paused) { try { const promise = video.play(); if (promise && promise.catch) promise.catch(() => { /* ignore */ }); } catch (error) { /* ignore */ } }
+        } else if (mode === 'snapshot' && snapshotReason === 'browser' && mseConstructor()) {
+            start(); // the browser can play streams: look at the codec again instead of staying on pictures
+        }
+    }
+
     function showTerminal() {
         showMessage(t(stateMessageKey(status)), false);
         return false;
@@ -597,10 +671,12 @@
 
     function scheduleRetry(gen, attempt) {
         if (gen !== generation) return false;
+        if (retryTimer) return false; // one retry at a time: an error event after the teardown must not start a second
         teardownVideo();
         showMessage(progressText(status), true);
         const delay = RETRY_MS[Math.min(attempt, RETRY_MS.length - 1)];
         retryTimer = setTimeout(async () => {
+            retryTimer = null;
             if (gen !== generation) return;
             await refresh();
             renderStatus();
@@ -681,6 +757,7 @@
         }
         labelProfiles();
     }
+    document.addEventListener('visibilitychange', resumeAfterReturn);
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wireControls);
     else wireControls();
 
@@ -692,6 +769,7 @@
             : null),
         // exported for tests
         lastError: () => lastError,
+        mseFailures: () => mseFailures,
         _helpers: { reopenStream, startUnsupported, startSnapshotMode, labelProfiles, setAspect, SNAPSHOT_INTERVAL_MS, progressText, mseSupports, liveEdgeTarget, stateMessageKey, isTerminal, infoLine, mseConstructor, TARGET_LEAD_S },
     };
 })();

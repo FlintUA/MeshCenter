@@ -284,6 +284,23 @@ def test_main_profile_uses_the_main_path_and_switching_reconnects(monkeypatch, t
         up.set_profile("huge")
 
 
+def test_profile_switch_clears_the_old_stream_facts_at_once(monkeypatch, cleanup):
+    """CAM2 live finding: right after a profile switch the old init segment stayed in the relay while the stream facts
+    (codec string) were already empty, so a viewer that connected in that gap got `X-Codec: ` and the player took it for
+    a browser that cannot play video. Now both are cleared by set_profile itself and refill together."""
+    up = _upstream(monkeypatch)
+    cleanup.append(up)
+    up.ensure_running()
+    assert up.wait_ready(15)
+    assert up.status()["mse_codec"] and up.relay.has_init()
+    up.set_profile("main")
+    assert not up.relay.has_init(), "no init segment of the old profile is served"
+    assert up.status()["mse_codec"] is None and up.status()["resolution"] is None
+    assert _wait(lambda: up.relay.has_init() and up.status()["mse_codec"])  # the new profile's init arrives with its codec string
+    status = up.status()
+    assert status["profile"] == "main" and status["mse_codec"].startswith("avc1.")
+
+
 def test_h265_is_detected_and_is_terminal_without_a_retry_loop(monkeypatch, cleanup):
     up = _upstream(monkeypatch, "hevc")
     cleanup.append(up)

@@ -183,7 +183,11 @@ class RtspCameraDriver(CameraDriver):
             if not self.upstream.wait_ready(timeout):
                 status = self.upstream.status()
                 raise StreamNotReady(status["state"], status["error_code"])
-            return Fmp4Stream(self, self.upstream.relay.open_cursor(), self.upstream.status()["mse_codec"] or "")
+            codec = self.upstream.status()["mse_codec"] or ""
+            if not codec:  # the stream facts are being rebuilt (a profile switch): not ready, never an empty codec string
+                status = self.upstream.status()
+                raise StreamNotReady(status["state"], status["error_code"])
+            return Fmp4Stream(self, self.upstream.relay.open_cursor(), codec)
         except BaseException:
             self.limiter.release(self.id)
             raise

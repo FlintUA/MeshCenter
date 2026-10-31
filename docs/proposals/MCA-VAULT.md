@@ -92,7 +92,7 @@ One vault header file `data/mca/<principal-id>/vault.json` (plain, versioned):
   enabled. Encrypted names mean the on-disk file name is always `<attachment-id>.mcv`, never a display name; the
   display name is shown only after unlock, and "Download to device" restores it in the browser's download name.
 - **Key files:** `keys/*` get the same stream format.
-- **Recovery key:** 32 random bytes shown once on enable as 8 groups of 4 words / base32, never stored; its wrapped copy
+- **Recovery key:** 32 random bytes shown once on enable as 13 groups of 4 base32 characters (all 256 bits), never stored; its wrapped copy
   of SK is in the header. Losing both passphrase and recovery key means the data is unrecoverable by design.
 
 ## 5. Enable, disable, migrate, backup

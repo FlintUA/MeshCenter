@@ -52,9 +52,9 @@ Plain metadata is deliberate: the service must list transfers while locked, and 
 ### 2. Key hierarchy
 
 - **Storage key (SK):** 32 random bytes from libsodium, generated once at enable. SK is never derived from the passphrase, so changing the passphrase re-wraps SK and never re-encrypts data.
-- **Subkeys:** `crypto_kdf_derive_from_key(SK, subkey_id, context)` with three fixed contexts (`mcvfiles`, `mcvfield`, `mcvkeys`), so file encryption, DB field encryption and key-file encryption never share a key.
+- **Subkeys:** keyed BLAKE2b with a fixed personalization per purpose (`files`, `fields`, `keys`, `check`), so file encryption, DB field encryption, key-file encryption and the header check never share a key. This is the construction libsodium's `crypto_kdf` uses; PyNaCl does not expose `crypto_kdf`, so `crypto_generichash_blake2b_salt_personal` is called directly (amended in PR 1).
 - **Passphrase wrap:** Argon2id (`crypto_pwhash`, ALG_ARGON2ID13) over the passphrase and a random 16-byte salt gives a wrap key; SK is sealed with XChaCha20-Poly1305 (`crypto_aead_xchacha20poly1305_ietf`). The KDF parameters and salt are bound into the AEAD associated data, so a header whose parameters were tampered with fails to open.
-- **Recovery wrap:** a 32-byte random recovery key (shown once, encoded as 8 groups of 4 base32 characters) wraps the same SK the same way; high entropy, so no KDF is needed beyond one `crypto_generichash` domain separation.
+- **Recovery wrap:** a 32-byte random recovery key (shown once, encoded as 13 groups of 4 base32 characters: 52 characters carry all 256 bits; the first draft said 8 groups, which would have been only 160 bits, corrected in PR 1) wraps the same SK the same way; high entropy, so no KDF is needed beyond one `crypto_generichash` domain separation.
 - **Header file:** `data/mca/<principal-id>/vault.json`, plain, versioned:
   ```
   { "v": 1, "kdf": {"alg": "argon2id13", "opslimit": n, "memlimit": n, "salt": b64, "measured_ms": n},
@@ -67,7 +67,21 @@ Plain metadata is deliberate: the service must list transfers while locked, and 
 
 ### 3. KDF calibration
 
-At enable (and on "Re-calibrate"), starting from the 32 MiB floor and the minimum passes, the memory and then the passes are raised until one derivation takes about 1 second on this host, within a ceiling of one quarter of the currently free RAM. The chosen parameters and the measured time go into the header. Re-calibrating derives again, re-wraps SK under the new parameters and rewrites the header; no data is touched. A backup restored on a slower machine still unlocks (the parameters travel with the header), only more slowly. scrypt is a documented fallback only for a platform build that lacks Argon2id.
+At enable (and on "Re-calibrate"), starting from the 32 MiB floor and the minimum passes, the memory and then the passes are raised until one derivation takes about 1 second on this host, within a ceiling of one quarter of the currently free RAM. The chosen parameters and the measured time go into the header. Re-calibrating derives again, re-wraps SK under the new parameters and rewrites the header; no data is touched. A backup restored on a slower machine still unlocks (the parameters travel with the header), only more slowly. Each step is measured as the best of two runs, so a cold first run cannot make the result too weak, and a host that is already slower than the target at the floor stays at the floor. scrypt is a documented fallback only for a platform build that lacks Argon2id.
+
+**Measured calibration (PR 1 live round, 2026-10-31, `kdf.calibrate()` run twice per node from outside the checkout):**
+
+| Node | Hardware | Free RAM at the time | Ceiling (a quarter) | Chosen | Unlock time | Peak RSS of the run |
+|---|---|---|---|---|---|---|
+| dev (.104) | Raspberry Pi Zero 2 W, 512 MB class | about 120 MB | 32 MiB (the floor wins) | 5 passes, 32 MiB | 0.92 s (floor alone: 0.38 s) | 46 MiB |
+| camtest (.107) | Raspberry Pi 4, 2 GB | about 1.4 GB | 343 to 351 MiB | 3 to 4 passes, 128 MiB | 0.89 to 1.15 s (floor alone: 0.15 s) | 142 MiB |
+| droidian (.111) | Pixel-class phone SoC, aarch64, 4 GB | about 1.2 GB | 295 MiB | 2 passes, 32 MiB (already slower than the target at the floor) | 0.97 to 1.15 s | 43 MiB |
+
+The production node (.103) was not measured: the session was not permitted to read it, and the numbers above already
+cover both ends (a Zero 2 W and a Pi 4). On the Zero 2 W the 32 MiB floor is a real cost: an unlock transiently adds
+about 32 MiB to a node that has roughly 120 MB free, so the unlock must not run while the camera stream and a heavy
+update are active; PR 2 serializes it with the other MCAttach work and refuses it when free RAM is below the floor plus
+a margin (with a clear message, never an out-of-memory kill).
 
 ### 4. Encrypted file format
 
@@ -75,7 +89,7 @@ At enable (and on "Re-calibrate"), starting from the 32 MiB floor and the minimu
 
 - Header: magic `MCV1`, format byte, the 24-byte `crypto_secretstream_xchacha20poly1305` header.
 - Body: 64 KiB plaintext chunks, one secretstream message each, associated data = `MCV1 || attachment-id`; the last chunk carries `TAG_FINAL`, so truncation is detected; a chunk moved to another file fails authentication because the associated data differs.
-- Key: the `mcvfiles` subkey, one per file via the random stream header.
+- Key: the `files` subkey of the storage key; each file has its own random stream header.
 - Reads are streaming: preview decodes into memory, "Download to device" streams chunk by chunk, and no decrypted temporary file is ever written.
 
 ### 5. Encrypted database fields

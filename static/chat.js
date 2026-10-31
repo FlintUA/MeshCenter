@@ -867,6 +867,10 @@ async function _scheduleLoadPictureChoices() {
     }
   } catch (e) { /* the picker shows its empty state */ }
   try {
+    const store = targetStore();
+    if (store && typeof store.refresh === 'function') await store.refresh();
+  } catch (e) { /* the picker shows what the store last knew */ }
+  try {
     const resp = await fetch('/api/mca/contacts');
     if (resp.ok) {
       const data = await resp.json();
@@ -878,15 +882,8 @@ async function _scheduleLoadPictureChoices() {
 function _renderPictureParams(params) {
   const p = params || {};
   const t = (k) => escapeHtml(window.I18N.t(k));
-  const nodes = Array.isArray(nodeCache) ? nodeCache : [];
-  const nameOf = (id) => {
-    const n = nodes.find(x => x && x.node_id === id);
-    return n ? (n.clean_name || n.name || n.long_name || id) : id;
-  };
   const camOptions = scheduleCameraCache.map(c =>
     `<option value="${escapeHtml(c.id)}"${c.id === p.source_id ? ' selected' : ''}>${escapeHtml(c.name || c.id)}</option>`).join('');
-  const contactOptions = scheduleTrustedContacts.map(id =>
-    `<option value="${escapeHtml(id)}"${id === p.contact_id ? ' selected' : ''}>${escapeHtml(nameOf(id))}</option>`).join('');
   const resize = p.resize || '1280';
   const resizeOption = (value, key) => `<option value="${value}"${resize === value ? ' selected' : ''}>${t(key)}</option>`;
   return `
@@ -895,9 +892,8 @@ function _renderPictureParams(params) {
       ${camOptions || `<option value="">${t('time.picture_no_camera')}</option>`}
     </select>
     <label class="schedule-field-label">${t('time.picture_contact')}</label>
-    <select id="sfPicContact" class="schedule-select">
-      ${contactOptions || `<option value="">${t('time.picture_no_contact')}</option>`}
-    </select>
+    <div class="rp" id="sfPicContactPicker"></div>
+    <input type="hidden" id="sfPicContact" value="${escapeHtml(p.contact_id || '')}">
     <label class="schedule-field-label">${t('time.picture_resize')}</label>
     <select id="sfPicResize" class="schedule-select">
       ${resizeOption('1280', 'files.pictures_resize_1280')}
@@ -1052,6 +1048,43 @@ async function openScheduleForm(id) {
 
   _scheduleFormDirty = false;
   _attachDirtyListeners();
+  _scheduleMountContactPicker(primaryAction.type === 'send_camera_picture' ? (primaryAction.params?.contact_id || '') : '');
+}
+
+// UX5: the recipient of "Send camera picture" is chosen in the same searchable picker as the Send dialogs (the contacts come
+// from the shared target store: every node, the ones with a key selectable, the others listed below, disabled)
+function _scheduleMountContactPicker(selectedId) {
+  const host = document.getElementById('sfPicContactPicker');
+  const picker = window.MCRecipientPicker;
+  if (!host || !picker) return;
+  const store = targetStore();
+  const targets = store && typeof store.nodeTargets === 'function' ? store.nodeTargets() : [];
+  const contacts = targets.filter(t => t && !t.is_local).map(t => ({
+    id: t.id,
+    short_name: t.short_name || '',
+    name: t.display_name || '',
+    favorite: t.favorite === true,
+    can_send: t.can_send_file === true,
+    can_request_key: false,
+    status: t.contact_status,
+    reason: t.file_unavailable_reason,
+    key_request_state: t.key_request_state,
+  }));
+  const controller = picker.mount(host, {
+    id: 'sfPic',
+    t: (key, params, fallback) => { const v = window.I18N.t(key, params || undefined); return v === key && fallback ? fallback : v; },
+    reasonLabel: (c) => {
+      const key = c.reason === 'key_unknown' || !c.reason ? 'recipient.key_unknown' : 'files.unavailable.' + c.reason;
+      return window.I18N.t(key);
+    },
+    onChange: (id) => {
+      const hidden = document.getElementById('sfPicContact');
+      if (hidden) hidden.value = id || '';
+      _scheduleFormDirty = true;
+    },
+  });
+  controller.setContacts(contacts);
+  if (selectedId) controller.setSelected(selectedId);
 }
 
 async function closeScheduleForm() {
@@ -1195,6 +1228,10 @@ async function saveScheduleForm() {
       return;
     }
     _scheduleFormDirty = false;
+    const saved = data.actions && data.actions[0];
+    if (saved && saved.type === 'send_camera_picture' && saved.params && saved.params.contact_id && window.MCRecipientPicker) {
+      window.MCRecipientPicker.noteUsed(saved.params.contact_id);
+    }
     await closeScheduleForm();
     await loadSchedules();
   } catch (e) {
@@ -6014,12 +6051,19 @@ function renderSidebarNodeCards() {
             message = `🔍 ${window.I18N.t('nodes.no_nodes_match_filters')}`;
         }
 
-        nodesList.innerHTML = `<div class="loading" style="padding: 16px;">${escapeHtml(message)}</div>`;
+        nodesList.innerHTML = `<div class="loading nodes-empty-state" style="padding: 16px;">${escapeHtml(message)}</div>`;
         nodeCardRenderCache = {};
         syncSelectedNodeCard();
         positionNodeDetailSlot();
         return;
     }
+
+    // The empty-state line is only for a list that is empty as a whole. The keyed reconcile below leaves every child that is
+    // not a node card where it is, so a "No nodes found" left by an earlier empty filter (say "flix", then "fli") would stay
+    // at the end of the list for good: drop it as soon as there are nodes to show again.
+    Array.from(nodesList.children).forEach(child => {
+        if (child.classList && child.classList.contains('nodes-empty-state')) nodesList.removeChild(child);
+    });
 
     const existingByNodeId = {};
     Array.from(nodesList.children).forEach(child => {

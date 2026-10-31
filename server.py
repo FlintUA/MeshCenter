@@ -9312,6 +9312,7 @@ def api_nodes_management():
         for node_id, node in nodes.items():
             nodes_list.append({
                 "name": node.get("name", "Unknown"), "node_id": node_id,
+                "short_name": node.get("short_name", ""),
                 "ignored": node.get("ignored", False),
                 "favorite": node.get("favorite", False),
                 "last_seen": node.get("last_seen", 0)

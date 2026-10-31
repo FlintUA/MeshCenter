@@ -85,13 +85,24 @@ def test_second_run_inside_fifteen_minutes_is_refused_at_run_time():
     w = World()
     a = action()
     assert schedule_picture.run(a, RULE, w.deps()) == "sent"
-    w.clock.now += MIN_INTERVAL_S - 1
+    w.clock.now += MIN_INTERVAL_S - 60
     assert schedule_picture.run(a, RULE, w.deps()) == "too_soon"
     assert len(w.sent) == 1 and len(w.taken) == 1, "a refused run never touches the camera"
     assert w.notes and w.notes[-1][0] == "warning"
-    w.clock.now += 2
+    w.clock.now += 60
     assert schedule_picture.run(a, RULE, w.deps()) == "sent"
     assert len(w.sent) == 2
+
+
+def test_a_fifteen_minute_rule_is_not_refused_by_sub_second_tick_skew():
+    # live check on .104: the second run came 899.x s after the first and was wrongly refused
+    w = World()
+    a = action()
+    assert schedule_picture.run(a, RULE, w.deps()) == "sent"
+    w.clock.now += MIN_INTERVAL_S - 0.9
+    assert schedule_picture.run(a, RULE, w.deps()) == "sent"
+    w.clock.now += MIN_INTERVAL_S - schedule_picture.TICK_TOLERANCE_S - 1
+    assert schedule_picture.run(a, RULE, w.deps()) == "too_soon"
 
 
 def test_a_failed_attempt_also_counts_so_a_broken_setup_cannot_hammer():

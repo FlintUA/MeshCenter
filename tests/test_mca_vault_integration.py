@@ -476,3 +476,84 @@ def test_only_the_users_resume_request_ever_starts_a_resume():
     assert sorted(submitters) == ["api/api_attachments.py", "meshsrv/attachments/commands.py", "meshsrv/attachments/service.py"]
     service = (root / "api/api_attachments.py").read_text(encoding="utf-8")
     assert service.count('_vault_job_response("vault_resume"') == 1
+
+
+def test_a_vault_that_locks_during_a_step_makes_the_worker_wait_without_failing_or_storming(tmp_path, monkeypatch):
+    """vault_locked from a transfer step is "wait until unlocked": the row is left exactly as it was (no FAILED), the tick stops
+    advancing rows (they all need the same key), and there is one System Log line for the whole lock period, not one per tick."""
+    monkeypatch.setenv("MESHCENTER_MCA_VAULT_EXPERIMENTAL", "1")
+    lines = []
+    mca_runtime.set_vault_log(lambda level, title, details: lines.append((level, title, details)))
+    try:
+        state, paths = plain_state(tmp_path, "waitlock")
+        service = state.service
+        calls = []
+        rows = [{"id": "a1" * 16, "direction": "sent"}, {"id": "b2" * 16, "direction": "received"}]
+        monkeypatch.setattr(service, "_due_rows", lambda: list(rows))
+        monkeypatch.setattr(service, "_vault_locked", lambda: False)         # the lock arrives between this check and the step
+
+        def step(row):
+            calls.append(row["id"])
+            raise VaultError("vault_locked")
+        monkeypatch.setattr(service, "_step_sent", step)
+        monkeypatch.setattr(service, "_step_received", step)
+        states_before = state.conn.execute("SELECT id, state, error_code FROM attachments ORDER BY id").fetchall()
+        for _ in range(4):
+            service.tick()
+        assert calls == ["a1" * 16] * 4, "one attempt per tick, and the second row is not tried: it needs the same key"
+        assert state.conn.execute("SELECT id, state, error_code FROM attachments ORDER BY id").fetchall() == states_before
+        assert not any(row[1] == "FAILED" or (row[2] or "").startswith("FAILED") for row in states_before)
+        waiting = [l for l in lines if l[1] == "MCAttach locked"]
+        assert len(waiting) == 1 and "Transfers postponed" in waiting[0][2], "one line per lock period, not one per tick"
+    finally:
+        mca_runtime.set_vault_log(None)
+        mca_runtime.reset_state_for_tests()
+
+
+def test_a_corrupt_value_in_a_step_is_an_error_but_not_a_wait(tmp_path, monkeypatch):
+    monkeypatch.setenv("MESHCENTER_MCA_VAULT_EXPERIMENTAL", "1")
+    try:
+        state, paths = plain_state(tmp_path, "corruptstep")
+        service = state.service
+        monkeypatch.setattr(service, "_due_rows", lambda: [{"id": "a1" * 16, "direction": "sent"}, {"id": "b2" * 16, "direction": "received"}])
+        monkeypatch.setattr(service, "_vault_locked", lambda: False)
+        calls = []
+
+        def step(row):
+            calls.append(row["id"])
+            if row["id"] == "a1" * 16:
+                raise VaultError("vault_corrupt")
+        monkeypatch.setattr(service, "_step_sent", step)
+        monkeypatch.setattr(service, "_step_received", step)
+        service.tick()
+        assert calls == ["a1" * 16, "b2" * 16], "one corrupt row does not stop the others"
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_spool_names_of_encrypted_files_are_classified_for_the_orphan_sweep():
+    from meshsrv.attachments import service as service_module
+    classify = service_module._classify_spool_name
+    assert classify("ab" * 16) == "committed" and classify("ab" * 16 + ".mcv") == "committed"
+    assert classify("ab" * 16 + ".mcv.part") == "temp" and classify("." + "ab" * 16 + ".x1y2z3.tmp") == "temp"
+    assert classify("ab" * 16 + ".mcv.bak") is None and classify("notanid.mcv") is None and classify("ab" * 15 + ".mcv") is None
+
+
+def test_the_orphan_sweep_keeps_a_referenced_mcv_and_removes_an_old_unreferenced_one_and_a_part_file(tmp_path, monkeypatch):
+    import os
+    monkeypatch.setenv("MESHCENTER_MCA_VAULT_EXPERIMENTAL", "1")
+    try:
+        state, paths = plain_state(tmp_path, "sweep")
+        now = 1_700_000_000.0
+        monkeypatch.setattr(state.service, "_now", lambda: now)
+        referenced, orphan, part = "b2" * 16, "c3" * 16, "d4" * 16
+        for name in (referenced + ".mcv", orphan + ".mcv", part + ".mcv.part", "keepme.txt"):
+            path = paths.spool_outgoing / name
+            path.write_bytes(b"x")
+            os.utime(path, (now - 7200, now - 7200))
+        # b2.. is the attachment the fixture inserted: its encrypted spool file is referenced by that row
+        state.service._recover_orphaned_spool()
+        left = sorted(p.name for p in paths.spool_outgoing.iterdir())
+        assert left == [referenced + ".mcv", "keepme.txt"], left
+    finally:
+        mca_runtime.reset_state_for_tests()

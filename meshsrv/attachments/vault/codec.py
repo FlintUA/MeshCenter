@@ -24,10 +24,12 @@ these places; the migration and its resume read plain data through their own cod
 value that is corrupt reads as ``UNREADABLE_NAME``, never the raw ``v1:`` string. The System Log gets the attachment id and
 ``table.column`` once per value, never the value.
 """
+import hashlib
+import io
 import os
 import sqlite3
 from pathlib import Path
-from typing import Optional
+from typing import BinaryIO, Optional, Tuple
 
 from meshsrv.attachments.vault import fields, streamcrypt
 from meshsrv.attachments.vault.errors import VaultError
@@ -98,6 +100,53 @@ class PlainCodec:
 
     def unlink_secret_file(self, path: Path) -> None:
         path.unlink(missing_ok=True)
+
+    # ---- content files (received copies, the outgoing spool, quarantine) ------------------------------------------
+
+    def content_path(self, base: Path) -> Path:
+        """Where the content for ``base`` is stored: ``base`` itself, or ``base.mcv`` when the vault is on."""
+        return base
+
+    def write_content(self, base: Path, data: bytes, ad_id: str) -> Path:
+        """Store ``data`` for ``base`` and return the path that now holds it."""
+        base.write_bytes(data)
+        return base
+
+    def open_content(self, path: Path, ad_id: str) -> BinaryIO:
+        """A readable, seekable file object over the content at ``path`` (plain bytes; an ``.mcv`` is decrypted into one
+        buffer of at most the 5 MiB attachment limit)."""
+        if str(path).endswith(MCV):
+            raise VaultError("vault_not_available", "Encrypted content cannot be read without the vault.")
+        return open(path, "rb")
+
+    def content_exists(self, path: Path) -> bool:
+        return os.path.isfile(path)
+
+    def content_plain_size(self, path: Path) -> int:
+        """The plaintext size of the content at ``path`` without reading it (``OSError`` when it is missing)."""
+        size = os.stat(path).st_size
+        if str(path).endswith(MCV):
+            plain = streamcrypt.plain_size(size)
+            if plain is None:
+                raise VaultError("vault_corrupt", "Stored content has an impossible size.")
+            return plain
+        return size
+
+    def content_size_and_sha256(self, path: Path, ad_id: str) -> Tuple[int, str]:
+        digest, size = hashlib.sha256(), 0
+        with self.open_content(path, ad_id) as handle:
+            while True:
+                block = handle.read(64 * 1024)
+                if not block:
+                    break
+                size += len(block)
+                digest.update(block)
+        return size, digest.hexdigest()
+
+    def unlink_content(self, base: Path) -> None:
+        """Remove the content for ``base`` in either form."""
+        base.unlink(missing_ok=True)
+        base.with_name(base.name + MCV).unlink(missing_ok=True)
 
 
 PLAIN = PlainCodec()
@@ -200,6 +249,66 @@ class VaultCodec(PlainCodec):
     def unlink_secret_file(self, path: Path) -> None:
         path.unlink(missing_ok=True)
         self._enc(path).unlink(missing_ok=True)
+
+
+    # ---- content files ---------------------------------------------------------------------------------------------
+
+    def _files_key(self) -> bytes:
+        key = self._vault.subkey("files")
+        if key is None:
+            raise VaultError("vault_locked")
+        return key
+
+    def content_path(self, base: Path) -> Path:
+        return self._enc(base) if self.active else base
+
+    def write_content(self, base: Path, data: bytes, ad_id: str) -> Path:
+        """With the vault on: encrypt straight to ``<base>.mcv.part`` (fsync, rename), so no plaintext reaches the disk, and
+        remove any plain file of the same name. A locked vault raises ``vault_locked`` and writes nothing."""
+        if not self.active:
+            return PlainCodec.write_content(self, base, data, ad_id)
+        target = self._enc(base)
+        part = target.with_name(target.name + ".part")
+        try:
+            self.write_encrypted_file(part, data, ad_id)
+            os.replace(str(part), str(target))
+        except BaseException:
+            part.unlink(missing_ok=True)
+            raise
+        base.unlink(missing_ok=True)
+        return target
+
+    def write_encrypted_file(self, path: Path, data: bytes, ad_id: str) -> None:
+        """Encrypt ``data`` to exactly ``path`` (opened, written, fsynced, closed; mode 0600). The caller owns the name:
+        a temp name it renames later (the upload staging), or the ``.part`` of ``write_content``."""
+        key = self._files_key()
+        with open(path, "wb") as handle:
+            streamcrypt.encrypt_stream(io.BytesIO(data), handle, key, ad_id)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(path, SECRET_FILE_MODE)
+
+    def open_content(self, path: Path, ad_id: str) -> BinaryIO:
+        if str(path).endswith(MCV):
+            if not self.active:
+                raise VaultError("vault_not_available", "Encrypted content cannot be read without the vault.")
+            key = self._files_key()
+            try:
+                return io.BytesIO(streamcrypt.decrypt_bytes(Path(path).read_bytes(), key, ad_id))
+            except VaultError:
+                self._report("content of %s" % ad_id)
+                raise VaultError("vault_corrupt", "Stored content could not be verified.")
+        if self.active:                                    # plain content next to an enabled vault: never served silently
+            self._report("content of %s (plain file found)" % ad_id)
+            raise VaultError("vault_corrupt", "A plain content file was found while the vault is enabled.")
+        return open(path, "rb")
+
+    def content_exists(self, path: Path) -> bool:
+        return os.path.isfile(path)
+
+    def unlink_content(self, base: Path) -> None:
+        base.unlink(missing_ok=True)
+        self._enc(base).unlink(missing_ok=True)
 
 
 class VaultConnection(sqlite3.Connection):

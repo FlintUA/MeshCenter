@@ -1219,7 +1219,8 @@ def apply_cancelled(conn: sqlite3.Connection, attachment_id: str, now: Optional[
 
 def _quarantine(workspace_manager: MCAWorkspaceManager, principal_id: str, transfer_id_hex: str, data: bytes) -> None:
     paths = workspace_manager.ensure_workspace(principal_id)
-    (paths.quarantine / f"{transfer_id_hex}.bin").write_bytes(data)
+    # With the vault on this is `<transfer>.bin.mcv` (the migration's name and associated data), never plain bytes.
+    workspace_manager.codec.write_content(paths.quarantine / f"{transfer_id_hex}.bin", data, f"quarantine/{transfer_id_hex}.bin")
 
 
 def _fail(conn, attachment_id, now, error_code) -> ReceiveResult:
@@ -1322,8 +1323,9 @@ def _step_downloading(conn, row, workspace_manager, principal, provider_registry
     # `cache/incoming/` (content_available=true, saved=false) until the user
     # explicitly saves, which is what moves it into `files/`.
     paths = workspace_manager.paths(principal.principal_id)
-    cache_path = paths.cache_incoming / attachment_id
-    cache_path.write_bytes(bytes(assembled))
+    # MCA-VAULT: with the vault on the plaintext goes straight into `<attachment id>.mcv` (encrypted to a `.part` file, fsync,
+    # rename); no plain file or temp file ever exists, and `saved_path` points at the encrypted file.
+    cache_path = workspace_manager.codec.write_content(paths.cache_incoming / attachment_id, bytes(assembled), attachment_id)
 
     try:
         client.complete(transfer_id, secret.receipt_secret)

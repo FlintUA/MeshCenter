@@ -316,7 +316,8 @@
             if (quality.value !== wanted) quality.value = wanted;
         }
         // what Take picture does, and where the image settings live, in one small muted line
-        setText('ipSnapshotHint', t(snapshotHintKey(status, wanted)) + ' ' + t('ipctl.image_note'));
+        const hintKey = snapshotHintKey(status, wanted);
+        setText('ipSnapshotHint', t(hintKey, hintKey.indexOf('stream_running') !== -1 ? { resolution: status.resolution || '?' } : undefined) + ' ' + t('ipctl.image_note'));
         const reconnect = byId('ipCameraReconnectBtn');
         if (reconnect && helpers) reconnect.style.display = helpers.isTerminal(status) || status.state === 'reconnecting' ? '' : 'none';
     }
@@ -325,10 +326,19 @@
     // cut from the running preview (so the preview has to run first).
     function snapshotHintKey(status, quality) {
         if (status.control_type === 'reolink') return quality === 'small' ? 'ipctl.snapshot_hint_api_small' : 'ipctl.snapshot_hint_api_full';
-        return status.state === 'live' ? 'ipctl.snapshot_hint_stream_running' : 'ipctl.snapshot_hint_stream_stopped';
+        if (status.state !== 'live') return 'ipctl.snapshot_hint_stream_stopped';
+        return status.profile === 'main' ? 'ipctl.snapshot_hint_stream_running_main' : 'ipctl.snapshot_hint_stream_running';
     }
 
     // ---------- Mode: the picture ----------
+
+    // The toast always names the real size and where the picture came from: the camera's own full / small picture,
+    // the running stream (no camera function), or the running stream because the camera function failed (fallback).
+    function savedToastKey(body) {
+        if (body.method === 'camera_api_small') return 'ipctl.snapshot_saved_api_small';
+        if (body.method === 'camera_api_full') return 'ipctl.snapshot_saved_api_full';
+        return body.fallback ? 'ipctl.snapshot_saved_stream' : 'ipctl.snapshot_saved_stream_only';
+    }
 
     async function takePicture() {
         if (snapshotBusy) return;
@@ -341,7 +351,7 @@
             try { body = await response.json(); } catch (error) { body = null; }
             if (response.ok && body && body.ok) {
                 if (typeof mediaGalleryLoaded !== 'undefined') mediaGalleryLoaded = false; // the gallery lists it next time
-                showToast(t(body.method === 'stream_frame' && lastStatus && lastStatus.control_type === 'reolink' ? 'ipctl.snapshot_saved_stream' : 'ipctl.snapshot_saved'), 'success');
+                showToast(t(savedToastKey(body), { resolution: body.resolution || '?' }), body.fallback ? 'warning' : 'success', body.fallback ? { duration: 10000 } : undefined);
             } else {
                 showToast(errorMessage(body || {}), 'error', { duration: 10000 });
             }

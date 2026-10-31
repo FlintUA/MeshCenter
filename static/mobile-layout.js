@@ -76,6 +76,7 @@
     function setChatPage(next) {
         chatPage = next === 'conversation' ? 'conversation' : 'list';
         syncChatPage();
+        syncTabLabels();
     }
 
     function apply() {
@@ -85,6 +86,7 @@
         else body.removeAttribute('data-mobile-pane');
         syncButtons();
         syncChatPage();
+        syncTabLabels();
     }
 
     function setPane(next) {
@@ -190,9 +192,104 @@
         tabs.classList.toggle('tabs-more-right', more && tabs.scrollLeft + tabs.clientWidth < tabs.scrollWidth - 4);
     }
 
+    // ---- MOB3: tapping the tab that is already open does that tab's refresh (phone only) ----
+    var RETAP_DEBOUNCE_MS = 2000;
+    var TAB_ACTIONS = { mainTabChats: 'back', mainTabFiles: 'refresh_files', mainTabVideo: 'reconnect_camera', mainTabMedia: 'refresh_media', mainTabDevices: 'refresh_devices' };
+    var lastRetapAt = -Infinity;
+
+    // Pure: what a second tap on a tab does. Chats only has something to do inside a conversation.
+    function retapAction(tabId, state) {
+        var action = TAB_ACTIONS[tabId] || null;
+        if (action === 'back' && !(state && state.chatPage === 'conversation')) return null;
+        return action;
+    }
+
+    // Pure: not twice within the debounce window, never while something is open
+    function retapAllowed(now, last, blocked) {
+        return !blocked && now - last >= RETAP_DEBOUNCE_MS;
+    }
+
+    function isVisible(element) {
+        return Boolean(element && !element.hidden && typeof element.getClientRects === 'function' && element.getClientRects().length > 0);
+    }
+
+    // A dialog, a menu, a sheet, the lightbox or a field being typed in: a refresh must not pull the page out from under it
+    function retapBlocked() {
+        if (sheetOpen()) return true;
+        if (typeof document.querySelectorAll !== 'function') return false;
+        var open = document.querySelectorAll('[role="dialog"], [aria-modal="true"], .files-modal-backdrop, .modal-overlay, .media-menu');
+        for (var i = 0; i < open.length; i += 1) {
+            if (isVisible(open[i])) return true;
+        }
+        var active = document.activeElement;
+        return Boolean(active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName) && !(active.classList && active.classList.contains('media-check')));
+    }
+
+    function scrollWorkspaceToTop() {
+        ['mediaGalleryContent', 'devicesDashboard', 'filesLayout', 'videoView'].forEach(function (id) {
+            var element = document.getElementById(id);
+            if (element) element.scrollTop = 0;
+        });
+        document.querySelectorAll('.devices-panel, .files-panel, .video-panel, .files-archive').forEach(function (element) { element.scrollTop = 0; });
+    }
+
+    function toast(key, fallback) {
+        if (typeof window.showToast === 'function') window.showToast(label(key, fallback), 'info', { duration: 1800 });
+    }
+
+    function runRetap(action) {
+        if (action === 'back') {
+            if (typeof window.showChatList === 'function') window.showChatList();
+            return;
+        }
+        if (action === 'refresh_files') {
+            var button = document.querySelector('[data-files-action="refresh"]');
+            if (button) button.click();
+        } else if (action === 'refresh_media') {
+            if (typeof window.loadMediaGallery === 'function') window.loadMediaGallery(true);
+        } else if (action === 'refresh_devices') {
+            if (typeof window.loadPeripheralDevices === 'function') window.loadPeripheralDevices(true);
+        } else if (action === 'reconnect_camera') {
+            if (window.MCIpCamera && typeof window.MCIpCamera.handles === 'function' && window.MCIpCamera.handles()) window.MCIpCamera.reconnect();
+            else if (typeof window.reconnectCameraFeed === 'function') window.reconnectCameraFeed();
+            toast('workspace.tab_reconnecting', 'Reconnecting the stream');
+            return;
+        }
+        scrollWorkspaceToTop();
+        toast('workspace.tab_updated', 'Updated');
+    }
+
+    // The open tab says what a second tap does (a small glyph is drawn by CSS; screen readers get the words)
+    function syncTabLabels() {
+        if (typeof document.querySelectorAll !== 'function') return;
+        document.querySelectorAll('.main-content-tab').forEach(function (tab) {
+            var action = retapAction(tab.id, { chatPage: chatPage });
+            var hint = !isMobile() || !tab.classList.contains('active') || !action ? '' : label(
+                action === 'reconnect_camera' ? 'workspace.tab_retap_reconnect' : action === 'back' ? 'workspace.tab_retap_back' : 'workspace.tab_retap_refresh',
+                action === 'reconnect_camera' ? 'Tap again to reconnect the stream' : action === 'back' ? 'Tap again to go back to the chat list' : 'Tap again to refresh');
+            var span = tab.querySelector('span');
+            var name = span && span.textContent ? span.textContent.trim() : '';
+            if (hint) tab.setAttribute('aria-label', name + '. ' + hint);
+            else if (tab.hasAttribute('aria-label')) tab.removeAttribute('aria-label');
+            tab.classList.toggle('has-retap', Boolean(hint));
+        });
+    }
+
     document.addEventListener('click', function (event) {
         var target = event.target && event.target.closest ? event.target.closest('button') : null;
         if (!target) return;
+        if (target.classList.contains('main-content-tab') && isMobile() && pane === 'workspace' && target.classList.contains('active')) {
+            // capture phase: the tab's own onclick (switchMainTab to the tab that is already open) must not run
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            var action = retapAction(target.id, { chatPage: chatPage });
+            var now = Date.now();
+            if (action && retapAllowed(now, lastRetapAt, retapBlocked())) {
+                lastRetapAt = now;
+                runRetap(action);
+            }
+            return;
+        }
         if (target.id === 'chatBackBtn') {
             // MOB2-C: Back from a conversation to the list of conversations
             if (typeof window.showChatList === 'function') window.showChatList();
@@ -255,7 +352,7 @@
         window.addEventListener('resize', updateTabsCue);
         updateTabsCue();
         if (tabs && typeof MutationObserver === 'function') {
-            new MutationObserver(function () { if (isMobile()) revealActiveTab(); })
+            new MutationObserver(function () { if (isMobile()) revealActiveTab(); syncTabLabels(); })
                 .observe(tabs, { attributes: true, attributeFilter: ['class'], subtree: true });
         }
         // Workspace.apply() / applyPanelState() write the desktop title and aria-pressed onto the buttons,
@@ -275,5 +372,5 @@
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
     else init();
 
-    window.MCMobileLayout = { closeSheets: closeSheets, syncSheetState: syncSheetState, syncPhoneStatus: syncPhoneStatus, updateTabsCue: updateTabsCue, nextPane: nextPane, isMobile: isMobile, setPane: setPane, getPane: function () { return pane; }, getChatPage: function () { return chatPage; }, setChatPage: setChatPage, _wrapShowChatList: wrapShowChatList, QUERY: QUERY, _wrapOpenChat: wrapOpenChat };
+    window.MCMobileLayout = { closeSheets: closeSheets, syncSheetState: syncSheetState, syncPhoneStatus: syncPhoneStatus, updateTabsCue: updateTabsCue, nextPane: nextPane, retapAction: retapAction, retapAllowed: retapAllowed, isMobile: isMobile, setPane: setPane, getPane: function () { return pane; }, getChatPage: function () { return chatPage; }, setChatPage: setChatPage, _wrapShowChatList: wrapShowChatList, QUERY: QUERY, _wrapOpenChat: wrapOpenChat };
 })();

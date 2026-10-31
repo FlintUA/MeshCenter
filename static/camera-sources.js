@@ -140,7 +140,7 @@
             ${noFfmpeg ? `<p class="mc-ipcam-hint mc-ipcam-hint-warn" role="alert">${esc(t(noFfmpeg))}</p>` : ''}
             <div class="mc-ipcam-list">${rows}</div>
             <div class="device-action-row device-action-row-single">
-                <button type="button" class="mc-refresh-btn" data-ipcam-action="add">${esc(t('ipcamera.add'))}</button>
+                <button type="button" class="device-action-btn device-action-secondary" data-ipcam-action="add">${esc(t('ipcamera.add'))}</button>
             </div>
             <p class="mc-ipcam-note">${esc(t('ipcamera.lan_only_note'))}</p>`;
         section.querySelectorAll('[data-ipcam-action]').forEach((button) => {

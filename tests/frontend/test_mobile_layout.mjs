@@ -152,4 +152,20 @@ function makeEnv(initialMobile) {
     assert.doesNotMatch(code, /localStorage|sessionStorage|fetch\(/);
 }
 
+// MOB3: a second tap on the open tab - what it does, the debounce, and never while something is open
+{
+    const { api } = makeEnv(true);
+    assert.equal(api.retapAction('mainTabMedia', { chatPage: 'list' }), 'refresh_media');
+    assert.equal(api.retapAction('mainTabDevices', { chatPage: 'list' }), 'refresh_devices');
+    assert.equal(api.retapAction('mainTabFiles', { chatPage: 'list' }), 'refresh_files');
+    assert.equal(api.retapAction('mainTabVideo', { chatPage: 'list' }), 'reconnect_camera', 'Camera reconnects the stream');
+    assert.equal(api.retapAction('mainTabChats', { chatPage: 'list' }), null, 'Chats has nothing to do on the list');
+    assert.equal(api.retapAction('mainTabChats', { chatPage: 'conversation' }), 'back', 'inside a conversation it goes back to the list');
+    assert.equal(api.retapAction('nope', {}), null);
+    assert.equal(api.retapAllowed(10000, -Infinity, false), true);
+    assert.equal(api.retapAllowed(10500, 10000, false), false, 'a double tap refreshes once');
+    assert.equal(api.retapAllowed(12000, 10000, false), true);
+    assert.equal(api.retapAllowed(20000, 10000, true), false, 'not while a dialog, menu or field is open');
+}
+
 console.log('test_mobile_layout.mjs: ok');

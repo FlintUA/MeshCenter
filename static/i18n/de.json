@@ -741,10 +741,10 @@
     "bulk_delete": "Löschen",
     "bulk_clear": "Auswahl aufheben",
     "selected_summary": {
-      "one": "{count} ausgewählt, {size}",
-      "few": "{count} ausgewählt, {size}",
-      "many": "{count} ausgewählt, {size}",
-      "other": "{count} ausgewählt, {size}"
+      "one": "{count} ausgewählt · {size}",
+      "few": "{count} ausgewählt · {size}",
+      "many": "{count} ausgewählt · {size}",
+      "other": "{count} ausgewählt · {size}"
     },
     "zip_limit_message": "Ein Zip-Download ist auf {max} begrenzt. Ausgewählt sind {size}: wähle weniger Bilder aus oder lade sie in Teilen herunter.",
     "bulk_too_many": "Höchstens {max} Bilder auf einmal: wähle weniger aus.",
@@ -771,7 +771,11 @@
     "lightbox_label": "Bildbetrachter",
     "lightbox_close": "Schließen",
     "lightbox_prev": "Vorheriges Bild",
-    "lightbox_next": "Nächstes Bild"
+    "lightbox_next": "Nächstes Bild",
+    "summary_full": "{pictures} · {used} MB · {free} GB frei",
+    "summary_short": "{count} · {used} MB",
+    "free_space": "{free} GB frei",
+    "more": "Weitere Aktionen"
   },
   "devices": {
     "subtitle": "Periphere Geräte und Module, die dem aktiven Funkprofil zugeordnet sind",
@@ -1847,7 +1851,12 @@
     "phone_status_title": "Status",
     "phone_status_version": "Version",
     "phone_status_temp": "Temperatur",
-    "phone_status_uptime": "Laufzeit"
+    "phone_status_uptime": "Laufzeit",
+    "tab_updated": "Aktualisiert",
+    "tab_reconnecting": "Stream wird neu verbunden",
+    "tab_retap_refresh": "Erneut tippen zum Aktualisieren",
+    "tab_retap_reconnect": "Erneut tippen, um den Stream neu zu verbinden",
+    "tab_retap_back": "Erneut tippen, um zur Chatliste zurückzukehren"
   },
   "ipcamera": {
     "title": "Netzwerkkameras",
@@ -1991,7 +2000,7 @@
     "quality_small": "Klein (schneller)",
     "image_note": "Bildeinstellungen werden in der Kamera-App geändert.",
     "snapshot_saved": "Bild in Medien gespeichert.",
-    "snapshot_saved_stream": "Bild in Medien gespeichert (aus dem Stream aufgenommen, die Kamerafunktion war nicht erreichbar).",
+    "snapshot_saved_stream": "Bild in Medien gespeichert: {resolution}, aus dem laufenden Stream aufgenommen, weil die Bildfunktion der Kamera nicht erreichbar war.",
     "quality_save_failed": "Die Bildqualität konnte nicht gespeichert werden.",
     "snap_err_rate_limited": "Bilder sind auf eines alle zwei Sekunden begrenzt. In {seconds} s erneut versuchen.",
     "snap_err_storage_full": "Der Speicher der Galerie ist voll. Bilder in Medien löschen oder Speicherplatz freigeben.",
@@ -2011,10 +2020,14 @@
     "lens_not_arrived": "Das Objektiv hat die Position noch nicht erreicht; die angezeigte Zahl ist die Messung der Kamera.",
     "snapshot_hint_api_full": "Bild in voller Auflösung von der Kamera selbst, in Medien gespeichert.",
     "snapshot_hint_api_small": "Kleines Bild von der Kamera selbst, in Medien gespeichert.",
-    "snapshot_hint_stream_running": "Das Bild wird aus der laufenden Vorschau aufgenommen und in Medien gespeichert.",
+    "snapshot_hint_stream_running": "Das Bild wird aus dem laufenden Stream aufgenommen ({resolution}). Für volle Auflösung den Stream auf Main umschalten.",
     "snapshot_hint_stream_stopped": "Zuerst die Vorschau starten: Das Bild wird aus der laufenden Vorschau aufgenommen.",
     "info_reconnect": "Neu verbinden",
     "stream_hint_snapshot_ffmpeg": "Live-Video braucht ffmpeg, das dieses System noch nicht hat: Die Kamera macht die Bilder selbst, ein Stream ist daher nicht wählbar.",
-    "stream_hint_snapshot_browser": "Dieser Browser kann kein Live-Video abspielen: Die Kamera macht die Bilder selbst, ein Stream ist daher nicht wählbar."
+    "stream_hint_snapshot_browser": "Dieser Browser kann kein Live-Video abspielen: Die Kamera macht die Bilder selbst, ein Stream ist daher nicht wählbar.",
+    "snapshot_saved_api_full": "Bild in Medien gespeichert: {resolution}, volles Bild von der Kamera.",
+    "snapshot_saved_api_small": "Bild in Medien gespeichert: {resolution}, kleines Bild von der Kamera.",
+    "snapshot_saved_stream_only": "Bild in Medien gespeichert: {resolution}, aus dem laufenden Stream aufgenommen.",
+    "snapshot_hint_stream_running_main": "Das Bild wird aus dem laufenden Stream aufgenommen ({resolution})."
   }
 }

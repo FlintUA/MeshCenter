@@ -193,4 +193,49 @@ const html = template;
 assert.ok(html.includes('id="cameraFullscreenBtn"'), 'the button is in the camera frame');
 assert.ok(html.indexOf('id="cameraFullscreenBtn"') > html.indexOf('class="video-frame-wrap"'), 'inside the frame wrap');
 
+// ---------------------------------------------------------------- G1b: selection mode, tap action, long press
+{
+    const V = sandbox.MCMediaViews;
+    assert.equal(V.selectionMode(new Set()), false);
+    assert.equal(V.selectionMode(new Set(['a'])), true);
+    assert.equal(V.tapAction(new Set(), true), 'open', 'nothing selected: a tap opens the picture');
+    assert.equal(V.tapAction(new Set(['a']), true), 'toggle', 'selecting on touch: a tap toggles');
+    assert.equal(V.tapAction(new Set(['a']), false), 'open', 'a mouse keeps the checkboxes, a click opens');
+
+    // fake clock: timers run only when the test says so
+    let nextId = 1;
+    const timers = new Map();
+    const fired = [];
+    const press = V.createLongPress({
+        delay: 500, slop: 10,
+        setTimer: (fn, ms) => { const id = nextId++; timers.set(id, { fn, ms }); return id; },
+        clearTimer: (id) => timers.delete(id),
+        onFire: (ctx) => fired.push(ctx),
+    });
+    const runTimers = () => { for (const [id, t] of Array.from(timers)) { timers.delete(id); t.fn(); } };
+
+    press.start(100, 100, 'card-1');
+    assert.equal(press.pending, true);
+    assert.equal([...timers.values()][0].ms, 500, 'about half a second');
+    runTimers();
+    assert.deepEqual(fired, ['card-1']);
+    assert.equal(press.end(), true, 'end() says the press fired (the click that follows must be swallowed)');
+    assert.equal(press.end(), false, 'and only once');
+
+    press.start(100, 100, 'card-2');
+    press.move(105, 104);                       // a finger wobble inside the slop
+    assert.equal(press.pending, true, 'small movement keeps the press');
+    press.move(100, 115);                       // a scroll: more than 10 px
+    assert.equal(press.pending, false, 'moving more than 10 px cancels');
+    assert.equal(timers.size, 0);
+    runTimers();
+    assert.deepEqual(fired, ['card-1'], 'a cancelled press never selects');
+
+    press.start(5, 5, 'card-3');
+    assert.equal(press.end(), false, 'lifting early is a plain tap');
+    assert.equal(timers.size, 0);
+    runTimers();
+    assert.deepEqual(fired, ['card-1']);
+}
+
 console.log('test_media_views.mjs: ok');

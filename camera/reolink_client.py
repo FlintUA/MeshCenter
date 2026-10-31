@@ -375,14 +375,19 @@ class ReolinkClient:
     def logout(self) -> None:
         """Best effort; the token is dropped either way."""
         with self._lock:
-            token, self._token = self._token, ""
-            try:
-                if token:
-                    self._post(f"{API_PATH}?token={token}", [{"cmd": "Logout", "action": 0, "param": {}}])
-            except ReolinkError:
-                pass
-            finally:
-                self._drop_connection()
+            self._discard_token()
+
+    def _discard_token(self) -> None:
+        """Log the current token out (best effort) and forget it. Used before every re-login: a camera has only a few
+        login sessions, and a retry that left the old one behind could use them up (caller holds the lock)."""
+        token, self._token = self._token, ""
+        try:
+            if token:
+                self._post(f"{API_PATH}?token={token}", [{"cmd": "Logout", "action": 0, "param": {}}])
+        except ReolinkError:
+            pass
+        finally:
+            self._drop_connection()
 
     def _ensure_token(self) -> str:
         if not self._token or self._clock() >= self._token_until:
@@ -400,7 +405,7 @@ class ReolinkClient:
                     return item
                 error = self._classify(item, command)
                 if error.code == TOKEN_EXPIRED and attempt == 0:
-                    self._token = ""
+                    self._discard_token()
                     continue
                 raise error
         raise ReolinkError(API_ERROR, "The camera reported an error.", command=command)  # unreachable
@@ -472,8 +477,10 @@ class ReolinkClient:
                     raise ReolinkError(BAD_RESPONSE, "The camera did not return a picture.", command="Snap")
                 if isinstance(item, dict):
                     error = self._classify(item, "Snap")
-                    if error.code == TOKEN_EXPIRED and attempt == 0:
-                        self._token = ""
+                    # An answer we cannot classify (seen live on .104: rspCode -104 on a Snap while a fresh login worked at once) gets one new login and one retry, like an expired token;
+                    # without it every picture silently fell back to the 640x360 stream frame.
+                    if error.code in (TOKEN_EXPIRED, API_ERROR) and attempt == 0:
+                        self._discard_token()
                         continue
                     raise error
                 raise ReolinkError(BAD_RESPONSE, "The camera did not return a picture.", command="Snap")

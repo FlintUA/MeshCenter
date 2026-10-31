@@ -284,6 +284,33 @@ def test_an_unreachable_api_falls_back_to_the_running_stream(env):
     assert body["ok"] is True and body["method"] == "stream_frame"
 
 
+def test_one_unclassified_snap_error_is_retried_with_a_new_login_not_hidden_by_the_stream_frame(env):
+    _fill_relay(env["driver"].upstream.relay)
+    env["fake"].snap_failures = 1
+    body = _shoot(env).get_json()
+    assert body["method"] == "camera_api_full" and body["fallback"] is False and env["fake"].logins == 2 and env["fake"].logouts == 1 and len(env["fake"].tokens) == 1, "the old session is logged out before the new login"
+
+
+def test_a_persistent_api_error_falls_back_and_says_so(env):
+    _fill_relay(env["driver"].upstream.relay)
+    env["fake"].snap_failures = 2
+    body = _shoot(env).get_json()
+    assert body["method"] == "stream_frame" and body["fallback"] is True and body["fallback_reason"] == "api_error"
+    assert body["requested_quality"] == "full" and body["resolution"]
+    meta = json.loads((env["gallery"] / (body["filename"] + ".json")).read_text(encoding="utf-8"))
+    assert meta["fallback_reason"] == "api_error"
+
+
+def test_the_requested_quality_and_the_real_size_are_reported_for_full_and_small(env):
+    full = _shoot(env).get_json()
+    env["clock"].advance(3)
+    env["store"].update(env["id"], {"control": {"snapshot_quality": "small"}})
+    small = _shoot(env).get_json()
+    assert (full["requested_quality"], full["method"], full["fallback"]) == ("full", "camera_api_full", False)
+    assert (small["requested_quality"], small["method"], small["fallback"]) == ("small", "camera_api_small", False)
+    assert env["fake"].snap_types == ["", "sub"]
+
+
 def test_an_unreachable_api_without_a_preview_is_reported(env):
     env["fake"].stop()
     response = _shoot(env)

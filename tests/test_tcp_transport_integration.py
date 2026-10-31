@@ -586,7 +586,10 @@ def test_chain_real_radio_traffic_ends_up_in_messages_chats_and_waypoints(server
         assert ("channel:1", "Привет TCP 👋") in texts, "exact unicode, on the right channel"
         assert ("!1fa065f0", "psst, only you") in texts, "a DM lands in the sender's chat"
         assert texts.count(("channel:1", "Привет TCP 👋")) == 1, "the replayed packet was not stored twice"
-        assert srv.chats["channel:1"]["unread"] == 1 and srv.chats["!1fa065f0"]["unread"] >= 2
+        # MCA-UX1: the MCAttach control text is stored (marked) but is not an unread chat message
+        assert srv.chats["channel:1"]["unread"] == 1 and srv.chats["!1fa065f0"]["unread"] == 1
+        control = [m for m in srv.messages if m.get("text") == "MCA1:control"]
+        assert len(control) == 1 and control[0]["mca"] == {"type": "CONTROL"}
         assert [c[0] for c in mca] == ["MCA1:control"] and mca[0][1] == "!1fa065f0"
         assert srv.waypoint_store.get(940001)["latitude"] == pytest.approx(50.5), "the update won, still one row"
 

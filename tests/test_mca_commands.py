@@ -33,13 +33,13 @@ def _cmd(kind="attachment_create", payload=None, command_id="cmd-1", created_at=
 
 # --- Command model ----------------------------------------------------------
 
-def test_command_kinds_is_exactly_the_twenty_four_enumerated_types():
-    assert len(COMMAND_KINDS) == 24
+def test_command_kinds_is_exactly_the_twenty_five_enumerated_types():
+    assert len(COMMAND_KINDS) == 25
     for expected in (
         "attachment_create", "attachment_retry", "attachment_download",
         "attachment_save", "attachment_reject", "attachment_cancel",
         "attachment_revoke", "attachment_delete_local_content",
-        "attachment_import", "attachment_copy_code", "attachment_add_delivery",
+        "attachment_purge_received_cache", "attachment_import", "attachment_copy_code", "attachment_add_delivery",
         "contact_request_key", "contact_cancel_key_request", "contact_confirm", "contact_accept_key_change",
         "contact_reject_key_change", "provider_probe", "provider_register",
         "provider_update", "provider_set_default", "provider_remove",

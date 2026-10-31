@@ -86,6 +86,7 @@ from meshsrv.radio_transport import (
     TransportError,
 )
 from meshsrv import inbound_events
+from meshsrv import mca_chat
 from meshsrv import inbound_worker as inbound_worker_module
 from meshsrv import tcp_link_supervisor as tcp_link_supervisor_module
 from meshsrv.adapter_ipc_client import AdapterIPCTransport, AdapterSupervisor
@@ -4417,7 +4418,7 @@ def clean_rx_metrics(rx):
 
 
 def add_message(kind, sender, text, node_id="", chat_id=None, chat_name=None, reply_to=None, packet_id=None,
-                 status=None, client_id=None, reply_id=None, rx_time=None, rx=None):
+                 status=None, client_id=None, reply_id=None, rx_time=None, rx=None, mca=None):
     # Store all locally transmitted messages under one canonical direction.
     # Older waypoint notifications used "tx", while the rest of the chat
     # subsystem and UI use "me" for outgoing messages.
@@ -4493,6 +4494,10 @@ def add_message(kind, sender, text, node_id="", chat_id=None, chat_name=None, re
                 msg["owner_node_id"] = owner_node_id
             if owner_profile_id:
                 msg["owner_profile_id"] = owner_profile_id
+        # MCA-UX1: an MCAttach control frame / transfer note is marked, so the chat can show one bubble per transfer
+        mca_marker = mca if mca is not None else (mca_chat.marker_for_text(text) if kind != "me" else None)
+        if mca_marker:
+            msg["mca"] = mca_marker
         if packet_id is not None:
             try:
                 msg["packet_id"] = int(packet_id)
@@ -4530,8 +4535,10 @@ def add_message(kind, sender, text, node_id="", chat_id=None, chat_name=None, re
             }
         messages.append(msg)
         messages[:] = messages[-MAX_HISTORY_MESSAGES:]
-        update_chat_last_message(chat_id, text, msg["time"], msg["ts"])
-        if kind == "rx" and chat_id in chats:
+        preview = mca_chat.preview_text(mca_marker, text)
+        if preview is not None:
+            update_chat_last_message(chat_id, preview, msg["time"], msg["ts"])
+        if kind == "rx" and chat_id in chats and mca_chat.counts_as_unread(mca_marker):
             chats[chat_id]["unread"] = chats[chat_id].get("unread", 0) + 1
             save_chats()
         save_messages()
@@ -4818,7 +4825,7 @@ def get_chats_list():
 
 def get_chat_messages(chat_id):
     with state_lock:
-        return [resolve_reply_reference(m) for m in messages if m.get("chat_id") == chat_id]
+        return [resolve_reply_reference(mca_chat.ensure_marker(m)) for m in messages if m.get("chat_id") == chat_id]
 
 def stop_listener():
     """Delegates to listener_supervisor's listener-stop logic.
@@ -7467,12 +7474,16 @@ def index():
         if resolved_weather_language != active_provider.config.language:
             active_provider.set_language(resolved_weather_language)
 
-    return render_template(
+    response = make_response(render_template(
         "index.html",
         app_version=APP_VERSION,
         ui_language=ui_language,
         runtime_capabilities=json.dumps(runtime_env.capabilities()),
-    )
+    ))
+    # The page carries the version and the cache-busting tokens of its scripts: it must be revalidated on every load,
+    # otherwise a cached copy keeps an old footer and old script versions after an update
+    response.headers["Cache-Control"] = "no-cache"
+    return response
 
 @app.route("/api/sensors")
 def api_sensors():
@@ -9811,6 +9822,19 @@ def restore_active_transport(accepted_radio, identity_match):
             source="radio",
         )
         print(f"[TRANSPORT] Could not restore {active_transport} on startup: {error}", flush=True)
+
+def _note_transfer_in_chat(contact_id, attachment_id):
+    """MCA-UX1: a transfer we queued shows in the DM chat as one 'File sent' bubble (the offer frame itself is not
+    a chat message). Called by POST /api/attachments after the transfer is accepted; never raises into the route."""
+    try:
+        add_message("me", LOCAL_NODE_NAME, "📎", node_id=LOCAL_NODE_ID, chat_id=contact_id,
+                    mca={"type": mca_chat.FILE_SENT, "attachment_id": attachment_id})
+    except Exception as error:
+        print(f"[MCA] chat note failed: {error}", flush=True)
+
+
+app.extensions["mc_transfer_chat_note"] = _note_transfer_in_chat
+
 
 def _build_schedule_picture_deps():
     """G3: the real collaborators of the schedule action "send camera picture" (see meshsrv/schedule_picture.py).

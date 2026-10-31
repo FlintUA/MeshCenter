@@ -22,7 +22,9 @@
     "please_wait": "Bitte warten",
     "error_prefix": "Fehler: {reason}",
     "reloading": "Wird neu geladen …",
-    "undo": "Rückgängig"
+    "undo": "Rückgängig",
+    "new_version_notice": "Eine neue Version ({version}) ist installiert. Lade die Seite neu, um sie zu verwenden.",
+    "reload": "Neu laden"
   },
   "dialog": {
     "cancel": "Abbrechen",
@@ -445,7 +447,21 @@
     "pictures_err_too_large": "Ein Bild ({size}) ist größer als das Limit von {max} pro Übertragung. Wähle eine kleinere Größe.",
     "pictures_err_not_trusted": "Richte zuerst eine sichere Verbindung mit diesem Kontakt ein.",
     "pictures_err_queue_full": "Die Sendewarteschlange ist voll. Kurz warten und den Rest erneut senden.",
-    "pictures_queued": "{done} von {total} eingereiht"
+    "pictures_queued": "{done} von {total} eingereiht",
+    "badge_aria": "Dateien, braucht Aufmerksamkeit: {count}",
+    "storage_summary": "Empfangene Kopien: {count}, {size}",
+    "storage_hint": "Mit In Dateien speichern gesicherte Dateien bleiben unberührt. Es wird nichts automatisch gelöscht.",
+    "purge_button": "Ältere empfangene Kopien löschen...",
+    "purge_title": "Ältere empfangene Kopien löschen",
+    "purge_message": "Empfangene Dateien, die älter als diese Anzahl Tage sind, werden von diesem Knoten gelöscht. Mit In Dateien speichern gesicherte Dateien bleiben erhalten.",
+    "purge_days_label": "Älter als (Tage)",
+    "purge_days_invalid": "Gib eine ganze Zahl von 1 bis 3650 ein",
+    "purge_none": "Keine empfangenen Kopien älter als {days} Tage.",
+    "purge_confirm_title": "Empfangene Kopien löschen?",
+    "purge_confirm": "{count} empfangene Kopien ({size}), älter als {days} Tage, löschen? Das lässt sich nicht rückgängig machen. Mit In Dateien speichern gesicherte Dateien bleiben erhalten.",
+    "purge_confirm_button": "Löschen",
+    "purge_queued": "Empfangene Kopien werden gelöscht...",
+    "purge_done": "Empfangene Kopien gelöscht"
   },
   "about": {
     "tab_overview": "Übersicht",
@@ -608,7 +624,10 @@
     "traceroute_reason_busy": "Ein anderer Funkbefehl läuft gerade",
     "traceroute_reason_cooldown": "Dieser Knoten wurde gerade verfolgt, bitte in {seconds} s erneut versuchen",
     "relay_probably": "wahrscheinlich: {name} ({hex})",
-    "back_to_chats": "Zurück zu den Chats"
+    "back_to_chats": "Zurück zu den Chats",
+    "mca_file_received": "Datei empfangen",
+    "mca_file_sent": "Datei gesendet",
+    "mca_open_in_files": "In Dateien öffnen"
   },
   "camera": {
     "live_camera": "Live-Kamera",

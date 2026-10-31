@@ -4601,3 +4601,38 @@ def test_inbound_partial_write_is_not_resurrected_by_later_commit(
         "SELECT 1 FROM attachment_events WHERE event_type = 'sentinel'"
     ).fetchone() is None
     assert receiver.get_state(conn, expiry_id) == receiver.EXPIRED
+
+
+# ---- attachment_purge_received_cache (MCA-UX1) ------------------------------
+
+
+def _purge_command(days):
+    return Command(command_id=uuid.uuid4().hex, kind="attachment_purge_received_cache",
+                   payload={"older_than_days": days}, created_at=time.time())
+
+
+def test_purge_received_cache_deletes_only_old_cache_copies(conn, wsm, principal, service):
+    old_id, new_id, saved_id = "a1" * 16, "b2" * 16, "c3" * 16
+    old = _seed_received_available(conn, principal, wsm, attachment_id=old_id, content=b"x" * 100)
+    new = _seed_received_available(conn, principal, wsm, attachment_id=new_id, content=b"y" * 50)
+    _seed_received_available(conn, principal, wsm, attachment_id=saved_id, file_name="kept.jpg")
+    conn.execute("UPDATE attachments SET created_at = ? WHERE id = ?", (time.time(), new_id))
+    conn.commit()
+    assert service._dispatcher.dispatch(_save_command(saved_id)).error_code is None  # moved to files/, created_at 0
+
+    outcome = service._dispatcher.dispatch(_purge_command(7))
+
+    assert outcome.error_code is None
+    assert dict(outcome.result) == {"deleted": 1, "bytes": 100, "older_than_days": 7}
+    assert not old.exists() and _saved_path_of(conn, old_id) is None
+    assert new.exists() and _saved_path_of(conn, new_id) == str(new), "a recent copy stays"
+    assert (wsm.paths(principal.principal_id).files / "kept.jpg").exists(), "a file saved with Save to Files is never touched"
+    assert receiver.get_state(conn, old_id) == receiver.AVAILABLE, "the row and its history stay"
+
+
+def test_purge_received_cache_is_idempotent_and_validates_days(conn, wsm, principal, service):
+    _seed_received_available(conn, principal, wsm, attachment_id="d4" * 16)
+    assert dict(service._dispatcher.dispatch(_purge_command(1)).result)["deleted"] == 1
+    assert dict(service._dispatcher.dispatch(_purge_command(1)).result)["deleted"] == 0
+    for bad in (0, -3, 4000, "7", None, True):
+        assert service._dispatcher.dispatch(_purge_command(bad)).error_code == "invalid_older_than_days"

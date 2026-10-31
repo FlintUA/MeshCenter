@@ -620,3 +620,44 @@ async function rollbackUpdate(button) {
     }
 }
 
+// ---- MCA-UX1: "a new version is installed" notice ---------------------------------------------------------------
+// The page carries the version it was rendered with (<meta name="app-version">). When the server reports another one
+// (an update happened while this tab stayed open) a clear notice with a Reload button appears; nothing changes
+// silently, and the old scripts keep working until the user reloads.
+let pageVersionNoticeShown = false;
+
+function showPageVersionNotice(version) {
+  if (pageVersionNoticeShown) return;
+  pageVersionNoticeShown = true;
+  const bar = document.createElement('div');
+  bar.id = 'pageVersionNotice';
+  bar.className = 'page-version-notice';
+  bar.setAttribute('role', 'status');
+  const text = document.createElement('span');
+  text.textContent = window.I18N.t('common.new_version_notice', { version });
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'page-version-notice-btn';
+  button.textContent = window.I18N.t('common.reload');
+  button.addEventListener('click', () => window.location.reload());
+  bar.append(text, button);
+  document.body.appendChild(bar);
+}
+
+async function checkPageVersion() {
+  if (pageVersionNoticeShown) return;
+  const meta = document.querySelector('meta[name="app-version"]');
+  const loaded = meta ? meta.getAttribute('content') : '';
+  try {
+    const response = await fetch('/api/system/info', { cache: 'no-store' });
+    if (!response.ok) return;
+    const info = await response.json();
+    if (window.MCViews.pageVersionChanged(loaded, info.app_version)) showPageVersionNotice(info.app_version);
+  } catch (e) { /* offline or restarting: the next check decides */ }
+}
+
+function startPageVersionWatch() {
+  setTimeout(checkPageVersion, 15000);
+  setInterval(checkPageVersion, 60000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) checkPageVersion(); });
+}

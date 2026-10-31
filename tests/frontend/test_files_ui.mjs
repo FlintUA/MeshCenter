@@ -2681,6 +2681,126 @@ async function test_add_provider_form_wraps_url_and_probe_in_flex_row() {
     console.log('PASS: test_add_provider_form_wraps_url_and_probe_in_flex_row');
 }
 
+// ---- Gallery G2: sending pictures from the Media gallery through the Send dialog -------------------------------
+
+function picturesRoutes(opts = {}) {
+    let n = 0;
+    return defaultRoutes(async (url) => {
+        if (url === '/api/mca/contacts') {
+            return json(200, { ok: true, contacts: opts.contacts || [contact('!aaaaaaaa', 'trusted')] });
+        }
+        if (url.includes('upload-readiness')) return json(200, { ok: true, ready: true, reason: null, detail: {} });
+        if (url.startsWith('/api/camera/screenshot/')) {
+            if (opts.shotError) return { ok: false, status: 413, json: async () => opts.shotError };
+            return { ok: true, status: 200, blob: async () => ({ size: 1234 }) };
+        }
+        if (url === '/api/attachments') {
+            n += 1;
+            if (opts.failFrom && n >= opts.failFrom) return json(429, { ok: false, error_code: 'command_queue_full' });
+            return json(202, { ok: true, command_id: 'cmd' + n, attachment_id: 'att' + n });
+        }
+        return undefined;
+    });
+}
+
+const PICS = (count) => Array.from({ length: count }, (_, i) => ({ filename: `2026/10/30/MC_${i}.jpg`, display_name: `MC_${i}.jpg`, size: 1000 + i }));
+
+async function openPicturesDialog(sandbox, pictures, onDone) {
+    activate(sandbox);
+    await waitFor(() => sandbox.window.MeshCenterTargets.getNode('!aaaaaaaa') !== null);
+    await sandbox.window.MeshCenterFiles.openSendPictures(pictures, onDone);
+    const doc = sandbox._document;
+    doc.getElementById('filesSendRecipient').value = '!aaaaaaaa';
+    doc.getElementById('filesSendProvider').value = 'prov1';
+    doc.getElementById('filesSendExpiry').value = 'default';
+    doc.getElementById('filesSendComment').value = '';
+    doc.getElementById('filesSendSubmit').disabled = false;
+}
+
+const dialogHtml = (sandbox) => sandbox._document.body._children.filter((c) => (c.className || '').includes('files-dialog-root')).map((c) => c.innerHTML).join('');
+const attachmentPosts = (sandbox) => sandbox._fetchLog.filter((e) => e.url === '/api/attachments' && e.options && e.options.method === 'POST');
+const requestIdOf = (post) => JSON.parse(post.options.body._parts.find(([k]) => k === 'metadata')[1]).client_request_id;
+
+async function test_send_pictures_makes_one_transfer_per_picture() {
+    const sandbox = buildSandbox({ fetchImpl: picturesRoutes() });
+    let done = null;
+    await openPicturesDialog(sandbox, PICS(3), (r) => { done = r; });
+    assert.ok(dialogHtml(sandbox).includes('Selected: 3'), 'the dialog says how many pictures');
+    dispatch(sandbox, { 'data-files-action': 'send-submit' });
+    await waitFor(() => sandbox._toasts.some((m) => m === '3 of 3 queued'));
+    const posts = attachmentPosts(sandbox);
+    assert.equal(posts.length, 3, 'one POST /api/attachments per picture');
+    assert.equal(new Set(posts.map(requestIdOf)).size, 3, 'a client_request_id per picture');
+    const shots = sandbox._fetchLog.filter((e) => e.url.startsWith('/api/camera/screenshot/'));
+    assert.deepEqual(shots.map((e) => e.url), [0, 1, 2].map((i) => `/api/camera/screenshot/2026/10/30/MC_${i}.jpg?send=1280`), 'resized by default (1280)');
+    assert.ok(done && done.queued === 3, 'the gallery is told, to clear its selection');
+    console.log('PASS: test_send_pictures_makes_one_transfer_per_picture');
+}
+
+async function test_send_pictures_resize_choice_original_and_1920() {
+    for (const value of ['original', '1920']) {
+        const sandbox = buildSandbox({ fetchImpl: picturesRoutes() });
+        await openPicturesDialog(sandbox, PICS(1));
+        sandbox._document.getElementById('filesSendResize').value = value;
+        dispatch(sandbox, { 'data-files-action': 'send-submit' });
+        await waitFor(() => sandbox._toasts.some((m) => m === '1 of 1 queued'));
+        const shot = sandbox._fetchLog.find((e) => e.url.startsWith('/api/camera/screenshot/'));
+        assert.ok(shot.url.endsWith('?send=' + value), shot.url);
+    }
+    console.log('PASS: test_send_pictures_resize_choice_original_and_1920');
+}
+
+async function test_send_pictures_limit_of_ten() {
+    const sandbox = buildSandbox({ fetchImpl: picturesRoutes() });
+    await openPicturesDialog(sandbox, PICS(12));
+    assert.ok(dialogHtml(sandbox).includes('Selected: 10'), 'only 10 are taken');
+    dispatch(sandbox, { 'data-files-action': 'send-submit' });
+    await waitFor(() => sandbox._toasts.some((m) => m === '10 of 10 queued'));
+    assert.equal(attachmentPosts(sandbox).length, 10, 'never more than 10 transfers per send');
+    assert.equal(sandbox.window.MeshCenterFiles.maxSendPictures, 10);
+    console.log('PASS: test_send_pictures_limit_of_ten');
+}
+
+async function test_send_pictures_command_queue_full_stops_with_a_clear_message() {
+    const sandbox = buildSandbox({ fetchImpl: picturesRoutes({ failFrom: 2 }) });
+    await openPicturesDialog(sandbox, PICS(3));
+    dispatch(sandbox, { 'data-files-action': 'send-submit' });
+    await waitFor(() => sandbox._toasts.some((m) => m.startsWith('1 of 3 queued')));
+    assert.equal(attachmentPosts(sandbox).length, 2, 'the run stops at the first 429');
+    assert.ok(sandbox._toasts.some((m) => m.includes('The send queue is full')), 'a clear message');
+    console.log('PASS: test_send_pictures_command_queue_full_stops_with_a_clear_message');
+}
+
+async function test_send_pictures_original_over_the_limit_is_refused_clearly() {
+    const sandbox = buildSandbox({ fetchImpl: picturesRoutes({ shotError: { ok: false, error_code: 'too_large', size_bytes: 6 * 1024 * 1024, max_bytes: 5 * 1024 * 1024 } }) });
+    await openPicturesDialog(sandbox, PICS(1));
+    sandbox._document.getElementById('filesSendResize').value = 'original';
+    dispatch(sandbox, { 'data-files-action': 'send-submit' });
+    await waitFor(() => sandbox._toasts.some((m) => m.includes('larger than the 5.0 MB')));
+    assert.equal(attachmentPosts(sandbox).length, 0, 'nothing is uploaded');
+    assert.ok(sandbox._toasts.some((m) => m.startsWith('0 of 1 queued')));
+    console.log('PASS: test_send_pictures_original_over_the_limit_is_refused_clearly');
+}
+
+async function test_send_pictures_untrusted_contact_offers_connect_securely_and_cannot_send() {
+    const sandbox = buildSandbox({ fetchImpl: picturesRoutes({ contacts: [contact('!aaaaaaaa', 'trusted'), contact('!bbbbbbbb', 'key_unknown')] }) });
+    await openPicturesDialog(sandbox, PICS(2));
+    await waitFor(() => sandbox.window.MeshCenterTargets.getNode('!bbbbbbbb') !== null);
+    await sandbox.window.MeshCenterFiles.openSendPictures(PICS(2));
+    const doc = sandbox._document;
+    assert.ok(!doc.getElementById('filesSendRecipient').innerHTML.includes('value="!bbbbbbbb" disabled'), 'a contact that only lacks a key can be chosen');
+    doc.getElementById('filesSendRecipient').value = '!bbbbbbbb';
+    dispatchChange(sandbox, 'filesSendRecipient');
+    assert.ok(doc.getElementById('filesSendKeyStatus').innerHTML.includes('Connect securely'), 'the same Connect securely path as the Files dialog');
+    assert.equal(doc.getElementById('filesSendSubmit').disabled, true, 'Send stays off until the contact is trusted');
+    doc.getElementById('filesSendProvider').value = 'prov1';
+    doc.getElementById('filesSendSubmit').disabled = false;
+    dispatch(sandbox, { 'data-files-action': 'send-submit' });
+    await waitFor(() => sandbox._toasts.some((m) => m.includes('secure connection')));
+    assert.equal(attachmentPosts(sandbox).length, 0, 'nothing goes to an untrusted contact');
+    console.log('PASS: test_send_pictures_untrusted_contact_offers_connect_securely_and_cannot_send');
+}
+
 async function main() {
     await test_activate_merges_contacts_and_excludes_local();
     await test_trust_confirm_shows_full_fingerprint();
@@ -2746,7 +2866,14 @@ async function main() {
     await test_contact_command_awaits_fresh_store_refresh();
     // PR 5 final correction (Finding 3): widened Add-provider form markup.
     await test_add_provider_form_wraps_url_and_probe_in_flex_row();
-    console.log('All files UI behavior tests passed (57 scenarios).');
+    // Gallery G2: pictures from the Media gallery.
+    await test_send_pictures_makes_one_transfer_per_picture();
+    await test_send_pictures_resize_choice_original_and_1920();
+    await test_send_pictures_limit_of_ten();
+    await test_send_pictures_command_queue_full_stops_with_a_clear_message();
+    await test_send_pictures_original_over_the_limit_is_refused_clearly();
+    await test_send_pictures_untrusted_contact_offers_connect_securely_and_cannot_send();
+    console.log('All files UI behavior tests passed (63 scenarios).');
 }
 
 main()

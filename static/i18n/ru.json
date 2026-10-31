@@ -432,7 +432,20 @@
       "key_unknown": "Ключ неизвестен",
       "key_unverified": "Ключ ещё не проверен",
       "key_changed": "Ключ изменён"
-    }
+    },
+    "pictures_title": "Отправить снимки",
+    "pictures_label": "Снимки",
+    "pictures_count": "Выбрано: {count}",
+    "pictures_max": "Не больше {max} снимков за раз. Отправятся первые {max}.",
+    "pictures_resize": "Уменьшить перед отправкой",
+    "pictures_resize_1280": "Малый, 1280 px (рекомендуется)",
+    "pictures_resize_1920": "Средний, 1920 px",
+    "pictures_resize_original": "Оригинал (до 5 МБ каждый)",
+    "pictures_metadata_note": "Местоположение и данные камеры удаляются из копий.",
+    "pictures_err_too_large": "Снимок ({size}) больше лимита передачи в {max}. Выберите размер поменьше.",
+    "pictures_err_not_trusted": "Сначала установите защищённое соединение с этим контактом.",
+    "pictures_err_queue_full": "Очередь отправки заполнена. Подождите немного и отправьте остальное снова.",
+    "pictures_queued": "В очереди {done} из {total}"
   },
   "about": {
     "tab_overview": "Обзор",
@@ -775,7 +788,10 @@
     "summary_full": "{pictures} · {used} МБ · свободно {free} ГБ",
     "summary_short": "{count} · {used} МБ",
     "free_space": "Свободно {free} ГБ",
-    "more": "Ещё действия"
+    "more": "Ещё действия",
+    "send": "Отправить",
+    "send_too_many": "Не больше {max} снимков за раз: выберите меньше.",
+    "send_unavailable": "Отправка сейчас недоступна. Перезагрузите страницу."
   },
   "devices": {
     "subtitle": "Периферийные устройства и модули, привязанные к активному профилю радиостанции",

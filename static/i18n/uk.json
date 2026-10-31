@@ -432,7 +432,20 @@
       "key_unknown": "Ключ невідомий",
       "key_unverified": "Ключ ще не перевірено",
       "key_changed": "Ключ змінено"
-    }
+    },
+    "pictures_title": "Надіслати знімки",
+    "pictures_label": "Знімки",
+    "pictures_count": "Вибрано: {count}",
+    "pictures_max": "Не більше {max} знімків за раз. Буде надіслано перші {max}.",
+    "pictures_resize": "Зменшити перед надсиланням",
+    "pictures_resize_1280": "Малий, 1280 px (рекомендовано)",
+    "pictures_resize_1920": "Середній, 1920 px",
+    "pictures_resize_original": "Оригінал (до 5 МБ кожен)",
+    "pictures_metadata_note": "Місцезнаходження та дані камери видаляються з копій.",
+    "pictures_err_too_large": "Знімок ({size}) більший за ліміт передачі {max}. Оберіть менший розмір.",
+    "pictures_err_not_trusted": "Спершу встановіть захищене з'єднання з цим контактом.",
+    "pictures_err_queue_full": "Черга надсилання заповнена. Зачекайте трохи й надішліть решту знову.",
+    "pictures_queued": "У черзі {done} з {total}"
   },
   "about": {
     "tab_overview": "Огляд",
@@ -775,7 +788,10 @@
     "summary_full": "{pictures} · {used} МБ · вільно {free} ГБ",
     "summary_short": "{count} · {used} МБ",
     "free_space": "Вільно {free} ГБ",
-    "more": "Більше дій"
+    "more": "Більше дій",
+    "send": "Надіслати",
+    "send_too_many": "Не більше {max} знімків за раз: виберіть менше.",
+    "send_unavailable": "Надсилання зараз недоступне. Перезавантажте сторінку."
   },
   "devices": {
     "subtitle": "Периферійні пристрої та модулі, прив'язані до активного профілю радіостанції",

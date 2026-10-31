@@ -12,6 +12,8 @@
     // must match GALLERY_ZIP_MAX_BYTES in api/api_camera.py (the server enforces it; this lets the page say so BEFORE the tap)
     const ZIP_MAX_BYTES = 250 * 1024 * 1024;
     const BULK_MAX = 500;
+    // G2: pictures per send (one MCAttach transfer each); mirrors MAX_SEND_PICTURES in static/files.js
+    const SEND_MAX = 10;
 
     function normalizeSort(value) {
         return SORTS.indexOf(value) !== -1 ? value : DEFAULT_SORT;
@@ -133,8 +135,18 @@
             zipTooLarge: sum.bytes > ZIP_MAX_BYTES,
             canDownload: sum.count > 0 && sum.count <= BULK_MAX && sum.bytes <= ZIP_MAX_BYTES,
             canDelete: sum.count > 0 && sum.count <= BULK_MAX,
+            canSend: sum.count > 0 && sum.count <= SEND_MAX,
+            sendTooMany: sum.count > SEND_MAX,
+            sendMax: SEND_MAX,
             zipMaxBytes: ZIP_MAX_BYTES,
         };
+    }
+
+    // The selected pictures, in the order they are shown, as the send dialog wants them
+    function sendItems(selection, items) {
+        return (items || []).filter((item) => selection.has(item.filename)).map((item) => ({
+            filename: item.filename, display_name: item.display_name || '', size: Number(item.size) || 0,
+        }));
     }
 
     // ---- lightbox: previous / next without wrapping --------------------------------------------------------------
@@ -209,6 +221,7 @@
     }
 
     root.MCMediaViews = {
+        SEND_MAX, sendItems,
         LONG_PRESS_MS, LONG_PRESS_SLOP_PX, selectionMode, tapAction, createLongPress,
         SORTS, VIEWS, DEFAULT_SORT, DEFAULT_VIEW, ZIP_MAX_BYTES, BULK_MAX,
         normalizeSort, normalizeView, viewField, pickView, sortItems, formatBytes, formatResolution,

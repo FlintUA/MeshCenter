@@ -306,7 +306,7 @@ System, strength hint, disabled Roll back button, the "gallery not covered" note
   vault enabled before that would leave a node whose service cannot read its own workspace. So the enable endpoint
   answers 409 `vault_not_ready` unless the process environment has `MESHCENTER_MCA_VAULT_EXPERIMENTAL=1`. The flag exists
   for the live round on a copy and for the tests, and PR 4 removes it. Disable, resume and the header operations do not
-  need it (they only matter once a vault exists).
+  need it (they only matter once a vault exists). (PR 4c removed the flag.)
 - **Enable and disable are worker commands** (`vault_enable`, `vault_disable`, `vault_resume`). The passphrase of an
   enable reaches the worker through the runtime's one-shot in-memory hand-off (120 s), never in the payload; the payload
   holds a random single-use token. The recovery key is not in the command result either: it is read once from
@@ -387,6 +387,31 @@ download, Save to Files, delete, cleanup, and the removal of the experimental fl
   against it by someone with the disk. Not changed here.
 - **Still plain until 4c:** the content route (preview, download) does not decrypt yet, Save to Files still moves a plain
   file, and delete and cleanup of `.mcv` files are 4c. The experimental flag stays until 4c.
+
+## Amendments made in PR 4c (preview, download, Save to Files, delete, cleanup; the experimental flag is gone)
+
+- **Preview** (an inline image, at most the 5 MiB attachment limit): decrypted into ONE buffer and served only after the WHOLE
+  file has verified (every chunk, the final tag, nothing after it). A damaged file answers 500 `vault_corrupt` with a JSON
+  body; not one byte of the picture is sent first.
+- **Download to device** (the owner's PR 1 note): streamed chunk by chunk with the exact `Content-Length`. The FIRST chunk is
+  authenticated before the headers go out. Any failure while streaming (a chunk that does not authenticate, a truncated file,
+  data after the final chunk, a size that does not add up, Lock now or a lock-unlock cycle while it runs) RAISES out of the
+  response body: the connection is aborted and the browser marks the download failed; the body is never ended cleanly, so a
+  truncated file cannot be presented as complete. Even if a server swallowed the exception, the promised length would not be
+  met and `http.client` raises `IncompleteRead` (tested on a real connection). No decrypted temp file is ever written; no
+  `Range` (`Accept-Ranges: none`).
+- **The content route is gated** (423 `vault_locked` while locked); an `.mcv` without an active vault answers 409
+  `vault_not_available`, a plain file next to an enabled vault 500 `vault_corrupt`: neither is ever served.
+- **Save to Files** under the vault is a MOVE inside the vault: `cache/incoming/<id>.mcv` to `files/<id>.mcv`, the same bytes
+  (same key, same associated data), nothing decrypted, nothing written in plain, no display name on the file system. A plain
+  cache file next to an enabled vault is refused (`vault_corrupt`) and left where it is. A disable restores the saved file under
+  its display name (tested: enable, receive, save, disable gives `files/<name>` with the original bytes and `saved_path` back).
+- **Delete a saved copy and purge old received copies** only unlink files, so they stay available while locked (the command
+  reads the display name with `open_display`, which is `None` while locked, instead of failing on a name it never uses).
+- **The experimental flag is removed** (`MESHCENTER_MCA_VAULT_EXPERIMENTAL`, `enable_allowed`, `vault_not_ready`): with 4a, 4b
+  and this part, every consumer of the encrypted layout exists. The status no longer carries `enable_allowed`.
+- Still to come: the UI (PR 5), Docker and documentation (PR 6), and the live round on the real workspace (with the owner's go and
+  the full backup and exact restore rule).
 
 ## Notes for later PRs (from the owner's PR 1 review)
 

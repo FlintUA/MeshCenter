@@ -286,7 +286,6 @@
       "vault_not_enabled": "Der Tresor ist nicht aktiviert",
       "vault_busy": "MCAttach ist beschäftigt. Versuche es gleich noch einmal",
       "passphrase_required": "Gib die Passphrase oder den Wiederherstellungsschlüssel ein",
-      "vault_not_ready": "Verschlüsselte Dateioperationen sind noch nicht verfügbar",
       "passphrase_too_weak": "Die Passphrase ist zu schwach: mindestens 12 Zeichen",
       "transfers_in_progress": "Es laufen noch Übertragungen. Versuche es nach deren Ende erneut",
       "insufficient_space": "Nicht genug freier Speicherplatz zum Aktivieren des Tresors",

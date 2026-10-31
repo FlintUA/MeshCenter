@@ -29,7 +29,7 @@ import io
 import os
 import sqlite3
 from pathlib import Path
-from typing import BinaryIO, Optional, Tuple
+from typing import BinaryIO, Iterator, Optional, Tuple
 
 from meshsrv.attachments.vault import fields, streamcrypt
 from meshsrv.attachments.vault.errors import VaultError
@@ -131,6 +131,17 @@ class PlainCodec:
                 raise VaultError("vault_corrupt", "Stored content has an impossible size.")
             return plain
         return size
+
+    def iter_content(self, path: Path, ad_id: str) -> Iterator[bytes]:
+        """The plaintext of ``path`` in chunks, for a streamed download. Plain content is read in 64 KiB blocks."""
+        if str(path).endswith(MCV):
+            raise VaultError("vault_not_available", "Encrypted content cannot be read without the vault.")
+        with open(path, "rb") as handle:
+            while True:
+                block = handle.read(streamcrypt.CHUNK)
+                if not block:
+                    return
+                yield block
 
     def content_size_and_sha256(self, path: Path, ad_id: str) -> Tuple[int, str]:
         digest, size = hashlib.sha256(), 0
@@ -302,6 +313,33 @@ class VaultCodec(PlainCodec):
             self._report("content of %s (plain file found)" % ad_id)
             raise VaultError("vault_corrupt", "A plain content file was found while the vault is enabled.")
         return open(path, "rb")
+
+    def iter_content(self, path: Path, ad_id: str) -> Iterator[bytes]:
+        """Stream the plaintext of an ``.mcv`` chunk by chunk (nothing is held beyond one chunk, no temp file). Each chunk is
+        authenticated before it is yielded; the end is checked too (the final tag, nothing after it). ANY failure raises
+        (``vault_corrupt``), and so does a lock or an unlock-after-lock while the stream is running (``vault_locked``): the
+        caller must let the exception END the response abnormally (see the content route), never finish it cleanly."""
+        if not str(path).endswith(MCV):
+            if self.active:
+                self._report("content of %s (plain file found)" % ad_id)
+                raise VaultError("vault_corrupt", "A plain content file was found while the vault is enabled.")
+            yield from PlainCodec.iter_content(self, path, ad_id)
+            return
+        if not self.active:
+            raise VaultError("vault_not_available", "Encrypted content cannot be read without the vault.")
+        key = self._files_key()
+        generation = self._vault.generation
+        try:
+            with open(path, "rb") as handle:
+                for chunk in streamcrypt.decrypt_iter(handle, key, ad_id):
+                    if self._vault.generation != generation or self._vault.subkey("files") is None:
+                        raise VaultError("vault_locked")       # Lock now (ADR-0013 Decision 6): aborted at the next chunk
+                    yield chunk
+        except VaultError as error:
+            if error.code in ("vault_locked", "vault_not_available"):
+                raise
+            self._report("content of %s" % ad_id)
+            raise VaultError("vault_corrupt", "Stored content could not be verified.")
 
     def content_exists(self, path: Path) -> bool:
         return os.path.isfile(path)

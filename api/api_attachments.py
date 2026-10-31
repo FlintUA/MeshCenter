@@ -78,7 +78,7 @@ from collections.abc import Mapping
 from functools import wraps
 from pathlib import Path
 
-from flask import jsonify, request, send_file
+from flask import Response, jsonify, request, send_file
 from werkzeug.exceptions import RequestEntityTooLarge
 
 from meshsrv.attachments import mca_runtime, mime_allowlist, receiver, sender
@@ -776,8 +776,6 @@ def register_attachments_routes(app, handle_errors):
         data = request.get_json(silent=True)
         if not isinstance(data, dict) or not isinstance(data.get("passphrase"), str):
             return _json_error("passphrase_required", "passphrase required"), 400
-        if not vault_runtime.enable_allowed():
-            return _json_error("vault_not_ready", "Encrypted file operations are not available yet"), 409
         if not _vault_acknowledged(data):
             return _json_error("acknowledgement_required", "The flash storage notice must be acknowledged"), 400
         if vault.is_enabled():
@@ -924,7 +922,7 @@ def register_attachments_routes(app, handle_errors):
         status = {
             "unlock_failed": 403, "invalid_recovery_key": 403, "passphrase_required": 400, "vault_not_enabled": 409,
             "unlock_rate_limited": 429, "insufficient_memory": 503, "vault_busy": 503, "vault_locked": 423,
-            "passphrase_too_weak": 400, "invalid_backup_name": 400,
+            "passphrase_too_weak": 400, "invalid_backup_name": 400, "vault_corrupt": 500, "vault_not_available": 409,
         }.get(code, 400)
         body = {"ok": False, "error_code": code, "error": error.message if code == "insufficient_memory" else code}
         level = getattr(error, "level", None)
@@ -959,7 +957,6 @@ def register_attachments_routes(app, handle_errors):
             # the plain backup is a liability: this is derived from the folder, so a restart cannot lose the warning
             body["plain_backups"] = backups
             body["plain_backup_warning"] = bool(backups)
-        body["enable_allowed"] = vault_runtime.enable_allowed()
         if body.get("state") == "disabled":
             body["notices"] = ["flash_remanence", "gallery_not_covered", "downgrade_refused"]
         body["ok"] = True
@@ -1433,6 +1430,7 @@ def register_attachments_routes(app, handle_errors):
     @app.route("/api/attachments/<attachment_id>/content", methods=["GET"])
     @handle_errors
     @_mca_error_boundary
+    @_vault_gated
     def get_attachment_content(attachment_id):
         """§7.14: stream a content-available attachment's verified plaintext.
         Inline only for decoded-and-verified image/jpeg/png/webp; everything
@@ -1459,6 +1457,9 @@ def register_attachments_routes(app, handle_errors):
         inline = descriptor.disposition is ContentDisposition.INLINE
         served_mime = descriptor.mime_type if inline else "application/octet-stream"
         safe_name = mime_allowlist.sanitize_display_name(record.file_name)
+        content_codec = getattr(facade, "content_codec", lambda: None)()
+        if str(file_path).endswith(".mcv") or (content_codec is not None and content_codec.active):
+            return _serve_vault_content(content_codec, attachment_id, file_path, inline, served_mime, safe_name)
         response = send_file(
             file_path,
             mimetype=served_mime,
@@ -1466,6 +1467,70 @@ def register_attachments_routes(app, handle_errors):
             download_name=safe_name,
             conditional=True,
         )
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Content-Security-Policy"] = "sandbox"
+        return response
+
+    def _serve_vault_content(content_codec, attachment_id, file_path, inline, served_mime, safe_name):
+        """MCA-VAULT (ADR-0013 Decisions 4 and 6): the content is an `<id>.mcv`; no decrypted temp file is ever written.
+
+        * A **preview** (an inline image, at most the 5 MiB attachment limit) is decrypted into ONE buffer and served only
+          after the WHOLE file has verified (every chunk, the final tag, nothing after it): a damaged file never reaches the
+          browser as a partial picture.
+        * A **download to device** streams chunk by chunk with the exact Content-Length. Any failure while streaming
+          (a chunk that does not authenticate, a truncated file, the vault being locked) RAISES out of the response body, so
+          the connection is aborted and the browser marks the download failed; the body is never ended cleanly, so a
+          truncated file cannot be presented as a complete one.
+        """
+        if content_codec is None or not content_codec.active:
+            return _json_error("vault_not_available", "The vault is not available"), 409
+        try:
+            total = content_codec.content_plain_size(file_path)
+        except OSError:
+            return _json_error("content_missing", "content file is missing"), 404
+        except VaultError as error:
+            return _vault_error(error)
+        if inline:
+            try:
+                with content_codec.open_content(file_path, attachment_id) as handle:
+                    data = handle.read()
+            except OSError:
+                return _json_error("content_missing", "content file is missing"), 404
+            except VaultError as error:
+                return _vault_error(error)
+            response = Response(data, mimetype=served_mime)
+            response.headers.set("Content-Disposition", "inline", filename=safe_name)
+        else:
+            try:
+                chunks = content_codec.iter_content(file_path, attachment_id)
+                first = next(chunks, b"")          # the first chunk is authenticated BEFORE the headers go out
+            except OSError:
+                return _json_error("content_missing", "content file is missing"), 404
+            except VaultError as error:
+                return _vault_error(error)
+
+            def body():
+                sent = 0
+                try:
+                    if first:
+                        sent += len(first)
+                        yield first
+                    for chunk in chunks:
+                        sent += len(chunk)
+                        yield chunk
+                    if sent != total:
+                        raise VaultError("vault_corrupt", "The content ended with an unexpected size.")
+                except VaultError as error:
+                    _log.warning("MCAttach download aborted (%s)", error.code)    # no name, no id
+                    raise                                  # NOT caught: the response must not end cleanly
+                finally:
+                    chunks.close()
+
+            response = Response(body(), mimetype="application/octet-stream", direct_passthrough=False)
+            response.headers.set("Content-Disposition", "attachment", filename=safe_name)
+            response.headers["Content-Length"] = str(total)
+        response.headers["Accept-Ranges"] = "none"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Cache-Control"] = "no-store"
         response.headers["Content-Security-Policy"] = "sandbox"

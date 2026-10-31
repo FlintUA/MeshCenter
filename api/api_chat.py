@@ -599,9 +599,13 @@ def register_chat_routes(
             ]
 
             if chat_entry_snapshot is not None:
-                if remaining:
-                    last_message = remaining[-1]
-                    chats[chat_id]["last_message"] = last_message.get("text", "")
+                from meshsrv import mca_chat
+
+                visible = mca_chat.last_visible_message(remaining) if remaining else None
+                if visible is not None:
+                    last_message = visible
+                    chats[chat_id]["last_message"] = mca_chat.preview_text(last_message.get("mca"), last_message.get("text", "")) or ""
+                    # MCA-UX2: a transfer bubble is previewed as a paperclip, never as the raw frame
                     chats[chat_id]["last_time"] = last_message.get("time", "")
                     if last_message.get("ts") is not None:
                         chats[chat_id]["last_ts"] = last_message.get("ts")

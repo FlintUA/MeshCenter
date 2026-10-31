@@ -62,6 +62,15 @@ def ensure_marker(message: dict) -> dict:
     return message
 
 
+def last_visible_message(chat_messages) -> Optional[dict]:
+    """The newest message of a chat that is not a control frame (what a list preview should be made from)."""
+    for message in reversed(list(chat_messages)):
+        marker = message.get("mca") or ensure_marker(message).get("mca")
+        if not marker or marker.get("type") != CONTROL:
+            return message
+    return None
+
+
 def counts_as_unread(marker: Optional[dict]) -> bool:
     return not marker or marker.get("type") != CONTROL
 

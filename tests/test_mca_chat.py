@@ -132,3 +132,44 @@ def test_server_links_an_offer_bubble_when_the_handler_reports_the_attachment(se
     s._link_offer_to_chat(tid.hex(), "att-real")
     history = [m for m in s.get_chat_messages(node) if m["id"] == offer["id"]][0]
     assert history["mca"]["attachment_id"] == "att-real"
+
+
+# ---- MCA-UX2: list previews never show a raw frame ------------------------------------------------------------------
+
+
+def test_chat_list_preview_comes_from_the_newest_visible_message(server_module):
+    s = server_module
+    node = "!aaaa5555"
+    with s.state_lock:
+        s.chats.pop(node, None)
+        s.messages[:] = [m for m in s.messages if m.get("chat_id") != node]
+    s.add_message("rx", "Peer", "see you at nine", node_id=node, chat_id=node)
+    s.add_message("rx", "Peer", ACK_TEXT, node_id=node, chat_id=node)          # a control frame is the newest message
+    chat = [c for c in s.get_chats_list()[0] if c["id"] == node][0]
+    assert chat["last_message"] == "see you at nine", "the control frame is skipped"
+
+
+def test_chat_list_preview_repairs_a_stored_raw_frame_preview(server_module):
+    s = server_module
+    node = "!aaaa6666"
+    with s.state_lock:
+        s.chats.pop(node, None)
+        s.messages[:] = [m for m in s.messages if m.get("chat_id") != node]
+    s.add_message("rx", "Peer", "hello", node_id=node, chat_id=node)
+    with s.state_lock:
+        s.chats[node]["last_message"] = OFFER_TEXT[:100]          # what an older version stored
+        s.messages.append({"id": "old-offer", "kind": "rx", "sender": "Peer", "node_id": node, "text": OFFER_TEXT,
+                           "time": "10:00", "ts": 5, "chat_id": node, "chat_type": "dm", "chat_name": "Peer", "status": "sent"})
+    chat = [c for c in s.get_chats_list()[0] if c["id"] == node][0]
+    assert chat["last_message"] == "\U0001F4CE" and not chat["last_message"].startswith("MCA1:")
+
+
+def test_a_chat_with_only_control_frames_has_an_empty_preview(server_module):
+    s = server_module
+    node = "!aaaa7777"
+    with s.state_lock:
+        s.chats.pop(node, None)
+        s.messages[:] = [m for m in s.messages if m.get("chat_id") != node]
+    s.add_message("rx", "Peer", ACK_TEXT, node_id=node, chat_id=node)
+    chat = [c for c in s.get_chats_list()[0] if c["id"] == node][0]
+    assert chat["last_message"] == ""

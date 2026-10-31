@@ -2801,6 +2801,21 @@ async function test_send_pictures_untrusted_contact_offers_connect_securely_and_
     console.log('PASS: test_send_pictures_untrusted_contact_offers_connect_securely_and_cannot_send');
 }
 
+async function test_send_pictures_loads_providers_without_the_files_tab_being_active() {
+    // The gallery opens the dialog while the Files workspace was never activated (page opened on Chats, then Media)
+    const sandbox = buildSandbox({ fetchImpl: defaultRoutes(async (url) => {
+        if (url === '/api/mca/providers') return json(200, { ok: true, providers: [provider('prov1')] });
+        return undefined;
+    }) });
+    await sandbox.window.MeshCenterFiles.openSendPictures(PICS(1));
+    const loaded = await waitFor(() => {
+        const sel = sandbox._document.getElementById('filesSendProvider');
+        return Boolean(sel) && String(sel.innerHTML).includes('value="prov1"');
+    });
+    assert.ok(loaded, 'the provider list must load although Files was never activated');
+    console.log('PASS: test_send_pictures_loads_providers_without_the_files_tab_being_active');
+}
+
 async function main() {
     await test_activate_merges_contacts_and_excludes_local();
     await test_trust_confirm_shows_full_fingerprint();
@@ -2873,7 +2888,8 @@ async function main() {
     await test_send_pictures_command_queue_full_stops_with_a_clear_message();
     await test_send_pictures_original_over_the_limit_is_refused_clearly();
     await test_send_pictures_untrusted_contact_offers_connect_securely_and_cannot_send();
-    console.log('All files UI behavior tests passed (63 scenarios).');
+    await test_send_pictures_loads_providers_without_the_files_tab_being_active();
+    console.log('All files UI behavior tests passed (64 scenarios).');
 }
 
 main()

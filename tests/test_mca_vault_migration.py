@@ -62,6 +62,7 @@ def build_workspace(tmp_path):
     row("sent1", "sent", "READY_TO_SEND", "outgoing.pdf", str(paths.spool_outgoing / "sent1"), comment=SECRET_COMMENT, size=len(CONTENT["sent1"]))
     row("offer1", "received", "WAITING_CONSENT", "offered-but-not-accepted.pdf", None)       # no file yet, still has a name
     row("dang1", "received", "AVAILABLE", "dangling-name.pdf", str(paths.files / "dangling-name.pdf"))   # saved file is gone, the path stays
+    row("moved1", "received", "AVAILABLE", "moved-away.pdf", "/old/data/dir/mca/ws/files/moved-away.pdf")   # a database that was moved
     (paths.quarantine / "deadbeef.bin").write_bytes(b"quarantined bytes")
     (paths.keys / "identity.seed").write_bytes(SEED_BYTES)
     (paths.keys / "provider-token").write_bytes(TOKEN_BYTES)
@@ -110,7 +111,7 @@ def run_enable(env, **kw):
 
 def test_preflight_counts_what_enable_will_touch(env):
     report = migration.preflight(env, backup=True)
-    assert report.files == 8 and report.orphans == 1 and report.rows == 6 and report.blocking == 0
+    assert report.files == 8 and report.orphans == 1 and report.rows == 7 and report.blocking == 0
     assert report.bytes == sum(len(v) for v in CONTENT.values()) + len(b"nobody owns this file") + len(b"quarantined bytes") + 32 + len(TOKEN_BYTES)
     assert report.backup_bytes > report.bytes and report.needed_bytes > report.bytes + report.backup_bytes
 
@@ -161,14 +162,14 @@ def test_a_blob_column_round_trips_as_bytes(env):
 
 def test_no_plain_name_content_comment_seed_or_token_remains_in_the_workspace_or_the_database_file(env):
     before_db_markers = [SECRET_NAME, SECRET_NAME_2, SECRET_COMMENT, DATA_KEY, "receipt-secret-recv1", "upload-token-sent1",
-                         "revoke-token-text", "offered-but-not-accepted", "outgoing.pdf", "dangling-name.pdf"]
+                         "revoke-token-text", "offered-but-not-accepted", "outgoing.pdf", "dangling-name.pdf", "moved-away.pdf"]
     assert any(m.encode("utf-8") in Path(env.conn.execute("PRAGMA database_list").fetchone()[2]).read_bytes() for m in before_db_markers), \
         "the markers really are in the database file before enabling (the scan is meaningful)"
     run_enable(env)
     root = Path(env.paths.root)
     blobs = list(tree(root).items()) + [("attachments.db", Path(env.conn.execute("PRAGMA database_list").fetchone()[2]).read_bytes())]
     needles = [SECRET_NAME, SECRET_NAME_2, ORPHAN_NAME, SECRET_COMMENT, DATA_KEY, "receipt-secret-recv1", "upload-token-sent1",
-               "revoke-token-text", "offered-but-not-accepted", "outgoing.pdf", "empty.bin", "dangling-name.pdf"]
+               "revoke-token-text", "offered-but-not-accepted", "outgoing.pdf", "empty.bin", "dangling-name.pdf", "moved-away.pdf"]
     raw = [SEED_BYTES, TOKEN_BYTES, REVOKE_TOKEN_BYTES, CONTENT["recv1"][:64], CONTENT["saved1"][:64], CONTENT["sent1"][:64], b"nobody owns this file"]
     for name, data in blobs:
         for needle in needles:
@@ -180,15 +181,18 @@ def test_no_plain_name_content_comment_seed_or_token_remains_in_the_workspace_or
             assert needle not in relative, relative
 
 
-def test_a_saved_path_of_a_file_that_is_already_gone_does_not_keep_its_name_and_comes_back_on_disable(env):
+def test_a_saved_path_that_cannot_be_converted_does_not_keep_its_name_and_comes_back_on_disable(env):
     original = env.conn.execute("SELECT saved_path FROM attachments WHERE id = 'dang1'").fetchone()[0]
     assert "dangling-name.pdf" in original
     result = run_enable(env)
     after = env.conn.execute("SELECT saved_path FROM attachments WHERE id = 'dang1'").fetchone()[0]
     assert "dangling-name" not in after and after.endswith("dang1.mcv"), after
-    assert migration._read_index(env, subkey(bytes(result.storage_key), "files"))["dangling"] == {"dang1": "dangling-name.pdf"}
+    moved = "/old/data/dir/mca/ws/files/moved-away.pdf"
+    assert migration._read_index(env, subkey(bytes(result.storage_key), "files"))["dangling"] == {"dang1": original, "moved1": moved}
+    assert "moved-away" not in env.conn.execute("SELECT saved_path FROM attachments WHERE id = 'moved1'").fetchone()[0]
     migration.disable(env, bytes(result.storage_key), make_backup_copy=False)
     assert env.conn.execute("SELECT saved_path FROM attachments WHERE id = 'dang1'").fetchone()[0] == original
+    assert env.conn.execute("SELECT saved_path FROM attachments WHERE id = 'moved1'").fetchone()[0] == moved
 
 
 def test_the_orphan_name_is_kept_only_in_the_encrypted_index_and_comes_back_on_disable(env):

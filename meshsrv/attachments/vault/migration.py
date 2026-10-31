@@ -493,26 +493,30 @@ def _repoint_saved_paths(env: Env, *, to_encrypted: bool) -> int:
     return count
 
 
+def _id_named_dirs(env: Env) -> set:
+    return {os.path.normcase(os.path.abspath(str(d))) for d in (env.paths.cache_incoming, env.paths.spool_outgoing, env.paths.quarantine)}
+
+
+def _carries_a_name(env: Env, row, id_named: set) -> bool:
+    saved = row["saved_path"]
+    return bool(saved) and not saved.endswith(MCV) and os.path.normcase(os.path.abspath(str(Path(saved).parent))) not in id_named
+
+
 def _protect_dangling_paths(env: Env, sk: bytes) -> int:
-    """A row whose saved file is gone still has its old display name inside saved_path. Record the name in the
-    encrypted index (first), then point the row at the id-named path; disable puts the original path back."""
+    """A saved_path that could not be converted (its file is already gone, or it points outside this workspace, as in
+    a database that was moved) still carries the old display name. Record the ORIGINAL path in the encrypted index
+    (first), then point the row at the id-named path; disable puts the original path back exactly. A cache, spool or
+    quarantine path holds only the attachment id and is left alone."""
     files_key = subkey(sk, "files")
-    files_dir = os.path.normcase(os.path.abspath(str(env.paths.files)))
+    id_named = _id_named_dirs(env)
     index = _read_index(env, files_key)
-    todo = []
-    for row in _rows(env):
-        saved = row["saved_path"]
-        if not saved or saved.endswith(MCV):
-            continue
-        if os.path.normcase(os.path.abspath(str(Path(saved).parent))) != files_dir:
-            continue                                     # a cache or spool path holds only the id, no name
-        todo.append((row["id"], Path(saved).name))
+    todo = [(row["id"], row["saved_path"]) for row in _rows(env) if _carries_a_name(env, row, id_named)]
     if not todo:
         return 0
-    for rid, name in todo:
-        index["dangling"][rid] = name
-    _write_index(env, files_key, index)                  # the names are safe before any path is changed
-    for rid, _name in todo:
+    for rid, original in todo:
+        index["dangling"][rid] = original
+    _write_index(env, files_key, index)                  # the paths are safe before any row is changed
+    for rid, _original in todo:
         env.conn.execute("UPDATE attachments SET saved_path = ? WHERE id = ?", (str(Path(env.paths.files) / (rid + MCV)), rid))
     env.conn.commit()
     return len(todo)
@@ -532,10 +536,9 @@ def verify_enabled(env: Env, sk: bytes) -> dict:
         for row in env.conn.execute("SELECT %s AS pk, %s AS v FROM %s WHERE %s IS NOT NULL" % (pk, column, table, column)):
             if not _is_ours(field_key, table, column, row["pk"], row["v"]):
                 plain_columns += 1
-    for row in _rows(env):                               # no saved_path in the files library may carry a name
-        saved = row["saved_path"]
-        if saved and os.path.normcase(os.path.abspath(str(Path(saved).parent))) == os.path.normcase(os.path.abspath(str(env.paths.files))) \
-                and Path(saved).name != row["id"] + MCV:
+    id_named = _id_named_dirs(env)
+    for row in _rows(env):                               # no saved_path may carry a display name
+        if _carries_a_name(env, row, id_named):
             plain_columns += 1
     if plain_columns:
         raise MigrationError("plaintext_remains", "Plain database values remain.", count=plain_columns)
@@ -748,7 +751,7 @@ def _repoint_disabled(env: Env, field_key: bytes, moved: Dict[str, Path], dangli
         if not saved or not saved.endswith(MCV) or Path(saved).exists():
             continue
         if row["id"] in dangling:                         # the saved file was already gone: restore the original path
-            env.conn.execute("UPDATE attachments SET saved_path = ? WHERE id = ?", (str(Path(saved).parent / dangling[row["id"]]), row["id"]))
+            env.conn.execute("UPDATE attachments SET saved_path = ? WHERE id = ?", (dangling[row["id"]], row["id"]))
             count += 1
             continue
         target = moved.get(row["id"])

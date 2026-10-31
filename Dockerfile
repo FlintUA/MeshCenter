@@ -34,14 +34,24 @@
 # LGPL relink right is trivial: the source tarball, the licence text and the configure line ship in the image under
 # /usr/share/doc/meshcenter-ffmpeg. The version and checksum are pinned; the checksum is checked by BuildKit itself.
 # Security point releases of the 7.1 line: rebuild the image (docs/development/RELEASING.md).
-FROM python:3.11-slim-trixie AS ffmpeg-build
 ARG FFMPEG_VERSION=7.1.5
 ARG FFMPEG_SHA256=de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f
+# The source tarball has its own stage so CI can replace it with a cached copy
+# (`docker buildx build --build-context ffmpeg-source=<dir containing ffmpeg.tar.xz>`); the checksum is checked
+# again in the build stage, so a cached or mirrored copy can never differ from the pinned one.
+FROM scratch AS ffmpeg-source
+ARG FFMPEG_VERSION
+ARG FFMPEG_SHA256
+ADD --checksum=sha256:${FFMPEG_SHA256} https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz /ffmpeg.tar.xz
+
+FROM python:3.11-slim-trixie AS ffmpeg-build
+ARG FFMPEG_SHA256
 # hadolint ignore=DL3008
 RUN apt-get update \
  && apt-get install -y --no-install-recommends build-essential nasm pkg-config xz-utils ca-certificates \
  && rm -rf /var/lib/apt/lists/*
-ADD --checksum=sha256:${FFMPEG_SHA256} https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz /src/ffmpeg.tar.xz
+COPY --from=ffmpeg-source /ffmpeg.tar.xz /src/ffmpeg.tar.xz
+RUN echo "${FFMPEG_SHA256}  /src/ffmpeg.tar.xz" | sha256sum -c -
 RUN mkdir /src/ffmpeg && tar -xJf /src/ffmpeg.tar.xz -C /src/ffmpeg --strip-components=1 \
  && cd /src/ffmpeg \
  && ./configure \

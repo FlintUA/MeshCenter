@@ -19,6 +19,10 @@ from typing import Callable, Optional
 
 ACTION_TYPE = "send_camera_picture"
 MIN_INTERVAL_S = 15 * 60
+# The engine ticks once a minute and compares whole seconds, so a rule that repeats every 15 minutes runs 899.x s after
+# the last run about half the time. The run-time guard allows that much slack (found in the live check); anything
+# clearly closer than 15 minutes is still refused.
+TICK_TOLERANCE_S = 5
 RESIZE_CHOICES = ("1280", "1920", "original")
 DEFAULT_RESIZE = "1280"
 _CONTACT_RE = re.compile(r"^![0-9a-f]{8}$")
@@ -97,7 +101,7 @@ def run(action: dict, rule: dict, deps: PictureDeps) -> str:
     now = deps.clock()
 
     last = state.get("last_run_at") or 0
-    if last and now - last < MIN_INTERVAL_S:
+    if last and now - last < MIN_INTERVAL_S - TICK_TOLERANCE_S:
         return _skip(deps, title, "too_soon", "the last picture run was %d s ago (minimum %d s)" % (now - last, MIN_INTERVAL_S))
     state["last_run_at"] = now
 

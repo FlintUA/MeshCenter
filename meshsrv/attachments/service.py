@@ -99,6 +99,7 @@ from meshsrv.attachments.snapshots import (
     make_locator,
     resolve_locator,
 )
+from meshsrv.attachments.vault.codec import codec_of
 from meshsrv.attachments.workspace import MCAWorkspaceManager
 from meshsrv.connectivity_monitor import ConnectivityMonitor
 
@@ -1875,10 +1876,16 @@ class AttachmentsService:
         upload token stay out of a handler that must never touch key material
         it has no use for."""
         self._conn.row_factory = sqlite3.Row
-        return self._conn.execute(
+        row = self._conn.execute(
             "SELECT upload_id, revoke_token FROM mca_sender_state WHERE attachment_id = ?",
             (attachment_id,),
         ).fetchone()
+        if row is None:
+            return None
+        return {
+            "upload_id": row["upload_id"],
+            "revoke_token": codec_of(self._conn).open("mca_sender_state", "revoke_token", attachment_id, row["revoke_token"]),
+        }
 
     def _revoke_token_for(self, attachment_id: str) -> Optional[str]:
         """ADR-0009 Decision 5a: the revoke token a revoke needs, read from the
@@ -1890,12 +1897,13 @@ class AttachmentsService:
         row = self._conn.execute(
             "SELECT revoke_token FROM mca_sender_revoke_state WHERE attachment_id = ?", (attachment_id,)
         ).fetchone()
+        fields = codec_of(self._conn)
         if row is not None and row["revoke_token"] is not None:
-            return row["revoke_token"]
+            return fields.open("mca_sender_revoke_state", "revoke_token", attachment_id, row["revoke_token"])
         row = self._conn.execute(
             "SELECT revoke_token FROM mca_sender_state WHERE attachment_id = ?", (attachment_id,)
         ).fetchone()
-        return row["revoke_token"] if row is not None else None
+        return fields.open("mca_sender_state", "revoke_token", attachment_id, row["revoke_token"]) if row is not None else None
 
     def _cancel_route_for(self, attachment_id: str) -> Optional["receiver.ReplyRoute"]:
         """PR 2.5: the immutable route snapshot for a sender-side CANCEL, read
@@ -2022,11 +2030,16 @@ class AttachmentsService:
         the worker-owned `conn` (§3.1). Returns `None` for an unknown id or a
         row in another workspace."""
         self._conn.row_factory = sqlite3.Row
-        return self._conn.execute(
+        row = self._conn.execute(
             "SELECT id, direction, provider_id, state, file_name, mime_type, plain_size, saved_path "
             "FROM attachments WHERE id = ? AND workspace_id = ?",
             (attachment_id, self._principal.workspace_id),
         ).fetchone()
+        if row is None:
+            return None
+        content = {key: row[key] for key in row.keys()}
+        content["file_name"] = codec_of(self._conn).open("attachments", "file_name", attachment_id, row["file_name"])
+        return content
 
     def _resolve_content_path(self, paths, saved_path) -> Optional[Path]:
         """Resolve a persisted `saved_path` back to an absolute, serve-time

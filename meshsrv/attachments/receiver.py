@@ -94,6 +94,7 @@ from meshsrv.attachments.relay_client import (
     RelayVerificationError,
     verify_descriptor_signature,
 )
+from meshsrv.attachments.vault.codec import codec_of
 from meshsrv.attachments.workspace import MCAWorkspaceManager
 
 # ---- state constants (design spec 15.2) ------------------------------------
@@ -1340,7 +1341,10 @@ def _step_downloading(conn, row, workspace_manager, principal, provider_registry
         AVAILABLE,
         now,
         extra_sql=", file_name = ?, mime_type = ?, plain_size = ?, plain_sha256 = ?, saved_path = ?",
-        extra_params=(header.file_name, header.mime_type, header.plain_size, header.plain_sha256.hex(), str(cache_path)),
+        extra_params=(
+            codec_of(conn).seal("attachments", "file_name", attachment_id, header.file_name),
+            header.mime_type, header.plain_size, header.plain_sha256.hex(), str(cache_path),
+        ),
     )
     ack = enqueue_control_message(
         conn,

@@ -596,12 +596,7 @@ class ProviderRegistry:
                 error_code="upload_token_too_long",
             )
         token_path = self._upload_token_path(provider_id, workspace_manager, principal_id)
-        fd = os.open(str(token_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), _UPLOAD_TOKEN_FILE_MODE)
-        try:
-            os.write(fd, token.encode("utf-8"))
-        finally:
-            os.close(fd)
-        os.chmod(token_path, _UPLOAD_TOKEN_FILE_MODE)
+        workspace_manager.codec.write_secret_file(token_path, token.encode("utf-8"), mode=_UPLOAD_TOKEN_FILE_MODE)
         self._conn.execute(
             "UPDATE mca_provider_profiles SET upload_token_file = ? WHERE workspace_id = ? AND provider_id = ?",
             (token_path.name, self._workspace_id, provider_id),
@@ -624,9 +619,10 @@ class ProviderRegistry:
             return None
         paths = workspace_manager.paths(principal_id)
         token_path = paths.keys / row["upload_token_file"]
-        if not token_path.exists():
+        data = workspace_manager.codec.read_secret_file(token_path)
+        if data is None:
             return None
-        return token_path.read_bytes().decode("utf-8")
+        return data.decode("utf-8")
 
     def clear_upload_token(
         self, provider_id: str, workspace_manager: "MCAWorkspaceManager", principal_id: str
@@ -690,7 +686,7 @@ class ProviderRegistry:
         keys_resolved = paths.keys.resolve()
         if token_path.resolve().parent != keys_resolved:
             raise ProviderRegistryError("upload token path escaped the keys directory")
-        token_path.unlink(missing_ok=True)
+        workspace_manager.codec.unlink_secret_file(token_path)
 
     def _delete_upload_token_file(self, provider_id: str, workspace_manager: "MCAWorkspaceManager", principal_id: str) -> None:
         row = self._conn.execute(

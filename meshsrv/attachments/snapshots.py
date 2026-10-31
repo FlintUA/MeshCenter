@@ -82,6 +82,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from meshsrv.attachments.idempotency import IdempotencyEntry
+from meshsrv.attachments.vault.codec import PLAIN as _PLAIN_FIELDS, codec_of
 from meshsrv.attachments.workspace import MCAWorkspaceManager, WorkspacePaths
 
 logger = logging.getLogger(__name__)
@@ -585,6 +586,7 @@ def _record_from_row(
     recipients: Sequence[RecipientRecord],
     deliveries: Sequence[DeliveryRecord],
     events: Sequence[TimelineEvent],
+    fields=_PLAIN_FIELDS,
 ) -> AttachmentRecord:
     """Convert one `attachments` row plus its already-fetched children into a
     frozen `AttachmentRecord`. Shared by the full build and the incremental
@@ -620,7 +622,8 @@ def _record_from_row(
         id=attachment_id,
         direction=row["direction"],
         state=row["state"],
-        file_name=row["file_name"],
+        # MCA-VAULT: encrypted at rest; read as None while the vault is locked (the "locked" placeholder)
+        file_name=fields.open_display("attachments", "file_name", attachment_id, row["file_name"]),
         mime_type=row["mime_type"],
         plain_size=row["plain_size"],
         cipher_size=row["cipher_size"],
@@ -724,6 +727,7 @@ def build_attachments_snapshot(
             recipients_by_attachment.get(attachment_id, ()),
             deliveries_by_attachment.get(attachment_id, ()),
             events_by_attachment.get(attachment_id, ()),
+            codec_of(conn),
         )
         records.append(record)
         by_id[attachment_id] = record
@@ -824,6 +828,7 @@ def _fetch_attachment_projection(
         [_recipient_from_row(r) for r in recipient_rows],
         [_delivery_from_row(r) for r in delivery_rows],
         events,
+        codec_of(conn),
     )
     return _AttachmentProjection(
         record=record,

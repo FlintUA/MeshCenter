@@ -3698,3 +3698,14 @@ def test_unlock_is_refused_with_a_clear_message_when_memory_is_low(monkeypatch, 
     resp = c.post("/api/mca/vault/unlock", json={"passphrase": _VAULT_PASS})
     assert resp.status_code == 503 and resp.get_json()["error_code"] == "insufficient_memory"
     assert "48 MiB needed" in resp.get_json()["error"] and "40 MiB free" in resp.get_json()["error"]
+
+
+def test_the_login_and_csrf_hooks_answer_before_the_lock_so_an_unauthenticated_caller_learns_nothing(monkeypatch, vault_dir):
+    """server.py registers the login and CSRF hooks after the attachments routes; the gate is on the view, so it never
+    runs ahead of them (found in the live round: a before_request gate answered 423 before the CSRF check)."""
+    workspace, _ = vault_dir
+    _with_vault(monkeypatch, workspace)
+    c = _client(monkeypatch, _FakeFacade())
+    c.application.before_request(lambda: ({"error_code": "auth_required"}, 401))       # registered later, like server.py's hooks
+    for method, path in _GATED[:4]:
+        assert getattr(c, method)(path, json={}).status_code == 401, path

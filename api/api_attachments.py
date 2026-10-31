@@ -696,23 +696,20 @@ def register_attachments_routes(app, handle_errors):
         vault = _vault()
         return vault is not None and vault.is_locked()
 
-    # what needs the identity seed or the storage key; deleting a local copy, purging received copies, cancelling a
-    # key-request series and the relay probes only touch plain rows or files and stay available
-    _VAULT_GATED_ENDPOINTS = frozenset({
-        "create_attachment", "retry_attachment", "download_attachment", "reject_attachment", "cancel_attachment",
-        "save_attachment", "revoke_attachment", "request_contact_key", "confirm_contact_key",
-        "accept_contact_key_change", "reject_contact_key_change", "set_provider_upload_token",
-    })
-
-    @app.before_request
-    def _vault_gate():
-        if request.endpoint in _VAULT_GATED_ENDPOINTS and _vault_is_locked():
-            return jsonify({
-                "ok": False,
-                "error": "MCAttach is locked. Unlock it first.",
-                "error_code": "vault_locked",
-            }), 423
-        return None
+    def _vault_gated(view):
+        """The view answers 423 `vault_locked` while the vault is locked. A decorator on the view, not a
+        `before_request` hook: the login and CSRF hooks are registered later in server.py, and an unauthenticated
+        request must be answered by them (401/403) and learn nothing about the lock."""
+        @wraps(view)
+        def wrapper(*args, **kwargs):
+            if _vault_is_locked():
+                return jsonify({
+                    "ok": False,
+                    "error": "MCAttach is locked. Unlock it first.",
+                    "error_code": "vault_locked",
+                }), 423
+            return view(*args, **kwargs)
+        return wrapper
 
     def _vault_error(error):
         """A VaultError as an HTTP answer. A wrong passphrase and a damaged header are the same answer."""
@@ -1177,24 +1174,28 @@ def register_attachments_routes(app, handle_errors):
     @app.route("/api/attachments/<attachment_id>/retry", methods=["POST"])
     @handle_errors
     @_mca_error_boundary
+    @_vault_gated
     def retry_attachment(attachment_id):
         return _submit_lifecycle_command(attachment_id, "attachment_retry", _retry_precondition)
 
     @app.route("/api/attachments/<attachment_id>/download", methods=["POST"])
     @handle_errors
     @_mca_error_boundary
+    @_vault_gated
     def download_attachment(attachment_id):
         return _submit_lifecycle_command(attachment_id, "attachment_download", _consent_precondition)
 
     @app.route("/api/attachments/<attachment_id>/reject", methods=["POST"])
     @handle_errors
     @_mca_error_boundary
+    @_vault_gated
     def reject_attachment(attachment_id):
         return _submit_lifecycle_command(attachment_id, "attachment_reject", _consent_precondition)
 
     @app.route("/api/attachments/<attachment_id>/cancel", methods=["POST"])
     @handle_errors
     @_mca_error_boundary
+    @_vault_gated
     def cancel_attachment(attachment_id):
         return _submit_lifecycle_command(attachment_id, "attachment_cancel", _cancel_precondition)
 
@@ -1253,12 +1254,14 @@ def register_attachments_routes(app, handle_errors):
     @app.route("/api/attachments/<attachment_id>/save", methods=["POST"])
     @handle_errors
     @_mca_error_boundary
+    @_vault_gated
     def save_attachment(attachment_id):
         return _submit_lifecycle_command(attachment_id, "attachment_save", _save_precondition)
 
     @app.route("/api/attachments/<attachment_id>/revoke", methods=["POST"])
     @handle_errors
     @_mca_error_boundary
+    @_vault_gated
     def revoke_attachment(attachment_id):
         return _submit_lifecycle_command(attachment_id, "attachment_revoke", _revoke_precondition)
 
@@ -1296,6 +1299,7 @@ def register_attachments_routes(app, handle_errors):
     @app.route("/api/mca/contacts/<contact_id>/request-key", methods=["POST"])
     @handle_errors
     @_mca_error_boundary
+    @_vault_gated
     def request_contact_key(contact_id):
         """§7.10: ask a contact to announce its MCA key. Synchronous checks are
         limited to pure validation (contact id shape, an optional DIRECT
@@ -1445,6 +1449,7 @@ def register_attachments_routes(app, handle_errors):
     @app.route("/api/mca/contacts/<contact_id>/confirm", methods=["POST"])
     @handle_errors
     @_mca_error_boundary
+    @_vault_gated
     def confirm_contact_key(contact_id):
         """Step 1.7: "trust this MCA key" - the explicit `confirm_tofu()`.
         Valid only while the binding is `KEY_UNVERIFIED` (announced, never
@@ -1458,6 +1463,7 @@ def register_attachments_routes(app, handle_errors):
     @app.route("/api/mca/contacts/<contact_id>/key-change/accept", methods=["POST"])
     @handle_errors
     @_mca_error_boundary
+    @_vault_gated
     def accept_contact_key_change(contact_id):
         """Step 1.7: promote a parked key change into the trusted binding (the
         new key still needs its own, separate confirm afterwards - accepting
@@ -1470,6 +1476,7 @@ def register_attachments_routes(app, handle_errors):
     @app.route("/api/mca/contacts/<contact_id>/key-change/reject", methods=["POST"])
     @handle_errors
     @_mca_error_boundary
+    @_vault_gated
     def reject_contact_key_change(contact_id):
         """Step 1.7: dismiss a parked key change, leaving the existing trusted
         binding untouched (not a blacklist). Valid only while `KEY_CHANGED`."""
@@ -1483,6 +1490,7 @@ def register_attachments_routes(app, handle_errors):
     @app.route("/api/attachments", methods=["POST"])
     @handle_errors
     @_mca_error_boundary
+    @_vault_gated
     def create_attachment():
         """The §7.2 idempotent multipart create. Splits its work across the two
         threads exactly as §3.5/§3.6/§7.2 prescribe:
@@ -2035,6 +2043,7 @@ def register_attachments_routes(app, handle_errors):
     @app.route("/api/mca/providers/<provider_id>/upload-token", methods=["PUT"])
     @handle_errors
     @_mca_error_boundary
+    @_vault_gated
     def set_provider_upload_token(provider_id):
         """§7.12: store an upload token (0600 file). The token is never
         echoed; the synchronous `upload_token_too_long` check mirrors the

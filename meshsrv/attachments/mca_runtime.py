@@ -136,6 +136,7 @@ from meshsrv.attachments.provider_registry import ProviderRegistry
 from meshsrv.attachments.recipient_snapshot import RecipientSnapshotPublisher
 from meshsrv.attachments.service import INBOUND_QUEUE_MAXSIZE, AttachmentsService, InboundEvent
 from meshsrv.attachments.snapshots import AttachmentsSnapshotPublisher
+from meshsrv.attachments.vault.codec import VaultCodec, VaultConnection
 from meshsrv.attachments.vault.runtime import VaultRuntime
 from meshsrv.attachments.workspace import MCAWorkspaceManager
 from meshsrv.connectivity_monitor import ConnectivityMonitor
@@ -200,7 +201,7 @@ class _MCARuntimeState:
         # path_construction enforces this by grep, comments included).
         self.workspace_manager = MCAWorkspaceManager(data_dir)
         db_path = self.workspace_manager.mca_dir / "attachments.db"
-        self.conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        self.conn = sqlite3.connect(str(db_path), check_same_thread=False, factory=VaultConnection)
         migrate(self.conn)
         self.principal: MCAPrincipal = ensure_principal(self.conn, self.workspace_manager, WORKSPACE_ID)
         # MCA-VAULT (ADR-0013): the vault runtime of this workspace. Its state comes from the files in the workspace
@@ -210,6 +211,9 @@ class _MCARuntimeState:
             self.workspace_manager.paths(self.principal.principal_id).root,
             log=lambda level, title, details: _vault_log(level, title, details),
         )
+        # PR 4a: every read and write of an encrypted column, the identity seed and the provider upload tokens goes
+        # through this codec; it consults the vault runtime on each call, so enable/disable/lock/unlock need no rewiring.
+        self.conn.codec = self.workspace_manager.codec = VaultCodec(self.vault)
         self.coordinator = KeyExchangeCoordinator(
             self.conn, self.workspace_manager, self.principal, ADAPTER_ID
         )

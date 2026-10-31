@@ -64,6 +64,7 @@ from meshsrv.attachments.relay_client import (
     RelayHTTPError,
     RelayUnavailableError,
 )
+from meshsrv.attachments.vault.codec import codec_of
 from meshsrv.attachments.workspace import LowDiskLevel, MCAWorkspaceManager
 
 # ---- state constants (design spec 15.1) -----------------------------------
@@ -329,13 +330,13 @@ def create_draft(
             # for the one-time re-encoding of any already-hex-stored rows.
             encode_provider_id(provider_id),
             DRAFT,
-            file_name,
+            _codec(conn).seal("attachments", "file_name", attachment_id, file_name),
             mime_type,
             now,
             0,  # hard_expires_at: unknown until commit(); 0 is never a valid real value
             download_grace_seconds,
             source_path,
-            comment,
+            _codec(conn).seal("attachments", "draft_comment", attachment_id, comment),
             client_request_id,
             canonical_hash,
         ),
@@ -469,7 +470,7 @@ def _step_validating(conn: sqlite3.Connection, workspace_manager: MCAWorkspaceMa
     if not mime_allowlist.is_allowed_mime_type(row["mime_type"] or ""):
         _set_state(conn, attachment_id, FAILED_VALIDATION, now, error_code="mime_not_allowed")
         return FAILED_VALIDATION
-    if not mime_allowlist.is_allowed_extension(row["file_name"] or ""):
+    if not mime_allowlist.is_allowed_extension(_row_file_name(conn, row) or ""):
         _set_state(conn, attachment_id, FAILED_VALIDATION, now, error_code="extension_not_allowed")
         return FAILED_VALIDATION
     if workspace_manager.low_disk_level(row["principal_id"]) == LowDiskLevel.BLOCK:
@@ -504,9 +505,25 @@ def _sha256_file(path: str, chunk_size: int = crypto.CHUNK_SIZE_BYTES) -> bytes:
 # ---- ENCRYPTING -------------------------------------------------------------
 
 
-def _get_sender_state(conn: sqlite3.Connection, attachment_id: str) -> Optional[sqlite3.Row]:
+def _get_sender_state(conn: sqlite3.Connection, attachment_id: str) -> Optional[dict]:
+    """The transient sender state with its secrets opened (MCA-VAULT: they are encrypted at rest when the vault is on)."""
     conn.row_factory = sqlite3.Row
-    return conn.execute("SELECT * FROM mca_sender_state WHERE attachment_id = ?", (attachment_id,)).fetchone()
+    row = conn.execute("SELECT * FROM mca_sender_state WHERE attachment_id = ?", (attachment_id,)).fetchone()
+    if row is None:
+        return None
+    state = {key: row[key] for key in row.keys()}
+    fields = _codec(conn)
+    for column in ("data_key", "nonce_prefix", "upload_token", "revoke_token"):
+        state[column] = fields.open("mca_sender_state", column, attachment_id, state[column])
+    return state
+
+
+def _codec(conn):
+    return codec_of(conn)
+
+
+def _row_file_name(conn, row) -> Optional[str]:
+    return _codec(conn).open("attachments", "file_name", row["id"], row["file_name"])
 
 
 def _ensure_revoke_state(
@@ -530,7 +547,8 @@ def _ensure_revoke_state(
         "(attachment_id, revoke_token, delete_after, created_at, updated_at) VALUES (?, ?, ?, ?, ?) "
         "ON CONFLICT(attachment_id) DO UPDATE SET revoke_token = excluded.revoke_token, "
         "delete_after = excluded.delete_after, updated_at = excluded.updated_at",
-        (attachment_id, revoke_token, revoke_state_ts(delete_after), revoke_state_ts(now), revoke_state_ts(now)),
+        (attachment_id, _codec(conn).seal("mca_sender_revoke_state", "revoke_token", attachment_id, revoke_token),
+         revoke_state_ts(delete_after), revoke_state_ts(now), revoke_state_ts(now)),
     )
 
 
@@ -574,12 +592,12 @@ def _step_encrypting(
             chunk_declarations.append(ChunkDeclaration(size=len(ciphertext), sha256=hashlib.sha256(ciphertext).digest()))
 
     header = manifest.ManifestHeader(
-        file_name=row["file_name"] or "",
+        file_name=_row_file_name(conn, row) or "",
         mime_type=row["mime_type"] or "application/octet-stream",
         plain_size=plain_size,
         plain_sha256=plain_sha256,
         chunk_count=plan.chunk_count,
-        comment=row["draft_comment"],
+        comment=_codec(conn).open("attachments", "draft_comment", attachment_id, row["draft_comment"]),
     )
 
     envelopes = []
@@ -610,7 +628,9 @@ def _step_encrypting(
                 (attachment_id, data_key, nonce_prefix, manifest_blob, manifest_sha256, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (attachment_id, data_key.hex(), nonce_prefix.hex(), manifest_blob, manifest_sha256.hex(), now, now),
+            (attachment_id, _codec(conn).seal("mca_sender_state", "data_key", attachment_id, data_key.hex()),
+             _codec(conn).seal("mca_sender_state", "nonce_prefix", attachment_id, nonce_prefix.hex()),
+             manifest_blob, manifest_sha256.hex(), now, now),
         )
     else:
         conn.execute(
@@ -742,7 +762,8 @@ def _step_uploading(
         upload_id, upload_token, revoke_token = session.upload_id, session.upload_token, session.revoke_token
         conn.execute(
             "UPDATE mca_sender_state SET upload_id = ?, upload_token = ?, revoke_token = ?, updated_at = ? WHERE attachment_id = ?",
-            (upload_id, upload_token, revoke_token, now, attachment_id),
+            (upload_id, _codec(conn).seal("mca_sender_state", "upload_token", attachment_id, upload_token),
+             _codec(conn).seal("mca_sender_state", "revoke_token", attachment_id, revoke_token), now, attachment_id),
         )
         conn.commit()
 

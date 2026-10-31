@@ -3916,3 +3916,84 @@ def test_resume_of_an_interrupted_migration_is_refused_with_503_when_memory_is_s
     assert "64 MiB needed" in resp.get_json()["error"] and facade.submitted == [], "nothing was queued"
     free["bytes"] = 4 * 1024 ** 3
     assert c.post("/api/mca/vault/resume", json={}).status_code == 202
+
+
+# ---- MCA-VAULT PR 4b: the create endpoint stages only ciphertext when the vault is on ----------------------------------------
+
+def _encoded_multipart(data: bytes):
+    """The create request's multipart body, encoded here and sent as raw bytes: Werkzeug's TEST CLIENT would otherwise
+    write the plaintext to a temp file of its own while building the request, which is not what the server does."""
+    boundary = "----vaultboundary"
+    crlf = chr(13) + chr(10)
+    head = "--" + boundary + crlf + 'Content-Disposition: form-data; name="metadata"' + crlf + crlf + json.dumps(_make_meta()) + crlf
+    part = "--" + boundary + crlf + 'Content-Disposition: form-data; name="file"; filename="photo.jpg"' + crlf + "Content-Type: image/jpeg" + crlf + crlf
+    return head.encode() + part.encode() + data + (crlf + "--" + boundary + "--" + crlf).encode(), "multipart/form-data; boundary=" + boundary
+
+
+def _vault_facade(monkeypatch, vault_dir, tmp_path):
+    from _vault_spy import MARKER  # noqa: F401  (imported where used below)
+    from meshsrv.attachments.vault.codec import VaultCodec
+    workspace, _ = vault_dir
+    rt, _clock = _with_vault(monkeypatch, workspace)
+    rt.unlock(passphrase=_VAULT_PASS)
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    codec_obj = VaultCodec(rt)
+    facade.content_codec = lambda: codec_obj
+    return rt, facade, codec_obj
+
+
+def _forbid_werkzeug_temp_files(monkeypatch):
+    def boom(*args, **kwargs):
+        raise AssertionError("Werkzeug tried to spool the upload to a temporary file")
+    monkeypatch.setattr("werkzeug.wrappers.request.default_stream_factory", boom)
+    monkeypatch.setattr("werkzeug.formparser.default_stream_factory", boom)
+
+
+def test_create_under_the_vault_stages_only_ciphertext_and_never_a_werkzeug_temp_file(monkeypatch, vault_dir, tmp_path):
+    from _vault_spy import MARKER, no_plaintext_writes
+    rt, facade, codec_obj = _vault_facade(monkeypatch, vault_dir, tmp_path)
+    _forbid_werkzeug_temp_files(monkeypatch)
+    data = _JPEG + MARKER * 25000                                  # about 750 KB: over the 500 KB where Werkzeug spools to disk
+    c = _client(monkeypatch, facade)
+    body, content_type = _encoded_multipart(data)
+    with no_plaintext_writes():
+        resp = c.post("/api/attachments", data=body, content_type=content_type)
+    assert resp.status_code in (200, 202), resp.get_json()
+    spool = tmp_path / "spool"
+    names = sorted(p.name for p in spool.iterdir())
+    attachment_id = facade.submitted[0].payload["attachment_id"]
+    assert names == [attachment_id + ".mcv"], names
+    with codec_obj.open_content(spool / names[0], attachment_id) as handle:
+        assert handle.read() == data
+    assert MARKER not in (spool / names[0]).read_bytes()
+
+
+def test_create_under_the_vault_rejects_bad_json_and_oversize_without_leaving_a_file(monkeypatch, vault_dir, tmp_path):
+    rt, facade, codec_obj = _vault_facade(monkeypatch, vault_dir, tmp_path)
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c, data=b'{"a": 1,', filename="doc.json")
+    assert resp.status_code == 400 and resp.get_json()["error_code"] == "mime_not_allowed"
+    resp = _post_create(c, data=_JPEG + b"\x00" * (6 * 1024 * 1024))
+    assert resp.status_code in (400, 413) and facade.submitted == []
+    assert list((tmp_path / "spool").iterdir()) == [], "nothing was left behind, plain or encrypted"
+    ok = _post_create(c, data=b'{"a": [1, 2, 3]}', filename="doc.json")
+    assert ok.status_code in (200, 202)
+    assert [p.suffix for p in (tmp_path / "spool").iterdir()] == [".mcv"]
+
+
+def test_create_with_a_locked_vault_stages_nothing(monkeypatch, vault_dir, tmp_path):
+    rt, facade, codec_obj = _vault_facade(monkeypatch, vault_dir, tmp_path)
+    rt.lock()
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code == 423 and resp.get_json()["error_code"] == "vault_locked"
+    assert not (tmp_path / "spool").exists() or list((tmp_path / "spool").iterdir()) == []
+    assert facade.submitted == []
+
+
+def test_create_without_a_vault_is_unchanged(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c)
+    assert resp.status_code in (200, 202)
+    assert [len(p.name) for p in (tmp_path / "spool").iterdir()] == [32], "the plain, id-named spool file as before"

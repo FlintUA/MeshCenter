@@ -312,10 +312,12 @@ def test_a_sent_attachment_never_puts_a_name_comment_key_or_token_into_the_datab
     recipient_key = SigningKey.generate()
     pub = bytes(recipient_key.verify_key)
     key_id = identity.compute_key_id(pub)
-    source = tmp_path / ("ab" * 16)                         # the service stages the source under the attachment id, never the name
-    source.write_bytes(b"hello " * 500)
+    staged_id = "ab" * 16                                   # the service stages the source under the attachment id, never the name
+    spool = world.wsm.paths(world.principal.principal_id).spool_outgoing
+    source = world.wsm.codec.write_content(spool / staged_id, b"hello " * 500, staged_id)    # encrypted: this is a vault workspace
+    assert source.name == staged_id + ".mcv"
     attachment_id = sender.create_draft(
-        world.conn, world.wsm, world.principal, workspace_id="local", source_path=str(source), file_name=NAME, mime_type="text/plain",
+        world.conn, world.wsm, world.principal, workspace_id="local", attachment_id=staged_id, source_path=str(source), file_name=NAME, mime_type="text/plain",
         recipients=[sender.RecipientTarget(public_identity=pub, key_id=key_id)], adapter_id="fake-text", connector_profile_id="default",
         route_type="DIRECT", route_id="receiver", provider_id=b"\x01" * 8, comment=COMMENT)
     stored = world.conn.execute("SELECT file_name, draft_comment FROM attachments WHERE id = ?", (attachment_id,)).fetchone()

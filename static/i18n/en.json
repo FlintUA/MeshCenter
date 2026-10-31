@@ -301,7 +301,8 @@
       "encrypted_files_remain": "Some encrypted files remained; the job was stopped",
       "invalid_backup_name": "This is not a vault backup folder",
       "vault_not_available": "The vault is not available",
-      "recovery_key_not_available": "The recovery key was already shown"
+      "recovery_key_not_available": "The recovery key was already shown",
+      "vault_corrupt": "A stored value could not be verified. The data may be damaged"
     },
     "accept_download": "Accept and download",
     "accepting_key_change": "Accepting key change…",

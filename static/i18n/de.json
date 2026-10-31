@@ -301,7 +301,8 @@
       "encrypted_files_remain": "Es blieben verschlüsselte Dateien übrig; der Auftrag wurde gestoppt",
       "invalid_backup_name": "Das ist kein Tresor-Sicherungsordner",
       "vault_not_available": "Der Tresor ist nicht verfügbar",
-      "recovery_key_not_available": "Der Wiederherstellungsschlüssel wurde bereits angezeigt"
+      "recovery_key_not_available": "Der Wiederherstellungsschlüssel wurde bereits angezeigt",
+      "vault_corrupt": "Ein gespeicherter Wert konnte nicht geprüft werden. Die Daten sind möglicherweise beschädigt"
     },
     "accept_download": "Akzeptieren und herunterladen",
     "accepting_key_change": "Akzeptiere Schlüsselwechsel…",

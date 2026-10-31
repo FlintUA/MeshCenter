@@ -301,7 +301,8 @@
       "encrypted_files_remain": "Залишилися зашифровані файли; завдання зупинено",
       "invalid_backup_name": "Це не тека резервної копії сховища",
       "vault_not_available": "Сховище недоступне",
-      "recovery_key_not_available": "Ключ відновлення вже було показано"
+      "recovery_key_not_available": "Ключ відновлення вже було показано",
+      "vault_corrupt": "Збережене значення не вдалося перевірити. Можливо, дані пошкоджено"
     },
     "accept_download": "Прийняти та завантажити",
     "accepting_key_change": "Прийняття зміни ключа…",

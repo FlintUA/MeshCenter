@@ -361,6 +361,33 @@ download, Save to Files, delete, cleanup, and the removal of the experimental fl
 - Not yet covered (4b and 4c): the content files themselves on receive and send, preview, download, Save to Files,
   delete and cleanup of `.mcv` files. The experimental flag stays until 4c.
 
+## Amendments made in PR 4b (receive and send under the vault)
+
+- **Content API on the codec** (`write_content`, `open_content`, `content_exists`, `content_plain_size`,
+  `content_size_and_sha256`, `unlink_content`). With the vault on, content for `base` is `base.mcv`; it is encrypted to
+  `base.mcv.part`, fsynced and renamed, and a plain file of the same name is removed. Names and associated data are the
+  migration's: cache and spool `<id>.mcv` (AD = attachment id), quarantine `<transfer>.bin.mcv` (AD
+  `quarantine/<transfer>.bin`), so a disable can restore everything the service wrote.
+- **Receive.** The verified plaintext (held in memory only) is encrypted straight into `cache/incoming/<id>.mcv` and
+  `saved_path` points at it; quarantine data is encrypted the same way. No plain file or temp file exists at any moment
+  (the test fails the moment any file write carries the plaintext).
+- **Send.** The outgoing source is read through the codec: the size and SHA-256 are those of the plaintext, computed by
+  decrypting in memory; the chunks are cut from one in-memory decrypt of at most the 5 MiB attachment limit (secretstream
+  is sequential, so there is no seeking in the file).
+- **Upload staging.** With the vault on, the create endpoint keeps the request's file parts in memory (Werkzeug otherwise
+  spools a part over 500 KB to the system temp directory, in plain), runs the same checks, and writes ONLY ciphertext, to
+  its exclusive dot-prefixed `.tmp` name, renamed to `<id>.mcv`. The orphan sweep knows `<id>.mcv` and `<id>.mcv.part`.
+- **Wait, not fail.** `vault_locked` raised by a transfer step (the lock arrived between the tick's check and the step)
+  rolls the step back, leaves the transfer's state exactly as it was, stops the tick's row loop (every row needs the same
+  key) and logs one line per lock period. `vault_corrupt` is an error of that transfer only and does not stop the others.
+- **Fail closed for content too.** Plain content next to an enabled vault, a tampered `.mcv`, or one moved to another
+  attachment raises `vault_corrupt`.
+- **Residual, stated.** The idempotency `canonical_hash` of a create request is a SHA-256 over the file hash, comment,
+  source name and routing fields; it is a one-way value, not a name, but a guessable name and comment could be confirmed
+  against it by someone with the disk. Not changed here.
+- **Still plain until 4c:** the content route (preview, download) does not decrypt yet, Save to Files still moves a plain
+  file, and delete and cleanup of `.mcv` files are 4c. The experimental flag stays until 4c.
+
 ## Notes for later PRs (from the owner's PR 1 review)
 
 - **PR 2 (done here):** unlock is serialized with MCAttach work and refused with a clear message when free memory is

@@ -2311,6 +2311,7 @@ class AttachmentsService:
 
     def _vault_env(self):
         from meshsrv.attachments.vault import migration
+        from meshsrv.attachments.vault.errors import VaultError
         return migration.Env(
             paths=self._workspace_manager.paths(self._principal.principal_id),
             data_dir=self._workspace_manager.data_dir,
@@ -2321,12 +2322,17 @@ class AttachmentsService:
 
     def _command_vault_enable(self, command: Command) -> CommandOutcome:
         from meshsrv.attachments.vault import kdf, migration
+        from meshsrv.attachments.vault.errors import VaultError
         vault = getattr(self, "_vault", None)
         if vault is None:
             return CommandOutcome.failed("vault_not_available")
         secret = vault.take_handoff(str(command.payload.get("handoff") or ""))
         if secret is None:
             return CommandOutcome.failed("vault_handoff_expired")
+        try:
+            vault.check_migration_memory("enable")
+        except VaultError:
+            return CommandOutcome.failed("insufficient_memory")          # nothing was touched
         try:
             params = kdf.calibrate(ceiling_bytes=vault._calibration_ceiling())
             result = migration.enable(self._vault_env(), secret, params=params, make_backup_copy=bool(command.payload.get("backup", True)))
@@ -2343,10 +2349,15 @@ class AttachmentsService:
 
     def _command_vault_disable(self, command: Command) -> CommandOutcome:
         from meshsrv.attachments.vault import migration
+        from meshsrv.attachments.vault.errors import VaultError
         vault = getattr(self, "_vault", None)
         key = vault.storage_key() if vault is not None else None
         if key is None:
             return CommandOutcome.failed("vault_locked")
+        try:
+            vault.check_migration_memory("disable")
+        except VaultError:
+            return CommandOutcome.failed("insufficient_memory")
         try:
             summary = migration.disable(self._vault_env(), key, make_backup_copy=bool(command.payload.get("backup", True)))
         except migration.MigrationError as error:
@@ -2361,10 +2372,15 @@ class AttachmentsService:
     def _command_vault_resume(self, command: Command) -> CommandOutcome:
         """Finish an interrupted enable or disable (the user unlocked with the passphrase first)."""
         from meshsrv.attachments.vault import migration
+        from meshsrv.attachments.vault.errors import VaultError
         vault = getattr(self, "_vault", None)
         key = vault.storage_key() if vault is not None else None
         if key is None:
             return CommandOutcome.failed("vault_locked")
+        try:
+            vault.check_migration_memory()
+        except VaultError:
+            return CommandOutcome.failed("insufficient_memory")
         journal = migration.read_journal(self._vault_env())
         try:
             if journal and journal.get("op") == "disable":

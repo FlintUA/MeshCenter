@@ -32,6 +32,9 @@ HEADER_FILE = "vault.json"
 MIGRATION_FILE = "vault-migration.json"
 HEADER_BACKUP_FILE = "vault.json.bak"
 RAM_MARGIN_BYTES = 16 * 1024 * 1024
+# What a migration needs ON TOP of the running process (measured: a Zero 2 W peaked at 74 MiB total, of which about 40 MiB
+# was the service itself): chunk buffers, the in-memory verify, SQLite page cache and VACUUM. Enable adds the KDF memory.
+MIGRATION_WORKING_BYTES = 16 * 1024 * 1024
 LOCK_WAIT_SECONDS = 5.0
 
 STATE_DISABLED, STATE_LOCKED, STATE_UNLOCKED, STATE_MIGRATING = "disabled", "locked", "unlocked", "migrating"
@@ -206,6 +209,36 @@ class VaultRuntime:
                                % (needed // (1024 * 1024), available // (1024 * 1024)))
             error.needed_bytes, error.available_bytes = needed, available
             self._log("WARNING", "MCAttach vault unlock refused",
+                      "Not enough free memory (%d MiB needed, %d MiB free)" % (needed // (1024 * 1024), available // (1024 * 1024)))
+            raise error
+
+    def migration_memory_needed(self, op: str) -> int:
+        """Bytes of free memory required before an enable ("enable") or a disable ("disable") may start. An enable derives
+        a key (at least the 32 MiB floor; the calibration ceiling is a quarter of what is free, so this is never more than
+        the floor on a small node); a disable derives nothing."""
+        needed = MIGRATION_WORKING_BYTES + RAM_MARGIN_BYTES
+        if op == "enable":
+            needed += kdf.MIN_MEMLIMIT
+        return needed
+
+    def _journal_op(self) -> str:
+        try:
+            import json
+            return str(json.loads((self._dir / MIGRATION_FILE).read_text(encoding="utf-8")).get("op") or "enable")
+        except (OSError, ValueError):
+            return "enable"
+
+    def check_migration_memory(self, op: Optional[str] = None) -> None:
+        """Refuse BEFORE anything is touched (HTTP 503 insufficient_memory), never fail in the middle of a migration.
+        `op` None means a resume: the interrupted job's own kind, read from the journal."""
+        op = op or self._journal_op()
+        needed = self.migration_memory_needed(op)
+        available = self._free_ram()
+        if available is not None and available < needed:
+            error = VaultError("insufficient_memory", "Not enough free memory for this now (%d MiB needed, %d MiB free)."
+                               % (needed // (1024 * 1024), available // (1024 * 1024)))
+            error.needed_bytes, error.available_bytes = needed, available
+            self._log("WARNING", "MCAttach vault %s refused" % op,
                       "Not enough free memory (%d MiB needed, %d MiB free)" % (needed // (1024 * 1024), available // (1024 * 1024)))
             raise error
 

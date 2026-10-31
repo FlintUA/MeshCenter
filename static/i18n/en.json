@@ -282,7 +282,7 @@
       "vault_locked": "MCAttach is locked. Unlock it first.",
       "unlock_failed": "The passphrase or recovery key is not correct",
       "unlock_rate_limited": "Too many attempts. Wait a moment and try again",
-      "insufficient_memory": "Not enough free memory to unlock now. Try again when the node is less busy",
+      "insufficient_memory": "Not enough free memory for this right now. Try again when the node is less busy",
       "vault_not_enabled": "The vault is not enabled",
       "vault_busy": "MCAttach is busy. Try again in a moment",
       "passphrase_required": "Enter the passphrase or the recovery key",

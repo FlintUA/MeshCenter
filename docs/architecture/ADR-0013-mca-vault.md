@@ -340,3 +340,5 @@ System, strength hint, disabled Roll back button, the "gallery not covered" note
 None. The three questions of the first draft were answered by the owner on 2026-10-31 (minimum passphrase 12 with a
 strength hint; delays 1 s, 2 s, 4 s, then 60 s after 5 failures, no permanent lockout; no `vault.json.bak` after an
 unlock) and are recorded in decisions 7 to 9.
+
+- **Memory pre-check for enable, disable and resume (PR 3 review).** Before anything starts, the API and then the worker check MemAvailable against an estimate: 16 MiB working buffers + 16 MiB margin, plus the 32 MiB KDF floor for an enable (64 MiB / 32 MiB). Below it: HTTP 503 `insufficient_memory`, nothing queued, no backup started, no passphrase left waiting. A migration is never started on a node that could run out of memory in the middle of it.

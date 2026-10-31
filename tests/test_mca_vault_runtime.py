@@ -311,3 +311,40 @@ def test_note_dropped_logs_one_line_with_the_count_and_no_content(made):
     rt.note_dropped(7)
     assert logs.lines == [("WARNING", "MCAttach locked: messages dropped",
                            "7 incoming control message(s) were dropped because the queue of messages waiting for the unlock is full")]
+
+
+# ---- the migration memory pre-check (enable needs the KDF memory too, a disable does not) -------------------------------
+
+def test_migration_memory_needed_counts_the_kdf_only_for_an_enable(made):
+    _created, path = made
+    rt = make_runtime(path)
+    mib = 1024 * 1024
+    assert rt.migration_memory_needed("enable") == 64 * mib and rt.migration_memory_needed("disable") == 32 * mib
+
+
+def test_check_migration_memory_refuses_below_the_estimate_and_logs_without_secrets(made):
+    _created, path = made
+    logs = Logs()
+    free = {"bytes": 63 * 1024 * 1024}
+    rt = make_runtime(path, log=logs, free_ram=lambda: free["bytes"])
+    with pytest.raises(VaultError) as info:
+        rt.check_migration_memory("enable")
+    assert info.value.code == "insufficient_memory" and "64 MiB needed" in info.value.message and "63 MiB free" in info.value.message
+    rt.check_migration_memory("disable")                              # 32 MiB is enough for a disable
+    free["bytes"] = 64 * 1024 * 1024
+    rt.check_migration_memory("enable")                               # exactly enough
+    assert len(logs.lines) == 1 and PASS not in logs.text() and logs.lines[0][1] == "MCAttach vault enable refused"
+
+
+def test_check_migration_memory_without_a_reading_does_not_refuse(made):
+    _created, path = made
+    make_runtime(path, free_ram=lambda: None).check_migration_memory("enable")
+
+
+def test_a_resume_is_checked_for_the_kind_of_the_interrupted_job(tmp_path):
+    rt = make_runtime(tmp_path, free_ram=lambda: 40 * 1024 * 1024)
+    (tmp_path / "vault-migration.json").write_text('{"op": "disable"}')
+    rt.check_migration_memory()                                       # a disable needs 32 MiB: allowed
+    (tmp_path / "vault-migration.json").write_text('{"op": "enable"}')
+    with pytest.raises(VaultError):
+        rt.check_migration_memory()                                   # an enable needs 64 MiB

@@ -282,7 +282,7 @@
       "vault_locked": "MCAttach ist gesperrt. Entsperre es zuerst.",
       "unlock_failed": "Die Passphrase oder der Wiederherstellungsschlüssel ist nicht korrekt",
       "unlock_rate_limited": "Zu viele Versuche. Warte einen Moment und versuche es erneut",
-      "insufficient_memory": "Nicht genug freier Speicher zum Entsperren. Versuche es erneut, wenn der Knoten weniger ausgelastet ist",
+      "insufficient_memory": "Gerade nicht genug freier Speicher dafür. Versuche es erneut, wenn der Knoten weniger ausgelastet ist",
       "vault_not_enabled": "Der Tresor ist nicht aktiviert",
       "vault_busy": "MCAttach ist beschäftigt. Versuche es gleich noch einmal",
       "passphrase_required": "Gib die Passphrase oder den Wiederherstellungsschlüssel ein",

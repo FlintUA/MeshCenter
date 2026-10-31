@@ -385,3 +385,20 @@ def update_service_vault_enabled(data_dir):
         return update_service.vault_enabled()
     finally:
         update_service.configure_vault_dir("")
+
+
+def test_the_worker_refuses_a_migration_for_memory_before_touching_anything(tmp_path, monkeypatch):
+    monkeypatch.setenv("MESHCENTER_MCA_VAULT_EXPERIMENTAL", "1")
+    try:
+        state, paths = plain_state(tmp_path, "lowmem")
+        state.vault._free_ram = lambda: 30 * 1024 * 1024
+        before = sorted(p.name for p in paths.files.iterdir())
+        state.vault.put_handoff("tokm", passphrase.normalize(PASS))
+        result = run_command(state, "vault_enable", {"handoff": "tokm", "backup": True})
+        assert result.status == "failed" and result.error_code == "insufficient_memory"
+        assert state.vault.state() == "disabled" and sorted(p.name for p in paths.files.iterdir()) == before
+        assert not list(Path(state.workspace_manager.data_dir).glob("mca-vault-backup-*")), "no backup was started either"
+        assert not (Path(paths.root) / "vault-migration.json").exists() and not (Path(paths.root) / "vault.json").exists()
+        assert state.vault.take_handoff("tokm") is None, "the secret was consumed, not left waiting"
+    finally:
+        mca_runtime.reset_state_for_tests()

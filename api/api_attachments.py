@@ -753,6 +753,10 @@ def register_attachments_routes(app, handle_errors):
             body = {"ok": False, "error_code": "passphrase_too_weak", "error": "passphrase_too_weak", "level": assessment["level"]}
             return jsonify(body), 400
         make_backup_copy = data.get("backup", True) is not False
+        try:
+            vault.check_migration_memory("enable")
+        except VaultError as error:
+            return _vault_error(error)
         token = uuid.uuid4().hex
 
         def check(facade):
@@ -780,6 +784,10 @@ def register_attachments_routes(app, handle_errors):
             return _vault_error(VaultError("vault_locked"))
         if not _vault_acknowledged(data):
             return _json_error("acknowledgement_required", "Acknowledge the notice first"), 400
+        try:
+            vault.check_migration_memory("disable")
+        except VaultError as error:
+            return _vault_error(error)
         return _vault_job_response("vault_disable", {"backup": not (isinstance(data, dict) and data.get("backup") is False)})
 
     @app.route("/api/mca/vault/resume", methods=["POST"])
@@ -792,6 +800,10 @@ def register_attachments_routes(app, handle_errors):
             return _json_error("nothing_to_resume", "No interrupted vault job"), 409
         if vault.storage_key() is None:
             return _vault_error(VaultError("vault_locked"))
+        try:
+            vault.check_migration_memory()
+        except VaultError as error:
+            return _vault_error(error)
         return _vault_job_response("vault_resume", {})
 
     def _header_op(action):

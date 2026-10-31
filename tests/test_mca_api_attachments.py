@@ -3870,3 +3870,29 @@ def test_the_recovery_key_of_an_enable_can_be_read_exactly_once(monkeypatch, tmp
     first = c.get("/api/mca/vault/recovery-key")
     assert first.status_code == 200 and first.get_json()["recovery_key"] == "ABCD-EFGH" and first.headers["Cache-Control"] == "no-store"
     assert c.get("/api/mca/vault/recovery-key").status_code == 410, "forgotten after the first read"
+
+
+def test_enable_and_disable_are_refused_with_503_before_anything_starts_when_memory_is_low(monkeypatch, vault_dir, allowed):
+    workspace, _ = vault_dir
+    low = {"bytes": 40 * 1024 * 1024}
+    rt, _clock = _with_vault(monkeypatch, workspace, free_ram=lambda: low["bytes"])
+    facade = _FakeFacade()
+    c = _client(monkeypatch, facade)
+
+    low["bytes"] = 4 * 1024 ** 3
+    rt.unlock(passphrase=_VAULT_PASS)
+    low["bytes"] = 20 * 1024 * 1024                                   # 20 MiB free: a disable needs 32
+    resp = c.post("/api/mca/vault/disable", json={"acknowledge_flash": True})
+    assert resp.status_code == 503 and resp.get_json()["error_code"] == "insufficient_memory"
+    assert "32 MiB needed" in resp.get_json()["error"] and "20 MiB free" in resp.get_json()["error"]
+    assert facade.submitted == [], "nothing was queued"
+
+
+def test_a_refused_enable_for_memory_queues_nothing_and_keeps_no_passphrase(monkeypatch, tmp_path, allowed):
+    rt, _ = _with_vault(monkeypatch, tmp_path, free_ram=lambda: 50 * 1024 * 1024)   # an enable needs 64 MiB
+    facade = _FakeFacade()
+    c = _client(monkeypatch, facade)
+    resp = c.post("/api/mca/vault/enable", json=_enable_body())
+    assert resp.status_code == 503 and resp.get_json()["error_code"] == "insufficient_memory"
+    assert "64 MiB needed" in resp.get_json()["error"]
+    assert facade.submitted == [] and rt._handoffs == {}

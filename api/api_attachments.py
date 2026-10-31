@@ -66,6 +66,7 @@ legacy wrapper never sees an exception, so it cannot re-wrap or leak one.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import logging
 import os
@@ -516,6 +517,39 @@ def _stage_spool_file(file_storage, spool_dir, attachment_id):
         _discard_spool(Path(temp_path))
         raise
     return Path(temp_path), hasher.hexdigest(), bytes(head), size, text_validator.finish()
+
+
+def _stage_spool_encrypted(file_storage, spool_dir, attachment_id, content_codec):
+    """The vault variant of `_stage_spool_file`: same checks (size cap, SHA-256, sniff head, whole-stream text validity), but
+    the upload is held in memory (at most the 5 MiB cap, the request's stream is a `BytesIO`, see the create route) and
+    written ONLY encrypted, to the same kind of exclusive dot-prefixed `.tmp` name, so no plaintext byte reaches the disk at
+    any point. Returns the 5-tuple of `_stage_spool_file` plus the plaintext bytes (for the JSON check); the caller renames
+    the temp file to `<attachment_id>.mcv`."""
+    spool_dir.mkdir(parents=True, exist_ok=True)
+    hasher = hashlib.sha256()
+    data = bytearray()
+    head = bytearray()
+    text_validator = mime_allowlist.TextStreamValidator()
+    stream = file_storage.stream
+    while True:
+        chunk = stream.read(_STAGING_CHUNK_BYTES)
+        if not chunk:
+            break
+        if len(data) + len(chunk) > _MAX_FILE_BYTES:
+            raise _FileTooLarge()
+        hasher.update(chunk)
+        data.extend(chunk)
+        text_validator.feed(chunk)
+        if len(head) < _SNIFF_HEAD_BYTES:
+            head.extend(chunk[:_SNIFF_HEAD_BYTES - len(head)])
+    fd, temp_path = tempfile.mkstemp(dir=spool_dir, prefix=f".{attachment_id}.", suffix=_TEMP_SUFFIX)
+    os.close(fd)                                     # an empty, exclusive, 0600 file; only ciphertext is ever written to it
+    try:
+        content_codec.write_encrypted_file(Path(temp_path), bytes(data), attachment_id)
+    except BaseException:
+        _discard_spool(Path(temp_path))
+        raise
+    return Path(temp_path), hasher.hexdigest(), bytes(head), len(data), text_validator.finish(), bytes(data)
 
 
 def _resolve_create_provider(profiles, provider_id_arg):
@@ -1714,6 +1748,15 @@ def register_attachments_routes(app, handle_errors):
         # only caught by this route's own file-size check.
         request.max_content_length = _MAX_REQUEST_BYTES
 
+        # MCA-VAULT: with the vault on, no upload byte may reach the disk in plain, including Werkzeug's own temp file
+        # (a file part over 500 KB is otherwise spooled to the system temp directory). The request's file parts are kept in
+        # memory instead; the whole body is already bounded just above (5 MiB + metadata + overhead). Must happen before
+        # the first access to `request.form` / `request.files`, which is what parses the body.
+        content_codec = getattr(facade, "content_codec", lambda: None)()
+        vault_on = content_codec is not None and content_codec.active
+        if vault_on:
+            request._get_current_object()._get_file_stream = lambda *args, **kwargs: io.BytesIO()
+
         # --- metadata (JSON string part): pure validation only --------------
         metadata_raw = request.form.get("metadata")
         if metadata_raw is None:
@@ -1825,10 +1868,19 @@ def register_attachments_routes(app, handle_errors):
         spool_dir = facade.spool_outgoing_dir()
         spool_path = spool_dir / attachment_id
 
+        staged_plain = None
         try:
-            temp_path, file_sha256, head, size, text_clean = _stage_spool_file(
-                file_storage, spool_dir, attachment_id
-            )
+            if vault_on:
+                spool_path = content_codec.content_path(spool_path)
+                temp_path, file_sha256, head, size, text_clean, staged_plain = _stage_spool_encrypted(
+                    file_storage, spool_dir, attachment_id, content_codec
+                )
+            else:
+                temp_path, file_sha256, head, size, text_clean = _stage_spool_file(
+                    file_storage, spool_dir, attachment_id
+                )
+        except VaultError:
+            return _json_error("vault_locked", "MCAttach is locked. Unlock it first."), 423
         except _FileTooLarge:
             return _json_error("file_too_large", "file exceeds the 5 MiB cap"), 400
         except OSError as exc:
@@ -1865,7 +1917,10 @@ def register_attachments_routes(app, handle_errors):
         # document must parse (bounded by the 5 MiB cap, only for JSON).
         if mime_type == "application/json":
             try:
-                mime_allowlist.validate_json_document(temp_path)
+                if staged_plain is not None:
+                    json.loads(staged_plain.decode("utf-8"))      # the same check, from memory: the file on disk is encrypted
+                else:
+                    mime_allowlist.validate_json_document(temp_path)
             except ValueError:
                 _discard_spool(temp_path)
                 return _json_error("mime_not_allowed", "file content is not valid JSON"), 400

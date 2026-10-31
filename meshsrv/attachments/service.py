@@ -100,6 +100,7 @@ from meshsrv.attachments.snapshots import (
     resolve_locator,
 )
 from meshsrv.attachments.vault.codec import codec_of
+from meshsrv.attachments.vault.errors import VaultError
 from meshsrv.attachments.workspace import MCAWorkspaceManager
 from meshsrv.connectivity_monitor import ConnectivityMonitor
 
@@ -305,8 +306,12 @@ def _classify_spool_name(name: str) -> Optional[str]:
     is left untouched rather than guessed at."""
     if _HEX32_RE.match(name):
         return "committed"
+    if name.endswith(".mcv") and _HEX32_RE.match(name[:-4]):
+        return "committed"                # MCA-VAULT: the encrypted spool file of that attachment
     if name.startswith(".") and name.endswith(_TEMP_SPOOL_SUFFIX):
         return "temp"
+    if name.endswith(".mcv.part") and _HEX32_RE.match(name[:-9]):
+        return "temp"                     # an encrypted write that was interrupted before its rename
     return None
 
 
@@ -709,6 +714,19 @@ class AttachmentsService:
                     self._step_sent(row)
                 else:
                     self._step_received(row)
+            except VaultError as error:
+                if error.code != "vault_locked":
+                    self._rollback_silently()
+                    logger.exception(
+                        "AttachmentsService: run_step failed for attachment %s (direction=%s)", row["id"], row["direction"])
+                    processed += 1
+                    continue
+                # The vault was locked between the tick's check and this step (Lock now, or a lock during the step): not a
+                # failure of the transfer. Roll back, leave its state exactly as it was, say so once (not per row, not per
+                # tick) and stop advancing rows: every one of them needs the same key. The next unlocked tick resumes.
+                self._rollback_silently()
+                self._vault.note_postponed("Transfers")
+                break
             except Exception:  # noqa: BLE001 - one bad attachment must not stop the whole tick
                 # PR 2.5 correction (transaction hygiene): a `run_step` that
                 # raised after writing to the shared connection leaves that
@@ -1218,8 +1236,8 @@ class AttachmentsService:
         plain_size = None
         if spool_path is not None:
             try:
-                plain_size = spool_path.stat().st_size
-            except OSError:
+                plain_size = self._workspace_manager.codec.content_plain_size(self._spool_content_path(spool_path))
+            except (OSError, VaultError):
                 plain_size = None
         if plain_size is not None and crypto.ciphertext_size(plain_size) > provider.max_ciphertext_bytes:
             self._create_failure_cleanup(command)
@@ -1243,7 +1261,7 @@ class AttachmentsService:
                 self._workspace_manager,
                 self._principal,
                 workspace_id=self._principal.workspace_id,
-                source_path=str(self._spool_path_for(attachment_id)),
+                source_path=str(self._spool_content_path(self._spool_path_for(attachment_id))),
                 file_name=payload["source_name"],
                 mime_type=payload["mime_type"],
                 recipients=[target],
@@ -1437,6 +1455,10 @@ class AttachmentsService:
             return None
         return self._workspace_manager.paths(self._principal.principal_id).spool_outgoing / attachment_id
 
+    def _spool_content_path(self, base: Path) -> Path:
+        """Where the staged content for ``base`` lives: ``base`` itself, or ``base.mcv`` when the vault is on."""
+        return self._workspace_manager.codec.content_path(base)
+
     def _rollback_silently(self) -> None:
         """Roll back the worker's SQLite connection, swallowing any error (the
         connection may already be in an unusable state). Called on every create
@@ -1509,7 +1531,7 @@ class AttachmentsService:
             # No valid path to clean - nothing was staged under a valid id.
             return True
         try:
-            spool_path.unlink(missing_ok=True)
+            self._workspace_manager.codec.unlink_content(spool_path)
             return True
         except OSError:
             logger.warning(
@@ -1546,7 +1568,7 @@ class AttachmentsService:
             if spool_path is None:
                 continue
             try:
-                spool_path.unlink(missing_ok=True)
+                self._workspace_manager.codec.unlink_content(spool_path)
             except OSError:
                 if len(self._spool_cleanup_backlog) < SPOOL_CLEANUP_BACKLOG_MAXSIZE:
                     self._spool_cleanup_backlog.add(attachment_id)
@@ -1701,7 +1723,7 @@ class AttachmentsService:
                         continue
                     if now - mtime < ORPHAN_SPOOL_MIN_AGE_SECONDS:
                         continue  # active request - too fresh to be an orphan
-                    if kind == "committed" and entry.name in referenced:
+                    if kind == "committed" and (entry.name[:-4] if entry.name.endswith(".mcv") else entry.name) in referenced:
                         continue  # referenced by a row/reservation/command
                     try:
                         os.unlink(entry.path)
@@ -2005,7 +2027,7 @@ class AttachmentsService:
         spool_path = self._spool_path_for(attachment_id)
         if spool_path is not None:
             try:
-                spool_path.unlink(missing_ok=True)
+                self._workspace_manager.codec.unlink_content(spool_path)
             except OSError:
                 return CommandOutcome.failed("spool_cleanup_failed")
         self._conn.execute("UPDATE attachments SET saved_path = NULL WHERE id = ?", (attachment_id,))

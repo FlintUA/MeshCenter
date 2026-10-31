@@ -464,7 +464,7 @@ def _step_validating(conn: sqlite3.Connection, workspace_manager: MCAWorkspaceMa
     if not recipients:
         _set_state(conn, attachment_id, FAILED_VALIDATION, now, error_code="no_recipients")
         return FAILED_VALIDATION
-    if not source_path or not os.path.isfile(source_path):
+    if not source_path or not _codec(conn).content_exists(source_path):
         _set_state(conn, attachment_id, FAILED_VALIDATION, now, error_code="source_file_missing")
         return FAILED_VALIDATION
     if not mime_allowlist.is_allowed_mime_type(row["mime_type"] or ""):
@@ -477,8 +477,10 @@ def _step_validating(conn: sqlite3.Connection, workspace_manager: MCAWorkspaceMa
         _set_state(conn, attachment_id, FAILED_VALIDATION, now, error_code="disk_low_block")
         return FAILED_VALIDATION
 
-    plain_size = os.path.getsize(source_path)
-    plain_sha256 = _sha256_file(source_path)
+    # MCA-VAULT: the source is `spool/outgoing/<id>.mcv` when the vault is on; size and digest are those of the plaintext,
+    # computed by decrypting in memory (no plain file is ever written).
+    plain_size, plain_sha256_hex = _codec(conn).content_size_and_sha256(source_path, attachment_id)
+    plain_sha256 = bytes.fromhex(plain_sha256_hex)
 
     _set_state(
         conn,
@@ -579,7 +581,7 @@ def _step_encrypting(
 
     chunk_declarations: List[ChunkDeclaration] = []
     ciphertext_sha256 = hashlib.sha256()
-    with open(source_path, "rb") as fh:
+    with _codec(conn).open_content(source_path, attachment_id) as fh:
         for index in range(plan.chunk_count):
             start, end = plan.bounds(index)
             fh.seek(start)
@@ -725,7 +727,7 @@ def _step_uploading(
         recipients = _recipients_for(conn, attachment_id)
         receipt_hashes = [bytes.fromhex(r["receipt_secret_hash"]) for r in recipients]
         chunk_declarations, ciphertext_sha256 = _recompute_chunk_declarations(
-            row["saved_path"], data_key, nonce_prefix, transfer_id, plan
+            row["saved_path"], data_key, nonce_prefix, transfer_id, plan, _codec(conn), attachment_id
         )
         ciphertext_total = sum(c.size for c in chunk_declarations)
         try:
@@ -770,18 +772,19 @@ def _step_uploading(
     try:
         status = relay_client.get_upload_status(upload_id, upload_token)
         uploaded_indices = {c.index for c in status.chunks if c.uploaded}
-        for index in range(plan.chunk_count):
-            if index in uploaded_indices:
-                continue
-            start, end = plan.bounds(index)
-            with open(row["saved_path"], "rb") as fh:
-                fh.seek(start)
-                plaintext_chunk = fh.read(end - start)
-            ciphertext = crypto.encrypt_chunk(
-                data_key=data_key, nonce_prefix=nonce_prefix, transfer_id=transfer_id,
-                index=index, chunk_count=plan.chunk_count, plain_size=plain_size, plaintext=plaintext_chunk,
-            )
-            relay_client.upload_chunk(upload_id, upload_token, index, ciphertext)
+        # one open (for an encrypted source, one in-memory decrypt of at most the 5 MiB attachment limit) for all chunks
+        with _codec(conn).open_content(row["saved_path"], attachment_id) as source:
+            for index in range(plan.chunk_count):
+                if index in uploaded_indices:
+                    continue
+                start, end = plan.bounds(index)
+                source.seek(start)
+                plaintext_chunk = source.read(end - start)
+                ciphertext = crypto.encrypt_chunk(
+                    data_key=data_key, nonce_prefix=nonce_prefix, transfer_id=transfer_id,
+                    index=index, chunk_count=plan.chunk_count, plain_size=plain_size, plaintext=plaintext_chunk,
+                )
+                relay_client.upload_chunk(upload_id, upload_token, index, ciphertext)
 
         if not status.manifest_uploaded:
             relay_client.upload_manifest(upload_id, upload_token, manifest_blob)
@@ -830,7 +833,7 @@ def _abandon_transfer_id_and_restart(conn: sqlite3.Connection, row: sqlite3.Row,
     return ENCRYPTING
 
 
-def _recompute_chunk_declarations(source_path, data_key, nonce_prefix, transfer_id, plan):
+def _recompute_chunk_declarations(source_path, data_key, nonce_prefix, transfer_id, plan, content_codec=None, ad_id=None):
     """Recompute every chunk's ciphertext (deterministic - see module
     docstring) in one pass, returning both the per-chunk declarations
     `create_upload` needs and the overall `ciphertext_sha256` it also
@@ -839,7 +842,7 @@ def _recompute_chunk_declarations(source_path, data_key, nonce_prefix, transfer_
     plain_size = plan.plain_size
     declarations: List[ChunkDeclaration] = []
     overall_digest = hashlib.sha256()
-    with open(source_path, "rb") as fh:
+    with (content_codec or codec_of(None)).open_content(source_path, ad_id) as fh:
         for index in range(plan.chunk_count):
             start, end = plan.bounds(index)
             fh.seek(start)

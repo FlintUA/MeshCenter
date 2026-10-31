@@ -334,6 +334,10 @@ class AttachmentsFacade:
 
     # ---- request-thread write: idempotent create (§3.5/§3.6) ---------------
 
+    def content_codec(self):
+        """How content files (the outgoing spool, received copies) are stored: plain, or `.mcv` when the vault is on."""
+        return self._workspace_manager.codec
+
     def spool_outgoing_dir(self) -> Path:
         """The workspace's outgoing spool directory path. This is a pure path
         computation (`workspace_manager.paths()`) - it performs no filesystem

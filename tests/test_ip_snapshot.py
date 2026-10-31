@@ -177,8 +177,28 @@ def test_an_old_picture_is_removed_with_its_metadata_by_the_age_limit(env):
 def test_a_non_ascii_source_name_gives_a_safe_file_name_and_keeps_the_real_name_in_the_metadata(env):
     env["store"].update(env["id"], {"name": "Камера двора"})
     body = _shoot(env).get_json()
-    assert body["display_name"].startswith("MC_camera_") and body["source"] == "Камера двора"
+    assert body["display_name"].startswith("MC_Kamera-dvora_") and body["source"] == "Камера двора"
     assert slug("../../etc/passwd") == "etc-passwd" and slug("") == "camera"
+
+
+def test_cyrillic_names_are_transliterated_for_the_file_name_prefix():
+    assert slug("Гараж") == "Garazh"
+    assert slug("Камера двора") == "Kamera-dvora"
+    assert slug("Щука") == "Shchuka" and slug("ГАРАЖ") == "GARAZH"
+    assert slug("Їжак Єнот Ґанок") == "Yizhak-Ienot-Ganok"            # Ukrainian letters
+    assert slug("Ёлка №2") == "Elka-2" and slug("Гараж 2") == "Garazh-2"
+    assert slug("Подъезд") == "Podezd" and slug("Москва/Север") == "Moskva-Sever"
+    assert len(slug("Очень длинное название камеры на заднем дворе")) <= 24 and not slug("Очень длинное название камеры").endswith("-")
+    assert slug("Camera 1") == "Camera-1", "Latin names are unchanged"
+
+
+def test_a_name_with_nothing_left_falls_back_to_a_short_stable_id_so_prefixes_never_collide():
+    a, b = "ip:" + "ab12cd" + "0" * 26, "ip:" + "ef34ab" + "0" * 26
+    assert slug("🚗", a) == "camera-ab12cd" and slug("🚗", b) == "camera-ef34ab"
+    assert slug("监控", a) != slug("监控", b), "two cameras with unreadable names get different prefixes"
+    assert slug("🚗", a) == slug("🚗", a), "stable for the same source"
+    assert slug("Гараж", a) == "Garazh", "a readable name never needs the id"
+    assert slug("🚗") == "camera" and slug("", None) == "camera"
 
 
 # ---------------------------------------------------------------- limits

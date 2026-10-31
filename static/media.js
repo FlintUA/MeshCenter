@@ -12,6 +12,9 @@ let mediaStorage = {};
 let mediaSelection = new Set();
 let mediaSort = 'date_desc';
 let mediaView = 'large';
+let mediaFilter = '';         // G4: the text in the filter field, remembered per kind of device
+let mediaSearchOpen = false;  // G4: on a phone the filter field is a bar that opens in place of the toolbar
+let mediaFilterSaveTimer = null;
 let mediaLightboxIndex = null;
 let mediaLightboxOpener = null;
 const MEDIA_COMPACT_BELOW_PX = 700;   // a gallery column narrower than this gets the phone toolbar
@@ -39,6 +42,8 @@ function mediaLoadPrefs() {
     const saved = (typeof appSettings !== 'undefined' && appSettings && appSettings.media) || {};
     mediaSort = mediaViews().normalizeSort(saved.sort);
     mediaView = mediaViews().pickView(saved, mediaIsPhone());
+    mediaFilter = mediaViews().pickFilter(saved, mediaIsPhone());
+    mediaSearchOpen = Boolean(mediaFilter);
 }
 
 // the sort is shared by all devices, the view is remembered for a phone and for a desktop separately
@@ -51,7 +56,11 @@ async function mediaSavePrefs() {
         const response = await fetch('/api/settings', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ media: { sort: mediaSort, [mediaViews().viewField(mediaIsPhone())]: mediaView } })
+            body: JSON.stringify({ media: {
+                sort: mediaSort,
+                [mediaViews().viewField(mediaIsPhone())]: mediaView,
+                [mediaViews().filterField(mediaIsPhone())]: mediaViews().normalizeFilter(mediaFilter)
+            } })
         });
         const data = await response.json();
         if (data && data.ok && data.settings && typeof appSettings !== 'undefined') appSettings = data.settings;
@@ -103,6 +112,8 @@ const MEDIA_ICON_PATHS = {
     download: '<path d="M12 4v11"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/>',
     trash: '<path d="M4 7h16"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M6 7l1 13h10l1-13"/><path d="M9 7V4h6v3"/>',
     close: '<path d="M6 6l12 12"/><path d="M18 6L6 18"/>',
+    search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
+    back: '<path d="M15 5l-7 7 7 7"/>',
     send: '<path d="M21 3L10 14"/><path d="M21 3l-7 18-4-8-8-4 19-6z"/>',
 };
 
@@ -113,6 +124,15 @@ function mediaIcon(name) {
 // a toolbar/menu button: icon plus a label that stays for screen readers on a phone (CSS hides it visually there)
 function mediaBtn(cls, attrs, icon, label) {
     return `<button type="button" class="${cls}" ${attrs} aria-label="${mediaEscapeHtml(label)}" title="${mediaEscapeHtml(label)}">${mediaIcon(icon)}<span class="media-btn-label">${mediaEscapeHtml(label)}</span></button>`;
+}
+
+// G4: the filter field (one on the toolbar of a desktop, one in the phone search bar; the two stay in step)
+function mediaFilterField(id) {
+    const label = mediaEscapeHtml(mediaT('media.filter_label'));
+    return `<span class="media-filter-ico" aria-hidden="true">${mediaIcon('search')}</span>`
+        + `<input type="text" id="${id}" class="media-filter-input" value="${mediaEscapeHtml(mediaFilter)}" maxlength="${mediaViews().FILTER_MAX}" `
+        + `placeholder="${mediaEscapeHtml(mediaT('media.filter_placeholder'))}" aria-label="${label}" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search">`
+        + `<button type="button" class="media-filter-clear" data-media-action="filter-clear" aria-label="${mediaEscapeHtml(mediaT('media.filter_clear'))}" title="${mediaEscapeHtml(mediaT('media.filter_clear'))}"${mediaFilter ? '' : ' hidden'}>${mediaIcon('close')}</button>`;
 }
 
 function renderMediaGallery(screenshots, storage) {
@@ -156,6 +176,8 @@ function renderMediaGallery(screenshots, storage) {
                 <label class="media-tb-check" title="${selectAllLabel}"><input type="checkbox" data-media-selectall aria-label="${selectAllLabel}"></label>
                 <span class="media-tb-summary" id="mediaSummary"></span>
                 <span class="media-tb-spacer"></span>
+                <div class="media-filter media-only-desktop">${mediaFilterField('mediaFilterInput')}</div>
+                <button type="button" class="media-tb-btn media-only-phone media-search-btn${mediaFilter ? ' is-active' : ''}" id="mediaSearchBtn" data-media-action="search-open" aria-label="${mediaEscapeHtml(mediaT('media.filter_open'))}" title="${mediaEscapeHtml(mediaT('media.filter_open'))}">${mediaIcon('search')}</button>
                 <label class="media-sort">
                     <span class="media-sort-caption">${mediaEscapeHtml(mediaT('media.sort_label'))}</span>
                     <span class="media-sort-ico">${mediaIcon('sort')}</span>
@@ -175,6 +197,10 @@ function renderMediaGallery(screenshots, storage) {
                         <button type="button" class="media-menu-item media-menu-danger" role="menuitem" data-media-action="delete-all">${mediaIcon('trash')}<span>${mediaEscapeHtml(mediaT('media.delete_all'))}</span></button>
                     </div>
                 </div>
+            </div>
+            <div class="media-tb media-tb-search" id="mediaTbSearch" hidden>
+                <button type="button" class="media-tb-btn" data-media-action="search-close" aria-label="${mediaEscapeHtml(mediaT('media.filter_close'))}" title="${mediaEscapeHtml(mediaT('media.filter_close'))}">${mediaIcon('back')}</button>
+                <div class="media-filter media-filter-wide">${mediaFilterField('mediaFilterInputPhone')}</div>
             </div>
             <div class="media-tb media-tb-selection" id="mediaTbSelection" hidden>
                 <label class="media-tb-check media-only-desktop" title="${selectAllLabel}"><input type="checkbox" data-media-selectall aria-label="${selectAllLabel}"></label>
@@ -201,8 +227,20 @@ function mediaRenderSummary() {
     const count = Number(mediaStorage.images ?? mediaItems.length) || mediaItems.length;
     const used = (Number(mediaStorage.used_mb ?? 0) || 0).toFixed(1);
     const free = (Number(mediaStorage.free_gb ?? 0) || 0).toFixed(1);
+    if (mediaViews().normalizeFilter(mediaFilter)) {
+        // G4: "3 of 12 pictures" while a filter narrows the list
+        const shown = mediaShown.length;
+        const total = mediaItems.length;
+        target.innerHTML = `<span class="media-sum-full">${mediaEscapeHtml(mediaT('media.summary_filtered_full', { pictures: window.I18N.plural('media.filtered_count', total, { shown, total }), used, free }))}</span>`
+            + `<span class="media-sum-short">${mediaEscapeHtml(mediaT('media.summary_filtered_short', { shown, total, used }))}</span>`
+            + `<span class="media-sum-tiny">${mediaEscapeHtml(mediaT('media.summary_filtered_tiny', { shown, total }))}</span>`;
+        const spaceNow = document.getElementById('mediaFreeSpace');
+        if (spaceNow) spaceNow.textContent = mediaT('media.free_space', { free });
+        return;
+    }
     target.innerHTML = `<span class="media-sum-full">${mediaEscapeHtml(mediaT('media.summary_full', { pictures: window.I18N.plural('media.image_count', count, { count }), used, free }))}</span>`
-        + `<span class="media-sum-short">${mediaEscapeHtml(mediaT('media.summary_short', { count, used }))}</span>`;
+        + `<span class="media-sum-short">${mediaEscapeHtml(mediaT('media.summary_short', { count, used }))}</span>`
+        + `<span class="media-sum-tiny">${mediaEscapeHtml(String(count))}</span>`;
     const space = document.getElementById('mediaFreeSpace');
     if (space) space.textContent = mediaT('media.free_space', { free });
 }
@@ -223,12 +261,24 @@ function mediaWireGallery(content) {
             mediaUpdateSelectionUi();
         }
     };
+    content.oninput = (event) => {
+        const target = event.target;
+        if (target.classList && target.classList.contains('media-filter-input')) mediaSetFilter(target.value, target);
+    };
+    content.onkeydown = (event) => {
+        const target = event.target;
+        if (event.key !== 'Escape' || !target.classList || !target.classList.contains('media-filter-input')) return;
+        event.stopPropagation();
+        if (target.value) mediaSetFilter('', target);       // first Esc clears the text, the next one closes the phone bar
+        else if (mediaToolbarIsCompact()) mediaCloseSearch();
+    };
     mediaWireLongPress(content);
     // a light shadow under the toolbar once the pictures have scrolled beneath it
     // the toolbar goes compact (icons, short summary) on a phone and in any narrow column; it re-checks when resized
     const fit = () => {
         const bar = document.getElementById('mediaToolbar');
         if (bar) bar.classList.toggle('is-compact', mediaIsPhone() || content.clientWidth < MEDIA_COMPACT_BELOW_PX);
+        mediaApplyToolbarMode();
     };
     fit();
     if (typeof ResizeObserver === 'function') {
@@ -300,6 +350,9 @@ function mediaHandleClick(event) {
         const what = action.getAttribute('data-media-action');
         if (what === 'refresh') loadMediaGallery(true);
         else if (what === 'delete-all') deleteAllMedia();
+        else if (what === 'search-open') mediaOpenSearch();
+        else if (what === 'search-close') mediaCloseSearch();
+        else if (what === 'filter-clear') mediaSetFilter('', null, true);
         return;
     }
     const bulk = event.target.closest('[data-media-bulk]');
@@ -381,10 +434,77 @@ function mediaItemFacts(item) {
 function mediaRenderPictures() {
     const host = document.getElementById('mediaPictures');
     if (!host) return;
-    mediaShown = mediaViews().sortItems(mediaItems, mediaSort);
+    mediaShown = mediaViews().filterItems(mediaViews().sortItems(mediaItems, mediaSort), mediaFilter);
+    // a picture the filter hides cannot stay selected: bulk actions only ever act on what is shown
+    mediaSelection = mediaViews().prune(mediaSelection, mediaShown);
     host.className = 'media-pictures media-view-' + mediaView;
-    host.innerHTML = mediaShown.map((item, index) => renderMediaItem(item, index)).join('');
+    host.innerHTML = mediaShown.length || !mediaItems.length
+        ? mediaShown.map((item, index) => renderMediaItem(item, index)).join('')
+        : `<div class="media-filter-empty" role="status">
+               <div class="media-empty-title">${mediaEscapeHtml(mediaT('media.filter_empty_title'))}</div>
+               <div class="media-empty-text">${mediaEscapeHtml(mediaT('media.filter_empty_text'))}</div>
+               <button type="button" class="media-primary-btn" data-media-action="filter-clear">${mediaEscapeHtml(mediaT('media.filter_empty_clear'))}</button>
+           </div>`;
     mediaUpdateSelectionUi();
+}
+
+// ---- filter (G4) ---------------------------------------------------------------------------------------------------
+
+function mediaToolbarIsCompact() {
+    const bar = document.getElementById('mediaToolbar');
+    return Boolean(bar && bar.classList.contains('is-compact'));
+}
+
+// Which of the three bars shows: selecting wins; on a phone or narrow column the opened search bar replaces the normal
+// bar (same height, nothing below moves); a wide toolbar has the field inline and never shows the search bar.
+function mediaApplyToolbarMode() {
+    const toolbar = document.getElementById('mediaToolbar');
+    if (!toolbar) return;
+    const selecting = mediaViews().selectionMode(mediaSelection);
+    const searching = !selecting && mediaSearchOpen && mediaToolbarIsCompact();
+    toolbar.setAttribute('data-mode', selecting ? 'selection' : searching ? 'search' : 'normal');
+    const normal = document.getElementById('mediaTbNormal');
+    const search = document.getElementById('mediaTbSearch');
+    const selection = document.getElementById('mediaTbSelection');
+    if (normal) normal.hidden = selecting || searching;
+    if (search) search.hidden = !searching;
+    if (selection) selection.hidden = !selecting;
+}
+
+function mediaSyncFilterFields(except) {
+    document.querySelectorAll('.media-filter-input').forEach((input) => {
+        if (input !== except && input.value !== mediaFilter) input.value = mediaFilter;
+    });
+    document.querySelectorAll('.media-filter-clear').forEach((button) => { button.hidden = !mediaFilter; });
+    const searchBtn = document.getElementById('mediaSearchBtn');
+    if (searchBtn) searchBtn.classList.toggle('is-active', Boolean(mediaViews().normalizeFilter(mediaFilter)));
+}
+
+// Live narrowing as you type. The field keeps the text exactly as typed; matching and saving use the normalized form.
+function mediaSetFilter(value, source, focusAfter) {
+    mediaFilter = String(value || '').slice(0, mediaViews().FILTER_MAX);
+    mediaSyncFilterFields(source);
+    mediaRenderPictures();
+    if (mediaFilterSaveTimer) clearTimeout(mediaFilterSaveTimer);
+    mediaFilterSaveTimer = setTimeout(() => { mediaFilterSaveTimer = null; mediaSavePrefs(); }, 600);
+    if (focusAfter) {
+        const input = document.querySelector(mediaToolbarIsCompact() && mediaSearchOpen ? '#mediaFilterInputPhone' : '#mediaFilterInput');
+        if (input) input.focus();
+    }
+}
+
+function mediaOpenSearch() {
+    mediaSearchOpen = true;
+    mediaApplyToolbarMode();
+    const input = document.getElementById('mediaFilterInputPhone');
+    if (input) input.focus();
+}
+
+function mediaCloseSearch() {
+    mediaSearchOpen = false;
+    mediaApplyToolbarMode();
+    const button = document.getElementById('mediaSearchBtn');
+    if (button) button.focus();
 }
 
 function renderMediaItem(item, index) {
@@ -450,12 +570,7 @@ function mediaUpdateSelectionUi() {
         all.checked = mediaViews().allSelected(mediaSelection, mediaShown);
         all.indeterminate = state.any && !all.checked;
     });
-    const toolbar = document.getElementById('mediaToolbar');
-    if (toolbar) toolbar.setAttribute('data-mode', selecting ? 'selection' : 'normal');
-    const normal = document.getElementById('mediaTbNormal');
-    const selection = document.getElementById('mediaTbSelection');
-    if (normal) normal.hidden = selecting;
-    if (selection) selection.hidden = !selecting;
+    mediaApplyToolbarMode();
     if (selecting) mediaCloseMenus();
     mediaRenderSummary();
     const summary = document.getElementById('mediaBulkSummary');

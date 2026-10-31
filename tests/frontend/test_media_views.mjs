@@ -126,7 +126,8 @@ assert.equal(V.indexAfterDelete(0, 1), null, 'nothing left');
 // ---------------------------------------------------------------- the real files: wiring that must not drift
 const media = read('media.js');
 assert.ok(media.includes("fetch('/api/camera/screenshots/zip'") && media.includes("fetch('/api/camera/screenshots/delete'"), 'bulk calls');
-assert.ok(media.includes('media: { sort: mediaSort, [mediaViews().viewField(mediaIsPhone())]: mediaView }'), 'sort and the per-device view are remembered through the settings');
+assert.ok(media.includes('sort: mediaSort,') && media.includes('[mediaViews().viewField(mediaIsPhone())]: mediaView')
+    && media.includes('[mediaViews().filterField(mediaIsPhone())]: mediaViews().normalizeFilter(mediaFilter)'), 'sort, the per-device view and the per-device filter are remembered through the settings');
 assert.ok(media.includes('loading="lazy"') && media.includes('thumb_url'), 'thumbnails load lazily');
 assert.ok(!/(^|[^A-Za-z])(confirm|alert|prompt)\(/.test(media), 'no native dialogs');
 assert.ok(template.indexOf('media-views.js') < template.indexOf('/static/media.js'), 'media-views.js loads first');
@@ -254,6 +255,89 @@ assert.ok(html.indexOf('id="cameraFullscreenBtn"') > html.indexOf('class="video-
     const chosen = V.sendItems(new Set(['d/3.jpg', 'd/1.jpg']), items);
     assert.deepEqual(chosen.map((c) => c.filename), ['d/1.jpg', 'd/3.jpg'], 'in the order shown');
     assert.deepEqual(Object.keys(chosen[0]).sort(), ['display_name', 'filename', 'size']);
+}
+
+
+// ---------------------------------------------------------------- G4: the filter (file name or camera name)
+{
+    const pictures = [
+        item('MC_Garazh_20261030_101500.jpg', { camera: 'Гараж', modified_ts: 5 }),
+        item('MC_Kamera-dvora_20261030_101600.jpg', { camera: 'Камера двора', modified_ts: 4 }),
+        item('MC_Front-Door_20261030_101700.jpg', { camera: 'Front Door', modified_ts: 3 }),
+        item('MC_20261030_101800.jpg', { camera: '', modified_ts: 2 }),
+        item('IMG_0001.JPG', { camera: '', modified_ts: 1 }),
+    ];
+    const shown = (query) => names(V.filterItems(pictures, query));
+
+    assert.equal(shown('').length, 5, 'empty filter: everything');
+    assert.equal(shown('   ').length, 5, 'only spaces: everything');
+    assert.deepEqual(shown('front'), ['MC_Front-Door_20261030_101700.jpg'], 'case-insensitive, camera name and file name both');
+    assert.deepEqual(shown('FRONT DOOR'), ['MC_Front-Door_20261030_101700.jpg'], 'the camera name with its space');
+    assert.deepEqual(shown('img_00'), ['IMG_0001.JPG'], 'file name substring, any case');
+    assert.deepEqual(shown('20261030_1017'), ['MC_Front-Door_20261030_101700.jpg'], 'a timestamp piece of the file name');
+    assert.equal(shown('20261030').length, 4);
+
+    // Cyrillic: the camera is found by its real name (the file name only has the transliteration)
+    assert.deepEqual(shown('гараж'), ['MC_Garazh_20261030_101500.jpg'], 'lower case finds Гараж');
+    assert.deepEqual(shown('ГАР'), ['MC_Garazh_20261030_101500.jpg'], 'upper case finds Гараж');
+    assert.deepEqual(shown('раж'), ['MC_Garazh_20261030_101500.jpg'], 'a piece from the middle');
+    assert.deepEqual(shown('двора'), ['MC_Kamera-dvora_20261030_101600.jpg']);
+    assert.deepEqual(shown('garazh'), ['MC_Garazh_20261030_101500.jpg'], 'the transliterated file name is found too');
+
+    // nothing matches
+    assert.equal(shown('no such picture').length, 0);
+    assert.equal(V.filterItems([], 'x').length, 0);
+    assert.equal(V.filterItems(null, 'x').length, 0);
+
+    // the caller's order is kept and the input is never changed
+    const before = pictures.map((p) => p.filename).join('|');
+    assert.deepEqual(shown('20261030').map((n) => n.slice(0, 8)), ['MC_Garaz', 'MC_Kamer', 'MC_Front', 'MC_20261']);
+    assert.notEqual(V.filterItems(pictures, ''), pictures, 'a new array even for an empty filter');
+    assert.equal(pictures.map((p) => p.filename).join('|'), before);
+
+    // a picture without a camera name or a display name does not break the matcher
+    assert.equal(V.matchesFilter({ filename: 'd/x.jpg' }, 'x.jpg'), true);
+    assert.equal(V.matchesFilter({}, 'x'), false);
+    assert.equal(V.matchesFilter(null, ''), true);
+
+    // normalizing, remembering per device
+    assert.equal(V.normalizeFilter('  a   b ' + String.fromCharCode(10) + ' c '), 'a b c');
+    assert.equal(V.normalizeFilter(undefined), '');
+    assert.equal(V.normalizeFilter(null), '');
+    assert.equal(V.normalizeFilter('x'.repeat(200)).length, V.FILTER_MAX);
+    assert.equal(V.FILTER_MAX, 80);
+    assert.equal(V.filterField(true), 'filter_mobile');
+    assert.equal(V.filterField(false), 'filter_desktop');
+    assert.equal(V.pickFilter({ filter_mobile: ' yard ', filter_desktop: 'door' }, true), 'yard');
+    assert.equal(V.pickFilter({ filter_mobile: ' yard ', filter_desktop: 'door' }, false), 'door');
+    assert.equal(V.pickFilter(undefined, true), '');
+    assert.equal(V.pickFilter({ filter_mobile: 7 }, true), '7', 'a non-text value is read as text, never throws');
+}
+
+// ---------------------------------------------------------------- G4: selection follows what is visible
+{
+    const pictures = [item('a1.jpg', { size: 100 }), item('a2.jpg', { size: 200 }), item('b1.jpg', { size: 400 }), item('b2.jpg', { size: 800 })];
+    const visible = V.filterItems(pictures, 'a');
+    assert.deepEqual(names(visible), ['a1.jpg', 'a2.jpg']);
+
+    // select all selects only the visible (filtered) pictures
+    let selection = V.toggleAll(new Set(), visible);
+    assert.deepEqual(Array.from(selection).sort(), visible.map((p) => p.filename).sort());
+    assert.equal(V.allSelected(selection, visible), true);
+    assert.equal(V.allSelected(selection, pictures), false, 'against the whole list it is not "all"');
+    assert.equal(V.bulkState(selection, visible).count, 2);
+    assert.equal(V.bulkState(selection, visible).bytes, 300);
+    assert.equal(V.toggleAll(selection, visible).size, 0, 'again: nothing');
+
+    // some hidden pictures were selected before the filter: select all drops them, and so does a filter change
+    const mixed = new Set([pictures[0].filename, pictures[2].filename]);
+    assert.deepEqual(Array.from(V.toggleAll(mixed, visible)).sort(), visible.map((p) => p.filename).sort(), 'only the visible ones');
+    const afterFilter = V.prune(mixed, visible);
+    assert.deepEqual(Array.from(afterFilter), [pictures[0].filename], 'the hidden b1 is dropped when the filter changes');
+    assert.equal(V.bulkState(afterFilter, visible).count, 1);
+    assert.equal(V.prune(mixed, V.filterItems(pictures, '')).size, 2, 'clearing the filter drops nothing');
+    assert.equal(V.prune(mixed, V.filterItems(pictures, 'zzz')).size, 0, 'an empty result drops everything');
+    assert.equal(V.allSelected(new Set(), []), false, 'no visible picture: nothing is "all selected"');
 }
 
 console.log('test_media_views.mjs: ok');

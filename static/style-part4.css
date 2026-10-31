@@ -6206,6 +6206,160 @@ html[data-theme="dark"] .media-zip-note {
     min-height: 44px;
 }
 
+/* ---- gallery filter (G4): a field on a wide toolbar, a search button + in-place bar on a phone ---- */
+.media-filter {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex: 0 1 240px;
+    min-width: 120px;
+    height: 36px;
+    box-sizing: border-box;
+    border: 1px solid var(--mc-border);
+    border-radius: 8px;
+    background: var(--mc-bg-panel);
+    color: var(--mc-text-primary);
+}
+
+.media-filter:focus-within {
+    border-color: var(--mc-accent, #1f6feb);
+    box-shadow: 0 0 0 2px rgba(31, 111, 235, 0.25);
+}
+
+.media-filter-ico {
+    display: inline-flex;
+    flex: 0 0 auto;
+    padding-left: 8px;
+    color: var(--mc-text-secondary, #667085);
+}
+
+.media-filter-ico .media-ico {
+    width: 16px;
+    height: 16px;
+}
+
+.media-filter-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 100%;
+    padding: 0 4px 0 6px;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: 13px;
+}
+
+.media-filter-input::placeholder {
+    color: var(--mc-text-secondary, #667085);
+}
+
+.media-filter-clear {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--mc-text-secondary, #667085);
+    cursor: pointer;
+}
+
+.media-filter-clear[hidden] {
+    display: none;
+}
+
+.media-filter-clear .media-ico {
+    width: 16px;
+    height: 16px;
+}
+
+.media-filter-clear:hover,
+.media-filter-clear:focus-visible {
+    color: var(--mc-text-primary);
+}
+
+.media-search-btn.is-active {
+    position: relative;
+    color: var(--mc-accent, #1f6feb);
+}
+
+.media-search-btn.is-active::after {
+    content: "";
+    position: absolute;
+    top: 9px;
+    right: 9px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--mc-accent, #1f6feb);
+}
+
+.media-toolbar.is-compact .media-filter-wide {
+    flex: 1 1 auto;
+    height: 44px;
+}
+
+.media-toolbar.is-compact .media-filter-input {
+    font-size: 16px;
+}
+
+.media-toolbar.is-compact .media-filter-clear {
+    width: 44px;
+}
+
+/* a 320 px phone has room for only a few characters of summary next to five buttons: smaller targets (40 px) and the
+   count alone ("14", or "3 of 14" while filtering); the size is on the desktop toolbar and in the More menu elsewhere */
+.media-sum-tiny {
+    display: none;
+}
+
+@media (max-width: 360px) {
+    .media-toolbar.is-compact .media-tb {
+        gap: 2px;
+    }
+
+    .media-toolbar.is-compact .media-tb-check,
+    .media-toolbar.is-compact .media-tb-btn,
+    .media-toolbar.is-compact .media-sort,
+    .media-toolbar.is-compact .media-sort-ico {
+        width: 40px;
+        min-width: 40px;
+        height: 40px;
+    }
+
+    .media-toolbar.is-compact .media-filter-wide {
+        height: 40px;
+    }
+
+    .media-toolbar.is-compact .media-filter-clear {
+        width: 40px;
+    }
+
+    .media-toolbar.is-compact .media-sum-short {
+        display: none;
+    }
+
+    .media-toolbar.is-compact .media-sum-tiny {
+        display: inline;
+        font-size: 12px;
+    }
+}
+
+.media-filter-empty {
+    grid-column: 1 / -1;
+    padding: 36px 16px;
+    text-align: center;
+}
+
+.media-filter-empty .media-primary-btn {
+    margin-top: 12px;
+}
+
 /* ---- phone ---- */
 @media (max-width: 768px) {
     .media-header {

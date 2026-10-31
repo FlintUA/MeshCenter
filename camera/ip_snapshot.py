@@ -61,10 +61,42 @@ class SnapshotError(Exception):
         return {"ok": False, "error": self.message, "error_code": self.code, **self.extra}
 
 
-def slug(name: str) -> str:
-    """ASCII, filesystem-safe piece of the source name for the file name; the real name is in the metadata."""
-    text = re.sub(r"[^A-Za-z0-9]+", "-", str(name or "")).strip("-")[:24]
-    return text or "camera"
+# Russian and Ukrainian letters to ASCII (a simple, language-neutral scheme; the real name stays in the sidecar metadata).
+_CYRILLIC = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "ґ": "g", "д": "d", "е": "e", "є": "ie", "ё": "e", "ж": "zh", "з": "z", "и": "i",
+    "і": "i", "ї": "yi", "й": "y", "к": "k", "л": "l", "м": "m", "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t",
+    "у": "u", "ф": "f", "х": "kh", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "shch", "ъ": "", "ы": "y", "ь": "", "э": "e",
+    "ю": "yu", "я": "ya", "ʼ": "", "'": "", "’": "",
+}
+
+
+def transliterate_cyrillic(text: str) -> str:
+    """Russian and Ukrainian letters to ASCII ("Гараж" -> "Garazh"); every other character is left as it is. A capital
+    letter gives a capitalised result ("Щ" -> "Shch"), an all-capital word stays readable ("ГАРАЖ" -> "GARAZH")."""
+    out = []
+    chars = str(text or "")
+    for index, ch in enumerate(chars):
+        mapped = _CYRILLIC.get(ch.lower())
+        if mapped is None:
+            out.append(ch)
+        elif ch.islower() or not mapped:
+            out.append(mapped)
+        else:
+            neighbour_upper = (index + 1 < len(chars) and chars[index + 1].isupper()) or (index > 0 and chars[index - 1].isupper())
+            out.append(mapped.upper() if neighbour_upper else mapped.capitalize())
+    return "".join(out)
+
+
+def slug(name: str, source_id: str | None = None) -> str:
+    """ASCII, filesystem-safe piece of the source name for the file name; the real name is in the metadata. Cyrillic is
+    transliterated first. A name with nothing left after that (an emoji, Chinese, ...) falls back to
+    `camera-<short stable id>` from the source id, so two such cameras never share a prefix; without a source id it is
+    plain `camera`."""
+    text = re.sub(r"[^A-Za-z0-9]+", "-", transliterate_cyrillic(str(name or ""))).strip("-")[:24].strip("-")
+    if text:
+        return text
+    short = re.sub(r"[^a-z0-9]", "", str(source_id or "").lower().replace("ip:", "", 1))[:6]
+    return "camera-" + short if short else "camera"
 
 
 def jpeg_size(data: bytes) -> tuple[int, int] | None:
@@ -149,7 +181,7 @@ class IpSnapshotService:
             raise SnapshotError("storage_full", "The gallery storage is full. Delete pictures or free space on the disk.")
         taken = self._wall()
         directory = cam.get_screenshot_day_dir(taken)
-        filename = cam.make_screenshot_filename(taken, prefix="MC_" + slug(source.get("name")))
+        filename = cam.make_screenshot_filename(taken, prefix="MC_" + slug(source.get("name"), source.get("id")))
         path = os.path.join(directory, filename)
         size = jpeg_size(jpeg)
         profile = {"camera_api_full": "full", "camera_api_small": "small"}.get(method, str(source.get("preferred_profile") or ""))

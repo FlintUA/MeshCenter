@@ -12,6 +12,8 @@
     // must match GALLERY_ZIP_MAX_BYTES in api/api_camera.py (the server enforces it; this lets the page say so BEFORE the tap)
     const ZIP_MAX_BYTES = 250 * 1024 * 1024;
     const BULK_MAX = 500;
+    // G4: the gallery filter text; the length must match MEDIA_FILTER_MAX_CHARS in api/api_settings.py
+    const FILTER_MAX = 80;
     // G2: pictures per send (one MCAttach transfer each); mirrors MAX_SEND_PICTURES in static/files.js
     const SEND_MAX = 10;
 
@@ -85,6 +87,42 @@
         const w = Number(item && item.width);
         const h = Number(item && item.height);
         return Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0 ? w + 'x' + h : '';
+    }
+
+    // ---- filter (G4): a case-insensitive substring of the file name or the camera name ----------------------------------
+
+    // what the settings keep and the matcher uses: whitespace collapsed, trimmed, capped
+    function normalizeFilter(value) {
+        return String(value == null ? '' : value).split(/\s+/).filter(Boolean).join(' ').slice(0, FILTER_MAX);
+    }
+
+    function filterField(isMobile) {
+        return isMobile ? 'filter_mobile' : 'filter_desktop';
+    }
+
+    function pickFilter(media, isMobile) {
+        const saved = media && typeof media === 'object' ? media : {};
+        return normalizeFilter(saved[filterField(isMobile)]);
+    }
+
+    function baseName(item) {
+        const name = item && (item.display_name || item.filename);
+        return String(name || '').split('/').pop();
+    }
+
+    // The file name AND the camera name from the sidecar metadata (so a camera called "Гараж" is found by that name).
+    // An empty filter matches everything.
+    function matchesFilter(item, query) {
+        const needle = normalizeFilter(query).toLowerCase();
+        if (!needle) return true;
+        return baseName(item).toLowerCase().indexOf(needle) !== -1
+            || String((item && item.camera) || '').toLowerCase().indexOf(needle) !== -1;
+    }
+
+    // A new array, in the caller's order.
+    function filterItems(items, query) {
+        const list = Array.isArray(items) ? items : [];
+        return normalizeFilter(query) ? list.filter((item) => matchesFilter(item, query)) : list.slice();
     }
 
     // ---- selection: a Set of filenames ------------------------------------------------------------------------
@@ -224,6 +262,7 @@
         SEND_MAX, sendItems,
         LONG_PRESS_MS, LONG_PRESS_SLOP_PX, selectionMode, tapAction, createLongPress,
         SORTS, VIEWS, DEFAULT_SORT, DEFAULT_VIEW, ZIP_MAX_BYTES, BULK_MAX,
+        FILTER_MAX, normalizeFilter, filterField, pickFilter, matchesFilter, filterItems,
         normalizeSort, normalizeView, viewField, pickView, sortItems, formatBytes, formatResolution,
         toggle, allSelected, toggleAll, prune, totals, bulkState, neighbour, indexAfterDelete,
     };

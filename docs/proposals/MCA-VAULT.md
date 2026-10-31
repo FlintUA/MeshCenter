@@ -203,6 +203,10 @@ the rest of MeshCenter.
    and sizes; an existing plain `files/` library is converted in place on enable (same migration, same backup, with
    verification before any plain file is deleted).
 6. The binding design is `docs/architecture/ADR-0013-mca-vault.md` (this file stays the proposal and the plan).
+7. Owner review of 2026-10-31 (recorded in the ADR, which wins over this file where they differ): the plain backup
+   lifecycle, the flash limitation, swap and memory hygiene, Roll back refused while a vault exists, no names or
+   comments in logs, notifications or toasts, the Media gallery not covered, minimum passphrase 12, the wrong-attempt
+   delays, no `vault.json.bak` after an unlock.
 
 Rough size: one ADR, then three PRs (crypto + format + migration with tests; worker/locked-state behaviour and API;
 UI and Docker notes), each with live rounds on the dev node and a NAS Docker round.

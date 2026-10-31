@@ -1,6 +1,6 @@
 # MCA-VAULT: optional encrypted MCAttach vault (proposal, no code)
 
-Status: proposal with the owner's decisions recorded (section 0). Not implemented. The project backlog
+Status: proposal with the owner's decisions recorded (section 0); the design is ADR-0013 (proposed). Not implemented. The project backlog
 (`claude/MeshCenter_Backlog_Small_Items.md`, section MCA-VAULT) is not on the development machine; the owner pastes the
 relevant spec into messages, so this file follows those messages. Anything that differs from the backlog text should be
 corrected there or here before work starts.
@@ -199,9 +199,14 @@ the rest of MeshCenter.
 4. Settled by the owner (section 0): Save to Files stays encrypted; no auto-lock in v1 with a "Lock now" button;
    Argon2id calibrated at enable time (about 1 s, 32 MiB minimum, parameters in the header); names and comments
    encrypted.
-5. Still open: whether the optional comment should be encrypted only (as decided here) or also hidden from the
-   locked list's row count and icons (it is not, today); and whether an existing plain `files/` library should be
-   converted in place on enable (proposed: yes, same migration, same backup).
+5. Settled by the owner (2026-10-31): the comment is encrypted too; the locked list may show row counts, type icons
+   and sizes; an existing plain `files/` library is converted in place on enable (same migration, same backup, with
+   verification before any plain file is deleted).
+6. The binding design is `docs/architecture/ADR-0013-mca-vault.md` (this file stays the proposal and the plan).
+7. Owner review of 2026-10-31 (recorded in the ADR, which wins over this file where they differ): the plain backup
+   lifecycle, the flash limitation, swap and memory hygiene, Roll back refused while a vault exists, no names or
+   comments in logs, notifications or toasts, the Media gallery not covered, minimum passphrase 12, the wrong-attempt
+   delays, no `vault.json.bak` after an unlock.
 
 Rough size: one ADR, then three PRs (crypto + format + migration with tests; worker/locked-state behaviour and API;
 UI and Docker notes), each with live rounds on the dev node and a NAS Docker round.

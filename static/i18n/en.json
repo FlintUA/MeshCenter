@@ -1851,7 +1851,12 @@
     "phone_status_title": "Status",
     "phone_status_version": "Version",
     "phone_status_temp": "Temperature",
-    "phone_status_uptime": "Uptime"
+    "phone_status_uptime": "Uptime",
+    "tab_updated": "Updated",
+    "tab_reconnecting": "Reconnecting the stream",
+    "tab_retap_refresh": "Tap again to refresh",
+    "tab_retap_reconnect": "Tap again to reconnect the stream",
+    "tab_retap_back": "Tap again to go back to the chat list"
   },
   "ipcamera": {
     "title": "Network cameras",

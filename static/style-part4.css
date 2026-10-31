@@ -6282,6 +6282,63 @@ html[data-theme="dark"] .media-zip-note {
     }
 }
 
+/* ---------- MOB3: phone workspaces without their card titles; the open tab shows its second-tap action ---------- */
+.main-tab-glyph {
+    display: none;
+}
+
+.main-content-tab.has-retap .main-tab-glyph {
+    display: inline-block;
+    margin-left: 2px;
+    vertical-align: -1px;
+    opacity: 0.75;
+}
+
+@media (max-width: 768px) {
+    .devices-view .devices-header.mc-workspace-header {
+        display: none !important;
+    }
+
+    .files-header > div:first-child,
+    .video-header > div:first-child,
+    .files-header [data-files-action="refresh"] {
+        display: none;
+    }
+
+    .files-header.mc-workspace-header,
+    .video-header.mc-workspace-header {
+        height: auto;
+        min-height: 0;
+        flex: 0 0 auto;
+    }
+
+    .video-header-actions {
+        width: 100%;
+    }
+
+    /* touch: the per-thumbnail checkboxes only exist while selecting (long press or select all) */
+    .media-pictures:not(.is-selecting) .media-check,
+    .media-pictures:not(.is-selecting) .media-card-top {
+        display: none;
+    }
+
+    .media-pictures:not(.is-selecting) .media-row {
+        grid-template-columns: 56px minmax(0, 1fr) auto;
+    }
+}
+
+@media (hover: none) and (pointer: coarse) {
+    .media-pictures:not(.is-selecting) .media-check,
+    .media-pictures:not(.is-selecting) .media-card-top {
+        display: none;
+    }
+
+
+    .media-pictures:not(.is-selecting) .media-row {
+        grid-template-columns: 64px minmax(0, 1fr) auto auto auto;
+    }
+}
+
 /* lightbox */
 body.media-lightbox-open {
     overflow: hidden;

@@ -1851,7 +1851,12 @@
     "phone_status_title": "Стан",
     "phone_status_version": "Версія",
     "phone_status_temp": "Температура",
-    "phone_status_uptime": "Час роботи"
+    "phone_status_uptime": "Час роботи",
+    "tab_updated": "Оновлено",
+    "tab_reconnecting": "Перепідключаю потік",
+    "tab_retap_refresh": "Натисніть ще раз, щоб оновити",
+    "tab_retap_reconnect": "Натисніть ще раз, щоб перепідключити потік",
+    "tab_retap_back": "Натисніть ще раз, щоб повернутися до списку чатів"
   },
   "ipcamera": {
     "title": "Мережеві камери",

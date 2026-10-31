@@ -1851,7 +1851,12 @@
     "phone_status_title": "Состояние",
     "phone_status_version": "Версия",
     "phone_status_temp": "Температура",
-    "phone_status_uptime": "Время работы"
+    "phone_status_uptime": "Время работы",
+    "tab_updated": "Обновлено",
+    "tab_reconnecting": "Переподключаю поток",
+    "tab_retap_refresh": "Нажмите ещё раз, чтобы обновить",
+    "tab_retap_reconnect": "Нажмите ещё раз, чтобы переподключить поток",
+    "tab_retap_back": "Нажмите ещё раз, чтобы вернуться к списку чатов"
   },
   "ipcamera": {
     "title": "Сетевые камеры",

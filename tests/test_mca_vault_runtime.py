@@ -283,8 +283,8 @@ def _meminfo(tmp_path, *, free_kb, available_kb):
 def test_free_ram_reads_memavailable_not_memfree(tmp_path):
     path = _meminfo(tmp_path, free_kb=5000, available_kb=140000)        # a Pi: little free, plenty reclaimable
     assert runtime.free_ram_bytes(path) == 140000 * 1024
-    path = _meminfo(tmp_path, free_kb=300000, available_kb=20000)       # the opposite: the check must follow MemAvailable
-    assert runtime.free_ram_bytes(path) == 20000 * 1024
+    path = _meminfo(tmp_path, free_kb=300000, available_kb=20480)       # the opposite: the check must follow MemAvailable
+    assert runtime.free_ram_bytes(path) == 20480 * 1024
 
 
 def test_the_unlock_check_follows_memavailable_through_the_default_reader(made, tmp_path, monkeypatch):
@@ -293,7 +293,7 @@ def test_the_unlock_check_follows_memavailable_through_the_default_reader(made, 
     rt = runtime.VaultRuntime(path, clock=Clock(), log=Logs())          # the default reader, no injected free_ram
     assert rt.unlock(passphrase=PASS)["state"] == "unlocked", "MemFree is tiny but MemAvailable is ample: allowed"
     rt.lock()
-    monkeypatch.setattr(runtime, "MEMINFO_PATH", _meminfo(tmp_path, free_kb=300000, available_kb=20000))
+    monkeypatch.setattr(runtime, "MEMINFO_PATH", _meminfo(tmp_path, free_kb=300000, available_kb=20480))
     with pytest.raises(VaultError) as info:
         rt.unlock(passphrase=PASS)
     assert info.value.code == "insufficient_memory" and "20 MiB free" in info.value.message, "MemFree is ample but MemAvailable is not: refused"

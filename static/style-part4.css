@@ -5686,7 +5686,7 @@ body.camera-fullscreen-active {
     --media-pad-x: 18px;
     --media-pad-top: 16px;
     position: sticky;
-    top: 0;
+    top: calc(-1 * var(--media-pad-top));
     z-index: 5;
     display: block;
     margin: calc(-1 * var(--media-pad-top)) calc(-1 * var(--media-pad-x)) 14px;

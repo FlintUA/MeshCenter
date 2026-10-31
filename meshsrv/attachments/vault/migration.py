@@ -37,7 +37,7 @@ JOURNAL_FILE = "vault-migration.json"
 HEADER_FILE = "vault.json"
 MCV = ".mcv"
 PART = ".part"
-ORPHAN_INDEX = ".orphans" + MCV                      # inside files/, JSON {orphan id: display name}
+ORPHAN_INDEX = ".orphans" + MCV                      # inside files/, encrypted JSON {"orphans": {id: name}, "dangling": {row id: name}}
 ORPHAN_INDEX_AD = "orphans-index"
 SPACE_MARGIN = 1.2                                   # the largest category plus 20 percent (ADR)
 
@@ -369,9 +369,9 @@ def _encrypt_item(env: Env, item: Item, files_key: bytes, keys_key: bytes) -> No
     _step(env, "plain_removed")
 
 
-def _write_orphan_index(env: Env, files_key: bytes, names: Dict[str, str]) -> None:
+def _write_index(env: Env, files_key: bytes, index: Dict[str, Dict[str, str]]) -> None:
     path = Path(env.paths.files) / ORPHAN_INDEX
-    blob = json.dumps(names, sort_keys=True).encode("utf-8")
+    blob = json.dumps(index, sort_keys=True).encode("utf-8")
     part = str(path) + PART
     with open(part, "wb") as handle:
         handle.write(streamcrypt.encrypt_bytes(blob, files_key, ORPHAN_INDEX_AD))
@@ -380,11 +380,20 @@ def _write_orphan_index(env: Env, files_key: bytes, names: Dict[str, str]) -> No
     os.replace(part, str(path))
 
 
-def _read_orphan_index(env: Env, files_key: bytes) -> Dict[str, str]:
+def _read_index(env: Env, files_key: bytes) -> Dict[str, Dict[str, str]]:
+    """The encrypted name index: files without a row ("orphans") and rows whose saved file is already gone ("dangling";
+    their saved_path still carries the old display name, which must not stay in the database)."""
     path = Path(env.paths.files) / ORPHAN_INDEX
     if not path.exists():
-        return {}
-    return json.loads(streamcrypt.decrypt_bytes(path.read_bytes(), files_key, ORPHAN_INDEX_AD).decode("utf-8"))
+        return {"orphans": {}, "dangling": {}}
+    index = json.loads(streamcrypt.decrypt_bytes(path.read_bytes(), files_key, ORPHAN_INDEX_AD).decode("utf-8"))
+    index.setdefault("orphans", {})
+    index.setdefault("dangling", {})
+    return index
+
+
+def _read_orphan_index(env: Env, files_key: bytes) -> Dict[str, str]:
+    return _read_index(env, files_key)["orphans"]
 
 
 def _clean_residue(env: Env) -> None:
@@ -399,12 +408,12 @@ def _run_files_enable(env: Env, sk: bytes) -> int:
     files_key, keys_key = subkey(sk, "files"), subkey(sk, "keys")
     _clean_residue(env)
     items = plan_enable(env)
-    orphans = _read_orphan_index(env, files_key)
+    index = _read_index(env, files_key)
     # the orphan names are recorded in the encrypted index BEFORE the file is touched, so a crash cannot lose one
     names = {i.ad_id: i.src.name for i in items if i.category == "files" and i.row_id is None}
     if names:
-        orphans.update(names)
-        _write_orphan_index(env, files_key, orphans)
+        index["orphans"].update(names)
+        _write_index(env, files_key, index)
     total = len(items)
     for number, item in enumerate(items, 1):
         _encrypt_item(env, item, files_key, keys_key)
@@ -453,6 +462,7 @@ def _encrypt_db(env: Env, sk: bytes) -> int:
             _step(env, "db_batch")
     # the rows whose file moved: point saved_path at the encrypted file
     changed += _repoint_saved_paths(env, to_encrypted=True)
+    changed += _protect_dangling_paths(env, sk)
     _scrub_db(env)
     return changed
 
@@ -483,6 +493,31 @@ def _repoint_saved_paths(env: Env, *, to_encrypted: bool) -> int:
     return count
 
 
+def _protect_dangling_paths(env: Env, sk: bytes) -> int:
+    """A row whose saved file is gone still has its old display name inside saved_path. Record the name in the
+    encrypted index (first), then point the row at the id-named path; disable puts the original path back."""
+    files_key = subkey(sk, "files")
+    files_dir = os.path.normcase(os.path.abspath(str(env.paths.files)))
+    index = _read_index(env, files_key)
+    todo = []
+    for row in _rows(env):
+        saved = row["saved_path"]
+        if not saved or saved.endswith(MCV):
+            continue
+        if os.path.normcase(os.path.abspath(str(Path(saved).parent))) != files_dir:
+            continue                                     # a cache or spool path holds only the id, no name
+        todo.append((row["id"], Path(saved).name))
+    if not todo:
+        return 0
+    for rid, name in todo:
+        index["dangling"][rid] = name
+    _write_index(env, files_key, index)                  # the names are safe before any path is changed
+    for rid, _name in todo:
+        env.conn.execute("UPDATE attachments SET saved_path = ? WHERE id = ?", (str(Path(env.paths.files) / (rid + MCV)), rid))
+    env.conn.commit()
+    return len(todo)
+
+
 def verify_enabled(env: Env, sk: bytes) -> dict:
     """The final proof: no plaintext file in any vault category, and every sensitive value authenticates as ours."""
     leftovers = []
@@ -497,6 +532,11 @@ def verify_enabled(env: Env, sk: bytes) -> dict:
         for row in env.conn.execute("SELECT %s AS pk, %s AS v FROM %s WHERE %s IS NOT NULL" % (pk, column, table, column)):
             if not _is_ours(field_key, table, column, row["pk"], row["v"]):
                 plain_columns += 1
+    for row in _rows(env):                               # no saved_path in the files library may carry a name
+        saved = row["saved_path"]
+        if saved and os.path.normcase(os.path.abspath(str(Path(saved).parent))) == os.path.normcase(os.path.abspath(str(env.paths.files))) \
+                and Path(saved).name != row["id"] + MCV:
+            plain_columns += 1
     if plain_columns:
         raise MigrationError("plaintext_remains", "Plain database values remain.", count=plain_columns)
     return {"plain_files": 0, "plain_columns": 0}
@@ -676,6 +716,7 @@ def resume_disable(env: Env, storage_key: bytes) -> dict:
 def _run_disable(env: Env, files_key: bytes, keys_key: bytes, field_key: bytes) -> dict:
     _clean_residue(env)
     plan, _ = _plan_disable(env, field_key, files_key)
+    dangling = _read_index(env, files_key)["dangling"]
     total = len(plan)
     moved: Dict[str, Path] = {}
     for number, (src, dest, key, ad_id, sha, size) in enumerate(plan, 1):
@@ -686,10 +727,10 @@ def _run_disable(env: Env, files_key: bytes, keys_key: bytes, field_key: bytes) 
     for src in _listing(Path(env.paths.keys), mcv=True):
         name = src.name[:-len(MCV)]
         _decrypt_item(env, src, Path(env.paths.keys) / name, keys_key, "keys/" + name, None, None)
+    changed = _decrypt_db(env, field_key, moved, dangling)
     orphan_index = Path(env.paths.files) / ORPHAN_INDEX
     if orphan_index.exists():
-        orphan_index.unlink()
-    changed = _decrypt_db(env, field_key, moved)
+        orphan_index.unlink()                             # last: a crash before this point can still resume
     left = [e.name for d in (env.paths.cache_incoming, env.paths.spool_outgoing, env.paths.files, env.paths.quarantine, env.paths.keys)
             for e in _listing(Path(d), mcv=True)]
     if left:
@@ -697,7 +738,7 @@ def _run_disable(env: Env, files_key: bytes, keys_key: bytes, field_key: bytes) 
     return {"files": total, "db_values": changed}
 
 
-def _repoint_disabled(env: Env, field_key: bytes, moved: Dict[str, Path]) -> int:
+def _repoint_disabled(env: Env, field_key: bytes, moved: Dict[str, Path], dangling: Dict[str, str]) -> int:
     """Disable: a row that still points at an <id>.mcv that is gone points at the plain file now. The files library
     uses display names, so the path comes from this run's moves, or (after a crash and resume) from the name field."""
     from meshsrv.attachments.mime_allowlist import sanitize_display_name
@@ -705,6 +746,10 @@ def _repoint_disabled(env: Env, field_key: bytes, moved: Dict[str, Path]) -> int
     for row in _rows(env):
         saved = row["saved_path"]
         if not saved or not saved.endswith(MCV) or Path(saved).exists():
+            continue
+        if row["id"] in dangling:                         # the saved file was already gone: restore the original path
+            env.conn.execute("UPDATE attachments SET saved_path = ? WHERE id = ?", (str(Path(saved).parent / dangling[row["id"]]), row["id"]))
+            count += 1
             continue
         target = moved.get(row["id"])
         if target is None:
@@ -720,9 +765,9 @@ def _repoint_disabled(env: Env, field_key: bytes, moved: Dict[str, Path]) -> int
     return count
 
 
-def _decrypt_db(env: Env, field_key: bytes, moved: Dict[str, Path]) -> int:
+def _decrypt_db(env: Env, field_key: bytes, moved: Dict[str, Path], dangling: Dict[str, str]) -> int:
     env.conn.execute("PRAGMA secure_delete = ON")
-    changed = _repoint_disabled(env, field_key, moved)          # first: it needs the encrypted name to find the file
+    changed = _repoint_disabled(env, field_key, moved, dangling)          # first: it needs the encrypted name to find the file
     env.conn.commit()
     for table, column, pk in SENSITIVE_COLUMNS:
         env.conn.row_factory = sqlite3.Row

@@ -56,6 +56,7 @@ class PictureDeps:
     create_transfer: Callable[[str, str, bytes], None]  # (contact id, file name, JPEG); raises PictureError
     log: Callable[[str, str, str], None]                # (level, title, details)
     notify: Callable[[str, str, str], None]             # (level, title, body)
+    vault_locked: Callable[[], bool] = lambda: False    # MCA-VAULT: a locked vault skips the run (nothing is queued)
 
 
 def normalize_params(params: Optional[dict]) -> dict:
@@ -105,6 +106,9 @@ def run(action: dict, rule: dict, deps: PictureDeps) -> str:
         return _skip(deps, title, "too_soon", "the last picture run was %d s ago (minimum %d s)" % (now - last, MIN_INTERVAL_S))
     state["last_run_at"] = now
 
+    if deps.vault_locked():
+        # counts as a refused attempt (last_run_at is already set), takes no picture, queues nothing for later
+        return _skip(deps, title, "vault_locked", "MCAttach is locked; unlock it to send pictures")
     if not deps.radio_available():
         return _skip(deps, title, "radio_unavailable", "the radio is released or not connected")
     if not deps.contact_trusted(params["contact_id"]):

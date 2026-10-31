@@ -44,6 +44,7 @@ simply inlined.
 
 from __future__ import annotations
 
+import collections
 import contextlib
 import dataclasses
 import hashlib
@@ -148,6 +149,17 @@ INBOUND_QUEUE_MAXSIZE = 256
 # same way MAX_ATTACHMENTS_PER_TICK already bounds the row-scan; the
 # rest simply wait for the next tick/wake(), never blocking anything.
 MAX_INBOUND_EVENTS_PER_TICK = 16
+
+# MCA-VAULT (ADR-0013 Decision 6): while the vault is locked these commands are refused with `vault_locked` because they
+# need the identity seed or the storage key. Deleting a local copy, purging received copies, cancelling a key-request
+# series and the relay probes only touch files or plain rows and stay available.
+VAULT_REQUIRED_COMMAND_KINDS = frozenset({
+    "attachment_create", "attachment_retry", "attachment_download", "attachment_save", "attachment_reject",
+    "attachment_cancel", "attachment_revoke", "contact_request_key", "contact_confirm", "contact_accept_key_change",
+    "contact_reject_key_change", "provider_set_upload_token",
+})
+# frames that arrive while locked and need the seed to answer wait here (bounded, oldest dropped) until the unlock
+VAULT_DEFERRED_INBOUND_MAX = 256
 
 # Finding 3: a bounded retry backlog for staged spool files whose removal
 # failed on the worker. When a create does not commit a row that references
@@ -378,8 +390,14 @@ class AttachmentsService:
         key_request_snapshot_publisher: Optional[KeyRequestStatePublisher] = None,
         contact_exists_fn: Optional[Callable[[str], bool]] = None,
         offer_linked_fn: Optional[Callable[[str, str], None]] = None,
+        vault=None,
     ):
         self._conn = conn
+        # MCA-VAULT: the vault runtime (None for a standalone service); see _vault_locked() and the gates below
+        self._vault = vault
+        self._deferred_inbound = collections.deque(maxlen=VAULT_DEFERRED_INBOUND_MAX)
+        self._deferred_dropped = 0     # frames dropped from the waiting queue since the last System Log line
+        self._acks_deferred = False
         # MCA-UX1: told (transfer_id hex, attachment id) once an inbound OFFER has become an attachment row, so the
         # chat bubble of that offer can link to it exactly. Cosmetic: a failure here never affects the transfer.
         self._offer_linked_fn = offer_linked_fn
@@ -639,6 +657,7 @@ class AttachmentsService:
         # radio listener thread, which only ever built the InboundEvent
         # and enqueued it (enqueue_inbound() above).
         self._drain_inbound_events()
+        self._catch_up_after_unlock()
 
         # Finding 7 (Step 1.6A.3B review): republish the recipient-binding
         # snapshot after this tick's inbound events (a KEY_ANNOUNCE can create
@@ -682,7 +701,8 @@ class AttachmentsService:
         self._connectivity.refresh()
 
         processed = 0
-        for row in self._due_rows():
+        # locked: no row is advanced (download, upload, expiry frames all need the seed or the storage key)
+        for row in ([] if self._vault_locked() else self._due_rows()):
             try:
                 if row["direction"] == "sent":
                     self._step_sent(row)
@@ -706,7 +726,8 @@ class AttachmentsService:
         # received attachments whose authoritative hard deadline has passed into
         # EXPIRED + a signed EXPIRED frame, before the reply dispatch below so a
         # just-enqueued EXPIRED is sent this same tick.
-        self._reconcile_receiver_expiry()
+        if not self._vault_locked():
+            self._reconcile_receiver_expiry()
 
         self._dispatch_outgoing_replies()
 
@@ -782,6 +803,52 @@ class AttachmentsService:
         if self._key_request_publisher is not None:
             self._key_request_publisher.refresh()
 
+    # ---- MCA-VAULT: locked behaviour (ADR-0013 Decision 6) ---------------------------------------------------------
+
+    def _vault_locked(self) -> bool:
+        vault = getattr(self, "_vault", None)      # getattr: some tests build the service without __init__
+        return vault is not None and vault.is_locked()
+
+    @staticmethod
+    def _inbound_is_offer(event: InboundEvent) -> bool:
+        """An offer can be recorded while locked (verification needs only the sender's public key). Anything else
+        that decodes needs the seed to answer; a frame that does not decode is processed (and dropped) as usual."""
+        try:
+            return codec.peek_message_type(codec.from_text(event.text)) == codec.MessageType.OFFER
+        except Exception:  # noqa: BLE001 - a malformed frame is rejected by the normal path without signing anything
+            return True
+
+    def _defer_inbound(self, event: InboundEvent) -> None:
+        if len(self._deferred_inbound) == self._deferred_inbound.maxlen:
+            self._deferred_dropped += 1            # the oldest frame is dropped; reported once per tick with the count
+        self._deferred_inbound.append(event)
+        if self._vault is not None:
+            self._vault.note_postponed("Incoming control messages")
+
+    def _replay_deferred_inbound(self) -> None:
+        """After the unlock: the frames that waited, oldest first, bounded per tick like the live drain."""
+        for _ in range(MAX_INBOUND_EVENTS_PER_TICK):
+            if not self._deferred_inbound:
+                return
+            event = self._deferred_inbound.popleft()
+            try:
+                self._process_one_inbound_event(event)
+            except Exception:  # noqa: BLE001 - one bad frame must not stop the replay
+                self._rollback_silently()
+                logger.exception("AttachmentsService: failed to process a deferred inbound event from %s", event.source_address)
+
+    def _catch_up_after_unlock(self) -> None:
+        """Acknowledge the offers that were recorded while locked (once, through the reply ledger)."""
+        if not self._acks_deferred or self._vault_locked():
+            return
+        try:
+            receiver.enqueue_missing_acks(
+                self._conn, workspace_manager=self._workspace_manager, principal=self._principal, now=self._now())
+            self._acks_deferred = False
+        except Exception:  # noqa: BLE001 - retried on the next tick
+            self._rollback_silently()
+            logger.exception("AttachmentsService: could not enqueue the deferred acknowledgements")
+
     def _drain_inbound_events(self) -> None:
         """Up to MAX_INBOUND_EVENTS_PER_TICK events, oldest first - the
         rest simply wait for the next tick/wake(), the same bounded-work-
@@ -789,13 +856,30 @@ class AttachmentsService:
         uses. One malformed/exception-raising event is caught and logged
         here, same as one bad attachment in the row-scan above - it must
         never stop the rest of this drain or kill the worker thread."""
+        locked = self._vault_locked()
+        if not locked:
+            self._replay_deferred_inbound()
+        try:
+            self._drain_inbound_events_locked_or_not(locked)
+        finally:
+            self._report_dropped_frames()
+
+    def _report_dropped_frames(self) -> None:
+        dropped, self._deferred_dropped = getattr(self, "_deferred_dropped", 0), 0
+        if dropped and getattr(self, "_vault", None) is not None:
+            self._vault.note_dropped(dropped)
+
+    def _drain_inbound_events_locked_or_not(self, locked: bool) -> None:
         for _ in range(MAX_INBOUND_EVENTS_PER_TICK):
             try:
                 event = self._inbound_queue.get_nowait()
             except queue.Empty:
                 return
+            if locked and not self._inbound_is_offer(event):
+                self._defer_inbound(event)       # answering it needs the seed: wait for the unlock
+                continue
             try:
-                self._process_one_inbound_event(event)
+                self._process_one_inbound_event(event, defer_replies=locked)
             except Exception:  # noqa: BLE001 - one bad inbound event must not stop the drain or the worker
                 # PR 2.5 correction (transaction hygiene): whatever this event
                 # wrote before raising is still uncommitted on the shared
@@ -885,6 +969,16 @@ class AttachmentsService:
 
         Either way one broken command never stops the rest of the drain and
         the tick continues."""
+        if command.kind in VAULT_REQUIRED_COMMAND_KINDS and self._vault_locked():
+            # MCA-VAULT: refused before it runs; the request route normally answers 423 first, this covers a command
+            # that was queued before the lock
+            try:
+                self._command_registry.mark_running(command.command_id)
+            except Exception:  # noqa: BLE001
+                self._recover_internal_failure(command)
+                return
+            self._record_failed(command, "vault_locked")
+            return
         try:
             self._command_registry.mark_running(command.command_id)
         except Exception as exc:  # noqa: BLE001 - an impossible transition must not kill the tick
@@ -2209,6 +2303,9 @@ class AttachmentsService:
             logger.warning("AttachmentsService: offer link hook failed")
 
     def _auto_request_missing_keys(self) -> None:
+        if self._vault_locked():
+            self._vault.note_postponed("Key requests")      # postponed without using an attempt
+            return
         """PR 1 (recoverable missing-key workflow): drive the missing-key
         half of the receiver's WAITING_KEY state forward without a human
         having to click "request key" for every transfer. For each received
@@ -2413,6 +2510,9 @@ class AttachmentsService:
         )
 
     def _retry_key_requests(self) -> None:
+        if self._vault_locked():
+            self._vault.note_postponed("Key requests")      # the series keeps its attempt count and resumes on unlock
+            return
         """Walk the running KEY_REQUEST series (key_request_retry.py): end one whose key arrived or whose node is gone,
         send the next retry when due, give up after the last wait. Safe every tick; one bad series stops nothing."""
         try:
@@ -2843,7 +2943,7 @@ class AttachmentsService:
                 if self._pending_reservations is not None:
                     self._pending_reservations.remove(client_request_id)
 
-    def _process_one_inbound_event(self, event: InboundEvent) -> None:
+    def _process_one_inbound_event(self, event: InboundEvent, *, defer_replies: bool = False) -> None:
         """Everything that used to run on the radio listener thread
         itself (PR #231 review, section 2) - ingest (base64url decode +
         CBOR parse), message-type dispatch, and, for a KEY_REQUEST/
@@ -2920,7 +3020,7 @@ class AttachmentsService:
             return
 
         if message_type == codec.MessageType.OFFER:
-            self._process_inbound_offer(envelope, source_address=event.source_address)
+            self._process_inbound_offer(envelope, source_address=event.source_address, defer_replies=defer_replies)
             return
 
         try:
@@ -2986,7 +3086,7 @@ class AttachmentsService:
         else:
             logger.info("MCAttach inbound channel: %s", payload, extra={"mca_event": record})
 
-    def _process_inbound_offer(self, envelope: DeliveryEnvelope, *, source_address: str) -> None:
+    def _process_inbound_offer(self, envelope: DeliveryEnvelope, *, source_address: str, defer_replies: bool = False) -> None:
         """PR #231 review, section 5: the OFFER's *own* provider_id
         decides WAITING_CONSENT vs WAITING_NETWORK, never the workspace-
         wide internet flag - a Relay this OFFER doesn't even reference
@@ -3035,7 +3135,10 @@ class AttachmentsService:
                 network_available=network_available,
                 source_address=source_address,
                 reply_route=reply_route,
+                defer_replies=defer_replies,
             )
+            if defer_replies:
+                self._acks_deferred = True
             self._notify_offer_linked(unverified.transfer_id, result)
         except receiver.ReceiverError as exc:
             logger.info("AttachmentsService: rejected OFFER from %s: %s", source_address, exc)

@@ -4670,3 +4670,192 @@ def test_a_failing_offer_hook_never_breaks_the_service(service):
     service._notify_offer_linked(b"" * 16, SimpleNamespace(attachment_id="x"))  # must not raise
     service._offer_linked_fn = None
     service._notify_offer_linked(b"" * 16, SimpleNamespace(attachment_id="x"))
+
+
+# ---- MCA-VAULT PR 2: locked behaviour of the service (ADR-0013 Decision 6) -------------------------------------
+
+
+class _StubVault:
+    """Stands in for the VaultRuntime: the service only asks is_locked() and tells it what was postponed."""
+
+    def __init__(self, locked=True):
+        self.locked = locked
+        self.postponed = []
+
+    def is_locked(self):
+        return self.locked
+
+    def note_postponed(self, what):
+        self.postponed.append(what)
+
+    def note_dropped(self, count):
+        self.dropped = getattr(self, "dropped", []) + [count]
+
+
+def _locked_service(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client, vault):
+    ether = InMemoryEther()
+    adapter = FakeTextAdapter(ether, "local-addr")
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, adapter,
+                                 relay_client_factory=lambda _: relay_client)
+    svc._vault = vault
+    return svc
+
+
+def _signed_offer(remote_recipient):
+    _, wsm2, principal2 = remote_recipient
+    signing_key = identity.load_signing_key(wsm2, principal2)
+    return codec.encode_offer(
+        codec.OfferFields(provider_id=uuid.uuid4().bytes[:8], transfer_id=uuid.uuid4().bytes,
+                          sender_key_id=bytes.fromhex(principal2.key_id), kind=0, size_bucket=1,
+                          hard_expires_at=int(time.time()) + 3600, flags=0),
+        signing_key,
+    )
+
+
+def _reply_rows(conn):
+    return conn.execute("SELECT attachment_id, event_type FROM mca_outgoing_replies").fetchall()
+
+
+def test_locked_service_records_an_offer_without_signing_and_acknowledges_it_once_after_the_unlock(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client, remote_recipient
+):
+    vault = _StubVault(locked=True)
+    svc = _locked_service(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client, vault)
+    svc.enqueue_inbound(InboundEvent(text=codec.to_text(_signed_offer(remote_recipient)), source_address="!756f9960",
+                                     packet_id="p1", received_at=time.time()))
+    svc.tick()
+    rows = conn.execute("SELECT id, state FROM attachments WHERE direction = 'received'").fetchall()
+    assert len(rows) == 1, "the offer is recorded while locked"
+    assert _reply_rows(conn) == [], "nothing was signed or queued while locked"
+
+    vault.locked = False
+    svc.tick()
+    assert [r[1] for r in _reply_rows(conn)].count("ack_received_sent") == 1, "acknowledged after the unlock"
+    svc.tick()
+    svc.tick()
+    assert [r[1] for r in _reply_rows(conn)].count("ack_received_sent") == 1, "exactly once, never repeated"
+
+
+def test_unlocked_service_acknowledges_an_offer_at_once_as_before(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client, remote_recipient
+):
+    svc = _locked_service(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client,
+                          _StubVault(locked=False))
+    svc.enqueue_inbound(InboundEvent(text=codec.to_text(_signed_offer(remote_recipient)), source_address="!756f9960",
+                                     packet_id="p1", received_at=time.time()))
+    svc.tick()
+    assert [r[1] for r in _reply_rows(conn)].count("ack_received_sent") == 1
+
+
+def test_locked_service_defers_frames_that_need_the_seed_and_replays_them_after_the_unlock(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client, remote_recipient, monkeypatch
+):
+    vault = _StubVault(locked=True)
+    svc = _locked_service(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client, vault)
+    _, wsm2, principal2 = remote_recipient
+    ack = codec.encode_simple_ack(codec.MessageType.ACK_DOWNLOADED, uuid.uuid4().bytes,
+                                  identity.load_signing_key(wsm2, principal2))
+    processed = []
+    monkeypatch.setattr(svc, "_process_one_inbound_event", lambda event, **kw: processed.append(event.packet_id))
+    svc.enqueue_inbound(InboundEvent(text=codec.to_text(ack), source_address="!756f9960", packet_id="ack1", received_at=time.time()))
+    svc.enqueue_inbound(InboundEvent(text="MCA1:not-a-frame", source_address="!756f9960", packet_id="junk", received_at=time.time()))
+    svc.tick()
+    assert processed == ["junk"], "a malformed frame is rejected by the normal path, the real frame waits"
+    assert len(svc._deferred_inbound) == 1 and "Incoming control messages" in vault.postponed
+    vault.locked = False
+    svc.tick()
+    assert processed == ["junk", "ack1"] and len(svc._deferred_inbound) == 0
+
+
+def test_the_deferred_inbound_queue_is_bounded_and_drops_the_oldest(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client
+):
+    from meshsrv.attachments import service as service_module
+    svc = _locked_service(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client,
+                          _StubVault(locked=True))
+    for i in range(service_module.VAULT_DEFERRED_INBOUND_MAX + 5):
+        svc._defer_inbound(InboundEvent(text="x", source_address="!756f9960", packet_id=str(i), received_at=0.0))
+    assert len(svc._deferred_inbound) == service_module.VAULT_DEFERRED_INBOUND_MAX
+    assert svc._deferred_inbound[0].packet_id == "5", "the oldest five were dropped"
+
+
+def _required_kinds():
+    from meshsrv.attachments import service as service_module
+    return sorted(service_module.VAULT_REQUIRED_COMMAND_KINDS)
+
+
+@pytest.mark.parametrize("kind", _required_kinds())
+def test_locked_service_refuses_commands_that_need_the_key_with_vault_locked(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client, kind
+):
+    svc = _locked_service(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client,
+                          _StubVault(locked=True))
+    command = Command(command_id=uuid.uuid4().hex, kind=kind, payload={"attachment_id": "a" * 32}, created_at=time.time())
+    svc._command_registry.register(command)
+    called = []
+    original = svc._dispatcher.dispatch
+    svc._dispatcher.dispatch = lambda c: called.append(c) or original(c)
+    svc._execute_command(command)
+    result = svc._command_registry.get(command.command_id)
+    assert result.status == "failed" and result.error_code == "vault_locked" and called == [], "the handler is never reached"
+
+
+def test_locked_service_still_runs_the_commands_that_need_no_key(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client
+):
+    svc = _locked_service(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client,
+                          _StubVault(locked=True))
+    old = _seed_received_available(conn, principal, wsm, attachment_id="e1" * 16, content=b"x" * 10)
+    command = _purge_command(1)
+    svc._command_registry.register(command)
+    svc._execute_command(command)
+    result = svc._command_registry.get(command.command_id)
+    assert result.status == "succeeded" and not old.exists(), "purging received copies only unlinks files"
+
+
+def test_locked_service_advances_no_row_and_signs_no_expiry(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client, monkeypatch
+):
+    vault = _StubVault(locked=True)
+    svc = _locked_service(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client, vault)
+    steps, sweeps = [], []
+    monkeypatch.setattr(svc, "_step_sent", lambda row: steps.append(row))
+    monkeypatch.setattr(svc, "_step_received", lambda row: steps.append(row))
+    monkeypatch.setattr(svc, "_reconcile_receiver_expiry", lambda: sweeps.append(1))
+    monkeypatch.setattr(svc, "_due_rows", lambda: [{"id": "x", "direction": "sent", "provider_id": None}])
+    svc.tick()
+    assert steps == [] and sweeps == []
+    vault.locked = False
+    svc.tick()
+    assert len(steps) == 1 and sweeps == [1]
+
+
+def test_locked_service_postpones_key_requests_and_says_so_once_per_call(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client
+):
+    vault = _StubVault(locked=True)
+    svc = _locked_service(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client, vault)
+    svc._auto_request_missing_keys()
+    svc._retry_key_requests()
+    assert vault.postponed == ["Key requests", "Key requests"]
+    assert conn.execute("SELECT COUNT(*) FROM mca_key_exchange_contact_state WHERE key_request_attempts > 0").fetchone()[0] == 0, \
+        "no attempt of any series was used"
+
+
+def test_dropped_waiting_frames_are_reported_once_per_tick_with_the_count(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client
+):
+    from meshsrv.attachments import service as service_module
+    vault = _StubVault(locked=True)
+    svc = _locked_service(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client, vault)
+    ack = b"x"
+    for i in range(service_module.VAULT_DEFERRED_INBOUND_MAX):            # fill the waiting queue exactly
+        svc._defer_inbound(InboundEvent(text="MCA1:" + str(i), source_address="!756f9960", packet_id=str(i), received_at=0.0))
+    svc.tick()
+    assert getattr(vault, "dropped", []) == [], "nothing was dropped yet: no line"
+    for i in range(7):                                                      # seven more: the oldest seven go
+        svc._defer_inbound(InboundEvent(text="MCA1:late" + str(i), source_address="!756f9960", packet_id="late%d" % i, received_at=0.0))
+    svc.tick()
+    assert vault.dropped == [7], "one report with the count"
+    svc.tick()
+    assert vault.dropped == [7], "reported once, not on every tick"

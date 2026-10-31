@@ -103,6 +103,7 @@ from meshsrv.attachments.provider_registry import (
     normalize_origin,
 )
 from meshsrv.attachments.recipient_snapshot import RecipientRejectionReason, evaluate_recipient_trust
+from meshsrv.attachments.vault.errors import VaultError
 from meshsrv.attachments.snapshots import (
     ContentDisposition,
     ContentLocatorError,
@@ -686,6 +687,100 @@ def register_attachments_routes(app, handle_errors):
     def _facade():
         return mca_runtime.get_attachments_facade()
 
+    # ---- MCA-VAULT: locked behaviour at the API (ADR-0013 Decision 6) ------------------------------------------------
+
+    def _vault():
+        return mca_runtime.get_vault()
+
+    def _vault_is_locked():
+        vault = _vault()
+        return vault is not None and vault.is_locked()
+
+    def _vault_gated(view):
+        """The view answers 423 `vault_locked` while the vault is locked. A decorator on the view, not a
+        `before_request` hook: the login and CSRF hooks are registered later in server.py, and an unauthenticated
+        request must be answered by them (401/403) and learn nothing about the lock."""
+        @wraps(view)
+        def wrapper(*args, **kwargs):
+            if _vault_is_locked():
+                return jsonify({
+                    "ok": False,
+                    "error": "MCAttach is locked. Unlock it first.",
+                    "error_code": "vault_locked",
+                }), 423
+            return view(*args, **kwargs)
+        return wrapper
+
+    def _vault_error(error):
+        """A VaultError as an HTTP answer. A wrong passphrase and a damaged header are the same answer."""
+        code = error.code
+        status = {
+            "unlock_failed": 403, "invalid_recovery_key": 403, "passphrase_required": 400, "vault_not_enabled": 409,
+            "unlock_rate_limited": 429, "insufficient_memory": 503, "vault_busy": 503,
+        }.get(code, 400)
+        body = {"ok": False, "error_code": code, "error": error.message if code == "insufficient_memory" else code}
+        retry = getattr(error, "retry_in_s", None)
+        if retry is not None:
+            body["retry_in_s"] = retry
+        response = jsonify(body)
+        if retry is not None:
+            response.headers["Retry-After"] = str(retry)
+        return response, status
+
+    @app.route("/api/mca/vault", methods=["GET"])
+    @handle_errors
+    def vault_status():
+        vault = _vault()
+        if vault is None:
+            return _not_ready()
+        body = vault.status()
+        facade = _facade()
+        if facade is not None and body.get("locked"):
+            try:
+                records = facade.attachments_snapshot().records
+                body["locked_items"] = len(records)
+                body["waiting_offers"] = sum(1 for r in records if r.direction == "received" and r.state == receiver.WAITING_CONSENT)
+            except FacadeNotReady:
+                pass
+        body["ok"] = True
+        return jsonify(body)
+
+    @app.route("/api/mca/vault/unlock", methods=["POST"])
+    @handle_errors
+    def vault_unlock():
+        """Unlock with the passphrase or the recovery key. The secret is read here, handed to the runtime and never
+        logged, echoed or queued (it does not go through the command queue on purpose)."""
+        vault = _vault()
+        if vault is None:
+            return _not_ready()
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return _json_error("passphrase_required", "passphrase required"), 400
+        passphrase = data.get("passphrase")
+        recovery_key = data.get("recovery_key")
+        if (passphrase is not None and not isinstance(passphrase, str)) or (recovery_key is not None and not isinstance(recovery_key, str)):
+            return _json_error("passphrase_required", "passphrase required"), 400
+        try:
+            status = vault.unlock(passphrase=passphrase, recovery_key=recovery_key)
+        except VaultError as error:
+            return _vault_error(error)
+        finally:
+            passphrase = recovery_key = data = None
+        status["ok"] = True
+        return jsonify(status)
+
+    @app.route("/api/mca/vault/lock", methods=["POST"])
+    @handle_errors
+    def vault_lock():
+        vault = _vault()
+        if vault is None:
+            return _not_ready()
+        if not vault.is_enabled():
+            return _vault_error(VaultError("vault_not_enabled"))
+        status = vault.lock()
+        status["ok"] = True
+        return jsonify(status)
+
     @app.route("/api/attachments", methods=["GET"])
     @handle_errors
     @_mca_error_boundary
@@ -737,7 +832,7 @@ def register_attachments_routes(app, handle_errors):
         page = matching[offset:offset + limit]
         return jsonify({
             "ok": True,
-            "attachments": [serialize_attachment_public(r) for r in page],
+            "attachments": [serialize_attachment_public(r, vault_locked=_vault_is_locked()) for r in page],
             "total": total,
         })
 
@@ -825,7 +920,7 @@ def register_attachments_routes(app, handle_errors):
 
         return jsonify({
             "ok": True,
-            "attachment": serialize_attachment_public(record),
+            "attachment": serialize_attachment_public(record, vault_locked=_vault_is_locked()),
             "timeline": [serialize_timeline_event(e) for e in record.timeline],
         })
 
@@ -1079,24 +1174,28 @@ def register_attachments_routes(app, handle_errors):
     @app.route("/api/attachments/<attachment_id>/retry", methods=["POST"])
     @handle_errors
     @_mca_error_boundary
+    @_vault_gated
     def retry_attachment(attachment_id):
         return _submit_lifecycle_command(attachment_id, "attachment_retry", _retry_precondition)
 
     @app.route("/api/attachments/<attachment_id>/download", methods=["POST"])
     @handle_errors
     @_mca_error_boundary
+    @_vault_gated
     def download_attachment(attachment_id):
         return _submit_lifecycle_command(attachment_id, "attachment_download", _consent_precondition)
 
     @app.route("/api/attachments/<attachment_id>/reject", methods=["POST"])
     @handle_errors
     @_mca_error_boundary
+    @_vault_gated
     def reject_attachment(attachment_id):
         return _submit_lifecycle_command(attachment_id, "attachment_reject", _consent_precondition)
 
     @app.route("/api/attachments/<attachment_id>/cancel", methods=["POST"])
     @handle_errors
     @_mca_error_boundary
+    @_vault_gated
     def cancel_attachment(attachment_id):
         return _submit_lifecycle_command(attachment_id, "attachment_cancel", _cancel_precondition)
 
@@ -1155,12 +1254,14 @@ def register_attachments_routes(app, handle_errors):
     @app.route("/api/attachments/<attachment_id>/save", methods=["POST"])
     @handle_errors
     @_mca_error_boundary
+    @_vault_gated
     def save_attachment(attachment_id):
         return _submit_lifecycle_command(attachment_id, "attachment_save", _save_precondition)
 
     @app.route("/api/attachments/<attachment_id>/revoke", methods=["POST"])
     @handle_errors
     @_mca_error_boundary
+    @_vault_gated
     def revoke_attachment(attachment_id):
         return _submit_lifecycle_command(attachment_id, "attachment_revoke", _revoke_precondition)
 
@@ -1198,6 +1299,7 @@ def register_attachments_routes(app, handle_errors):
     @app.route("/api/mca/contacts/<contact_id>/request-key", methods=["POST"])
     @handle_errors
     @_mca_error_boundary
+    @_vault_gated
     def request_contact_key(contact_id):
         """§7.10: ask a contact to announce its MCA key. Synchronous checks are
         limited to pure validation (contact id shape, an optional DIRECT
@@ -1347,6 +1449,7 @@ def register_attachments_routes(app, handle_errors):
     @app.route("/api/mca/contacts/<contact_id>/confirm", methods=["POST"])
     @handle_errors
     @_mca_error_boundary
+    @_vault_gated
     def confirm_contact_key(contact_id):
         """Step 1.7: "trust this MCA key" - the explicit `confirm_tofu()`.
         Valid only while the binding is `KEY_UNVERIFIED` (announced, never
@@ -1360,6 +1463,7 @@ def register_attachments_routes(app, handle_errors):
     @app.route("/api/mca/contacts/<contact_id>/key-change/accept", methods=["POST"])
     @handle_errors
     @_mca_error_boundary
+    @_vault_gated
     def accept_contact_key_change(contact_id):
         """Step 1.7: promote a parked key change into the trusted binding (the
         new key still needs its own, separate confirm afterwards - accepting
@@ -1372,6 +1476,7 @@ def register_attachments_routes(app, handle_errors):
     @app.route("/api/mca/contacts/<contact_id>/key-change/reject", methods=["POST"])
     @handle_errors
     @_mca_error_boundary
+    @_vault_gated
     def reject_contact_key_change(contact_id):
         """Step 1.7: dismiss a parked key change, leaving the existing trusted
         binding untouched (not a blacklist). Valid only while `KEY_CHANGED`."""
@@ -1385,6 +1490,7 @@ def register_attachments_routes(app, handle_errors):
     @app.route("/api/attachments", methods=["POST"])
     @handle_errors
     @_mca_error_boundary
+    @_vault_gated
     def create_attachment():
         """The §7.2 idempotent multipart create. Splits its work across the two
         threads exactly as §3.5/§3.6/§7.2 prescribe:
@@ -1937,6 +2043,7 @@ def register_attachments_routes(app, handle_errors):
     @app.route("/api/mca/providers/<provider_id>/upload-token", methods=["PUT"])
     @handle_errors
     @_mca_error_boundary
+    @_vault_gated
     def set_provider_upload_token(provider_id):
         """§7.12: store an upload token (0600 file). The token is never
         echoed; the synchronous `upload_token_too_long` check mirrors the

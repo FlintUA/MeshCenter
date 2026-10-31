@@ -278,7 +278,14 @@
       "provider_id_mismatch": "Das Relay hat mit einer anderen Identität geantwortet",
       "invalid_older_than_days": "Gib eine ganze Zahl von 1 bis 3650 ein",
       "command_not_found": "Das Ergebnis ist nicht mehr bekannt",
-      "invalid_request": "Die Anfrage war ungültig"
+      "invalid_request": "Die Anfrage war ungültig",
+      "vault_locked": "MCAttach ist gesperrt. Entsperre es zuerst.",
+      "unlock_failed": "Die Passphrase oder der Wiederherstellungsschlüssel ist nicht korrekt",
+      "unlock_rate_limited": "Zu viele Versuche. Warte einen Moment und versuche es erneut",
+      "insufficient_memory": "Nicht genug freier Speicher zum Entsperren. Versuche es erneut, wenn der Knoten weniger ausgelastet ist",
+      "vault_not_enabled": "Der Tresor ist nicht aktiviert",
+      "vault_busy": "MCAttach ist beschäftigt. Versuche es gleich noch einmal",
+      "passphrase_required": "Gib die Passphrase oder den Wiederherstellungsschlüssel ein"
     },
     "accept_download": "Akzeptieren und herunterladen",
     "accepting_key_change": "Akzeptiere Schlüsselwechsel…",

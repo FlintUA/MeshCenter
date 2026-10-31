@@ -399,7 +399,7 @@ def serialize_timeline_event(event: TimelineEvent) -> dict:
     return {"event_type": event.event_type, "detail": detail, "created_at": event.created_at}
 
 
-def serialize_attachment_public(record: AttachmentRecord, *, include_timeline: bool = False) -> dict:
+def serialize_attachment_public(record: AttachmentRecord, *, include_timeline: bool = False, vault_locked: bool = False) -> dict:
     """The §7.5 public projection, built field-by-field (never
     `dataclasses.asdict`). Deliberately omits `descriptor`/`locator` and
     `saved_path` - only `saved`/`content_available` booleans reach the
@@ -426,6 +426,11 @@ def serialize_attachment_public(record: AttachmentRecord, *, include_timeline: b
         "recipients": [serialize_recipient(r) for r in record.recipients],
         "deliveries": [serialize_delivery(d) for d in record.deliveries],
     }
+    if vault_locked:
+        # MCA-VAULT (ADR-0013 Decision 4): while locked the list shows the contact, the time, the size and the type;
+        # the name is withheld, never replaced by a ciphertext. The UI shows a "locked" placeholder.
+        out["file_name"] = None
+        out["locked"] = True
     if include_timeline:
         out["timeline"] = [serialize_timeline_event(e) for e in record.timeline]
     return out

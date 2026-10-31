@@ -3539,3 +3539,173 @@ def test_received_cache_purge_queues_the_command_and_validates(monkeypatch):
     assert resp.status_code == 202 and resp.get_json()["ok"] is True
     assert facade.submitted[0].kind == "attachment_purge_received_cache"
     assert dict(facade.submitted[0].payload) == {"older_than_days": 30}
+
+
+# ---- MCA-VAULT PR 2: the API while locked, and the vault routes ----------------------------------------------------
+
+from meshsrv.attachments.vault import header as _vault_header, kdf as _vault_kdf, passphrase as _vault_pass, runtime as _vault_runtime
+
+_VAULT_PASS = "correct horse battery staple"
+
+
+class _VClock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+
+@pytest.fixture
+def vault_dir(tmp_path):
+    created = _vault_header.create(_vault_pass.normalize(_VAULT_PASS), _vault_kdf.KdfParams(_vault_kdf.MIN_OPSLIMIT, _vault_kdf.MIN_MEMLIMIT))
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "vault.json").write_text(created.header.to_json(), encoding="utf-8")
+    return workspace, created
+
+
+def _with_vault(monkeypatch, workspace, **kw):
+    clock = kw.pop("clock", _VClock())
+    kw.setdefault("free_ram", lambda: 4 * 1024 ** 3)
+    runtime_obj = _vault_runtime.VaultRuntime(workspace, clock=clock, **kw)
+    monkeypatch.setattr(mca_runtime, "get_vault", lambda: runtime_obj)
+    return runtime_obj, clock
+
+
+_GATED = [
+    ("post", "/api/attachments"),
+    ("post", "/api/attachments/" + "a" * 32 + "/retry"),
+    ("post", "/api/attachments/" + "a" * 32 + "/download"),
+    ("post", "/api/attachments/" + "a" * 32 + "/reject"),
+    ("post", "/api/attachments/" + "a" * 32 + "/cancel"),
+    ("post", "/api/attachments/" + "a" * 32 + "/save"),
+    ("post", "/api/attachments/" + "a" * 32 + "/revoke"),
+    ("post", "/api/mca/contacts/!756f9960/request-key"),
+    ("post", "/api/mca/contacts/!756f9960/confirm"),
+    ("post", "/api/mca/contacts/!756f9960/key-change/accept"),
+    ("post", "/api/mca/contacts/!756f9960/key-change/reject"),
+    ("put", "/api/mca/providers/" + "A" * 11 + "/upload-token"),
+]
+
+
+@pytest.mark.parametrize("method, path", _GATED)
+def test_locked_vault_answers_423_before_anything_is_staged_or_queued(monkeypatch, vault_dir, method, path):
+    workspace, _ = vault_dir
+    _with_vault(monkeypatch, workspace)
+    facade = _FakeFacade()
+    c = _client(monkeypatch, facade)
+    resp = getattr(c, method)(path, json={}) if method != "post" or path != "/api/attachments" else _post_create(c)
+    assert resp.status_code == 423 and resp.get_json()["error_code"] == "vault_locked"
+    assert facade.submitted == []
+
+
+def test_unlocked_vault_lets_the_same_requests_through_to_their_normal_validation(monkeypatch, vault_dir, tmp_path):
+    workspace, _ = vault_dir
+    rt, _clock = _with_vault(monkeypatch, workspace)
+    rt.unlock(passphrase=_VAULT_PASS)
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider(max_ttl_seconds=604800)}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    assert _post_create(c).status_code == 202
+
+
+def test_requests_that_need_no_key_still_work_while_locked(monkeypatch, vault_dir):
+    workspace, _ = vault_dir
+    _with_vault(monkeypatch, workspace)
+    facade = _FakeFacade()
+    c = _client(monkeypatch, facade)
+    assert c.get("/api/attachments/received-cache").status_code == 200
+    resp = c.post("/api/attachments/received-cache/purge", json={"older_than_days": 30})
+    assert resp.status_code == 202 and facade.submitted[0].kind == "attachment_purge_received_cache"
+
+
+def test_the_list_and_the_detail_withhold_the_file_name_while_locked(monkeypatch, vault_dir):
+    workspace, _ = vault_dir
+    rt, _clock = _with_vault(monkeypatch, workspace)
+    record = _attachment(id="b" * 32, direction="received", state="WAITING_CONSENT", file_name="secret-report.pdf", plain_size=4321)
+    c = _client(monkeypatch, _FakeFacade(snapshot=_snapshot([record])))
+    listed = c.get("/api/attachments").get_json()["attachments"][0]
+    detail = c.get("/api/attachments/" + "b" * 32).get_json()["attachment"]
+    for item in (listed, detail):
+        assert item["file_name"] is None and item["locked"] is True
+        assert item["plain_size"] == 4321 and item["mime_type"] == "image/jpeg", "size and type stay visible"
+    assert "secret-report" not in c.get("/api/attachments").get_data(as_text=True)
+    rt.unlock(passphrase=_VAULT_PASS)
+    shown = c.get("/api/attachments").get_json()["attachments"][0]
+    assert shown["file_name"] == "secret-report.pdf" and "locked" not in shown
+
+
+def test_without_a_vault_nothing_is_locked_and_the_vault_routes_say_disabled(monkeypatch, tmp_path):
+    rt, _clock = _with_vault(monkeypatch, tmp_path)           # no vault.json in this directory
+    c = _client(monkeypatch, _FakeFacade())
+    status = c.get("/api/mca/vault").get_json()
+    assert status["state"] == "disabled" and status["enabled"] is False and status["ok"] is True
+    assert c.post("/api/mca/vault/unlock", json={"passphrase": "x" * 12}).status_code == 409
+    assert c.post("/api/mca/vault/lock", json={}).get_json()["error_code"] == "vault_not_enabled"
+
+
+def test_vault_routes_are_not_ready_before_the_runtime_exists(monkeypatch):
+    monkeypatch.setattr(mca_runtime, "get_vault", lambda: None)
+    c = _client(monkeypatch, _FakeFacade())
+    for resp in (c.get("/api/mca/vault"), c.post("/api/mca/vault/unlock", json={"passphrase": "x"}), c.post("/api/mca/vault/lock", json={})):
+        assert resp.status_code == 503 and resp.get_json()["error_code"] == "mca_not_ready"
+
+
+def test_unlock_and_lock_through_the_api_never_echo_the_secret(monkeypatch, vault_dir):
+    workspace, created = vault_dir
+    _with_vault(monkeypatch, workspace)
+    c = _client(monkeypatch, _FakeFacade(snapshot=_snapshot([_attachment(direction="received", state="WAITING_CONSENT")])))
+    before = c.get("/api/mca/vault").get_json()
+    assert before["state"] == "locked" and before["locked"] is True and before["locked_items"] == 1 and before["waiting_offers"] == 1
+    assert before["kdf"]["memlimit_mib"] == 32 and before["min_free_ram_mib"] == 48
+    resp = c.post("/api/mca/vault/unlock", json={"passphrase": _VAULT_PASS})
+    body = resp.get_data(as_text=True)
+    assert resp.status_code == 200 and resp.get_json()["state"] == "unlocked"
+    assert _VAULT_PASS not in body and bytes(created.storage_key).hex() not in body
+    assert c.get("/api/mca/vault").get_json()["state"] == "unlocked"
+    locked = c.post("/api/mca/vault/lock", json={}).get_json()
+    assert locked["state"] == "locked" and locked["ok"] is True
+
+
+def test_wrong_passphrase_is_403_then_rate_limited_with_retry_after(monkeypatch, vault_dir):
+    workspace, _ = vault_dir
+    _rt, clock = _with_vault(monkeypatch, workspace)
+    c = _client(monkeypatch, _FakeFacade())
+    first = c.post("/api/mca/vault/unlock", json={"passphrase": "a wrong passphrase 1"})
+    assert first.status_code == 403 and first.get_json()["error_code"] == "unlock_failed"
+    again = c.post("/api/mca/vault/unlock", json={"passphrase": _VAULT_PASS})
+    assert again.status_code == 429 and again.get_json()["error_code"] == "unlock_rate_limited"
+    assert again.headers["Retry-After"] == str(again.get_json()["retry_in_s"]) and again.get_json()["retry_in_s"] >= 1
+    clock.now += 5
+    assert c.post("/api/mca/vault/unlock", json={"passphrase": _VAULT_PASS}).status_code == 200
+
+
+def test_unlock_with_the_recovery_key_and_bad_bodies(monkeypatch, vault_dir):
+    from meshsrv.attachments.vault import recovery as _recovery
+    workspace, created = vault_dir
+    _with_vault(monkeypatch, workspace)
+    c = _client(monkeypatch, _FakeFacade())
+    for payload in (None, [], {}, {"passphrase": 5}, {"recovery_key": ["x"]}):
+        resp = c.post("/api/mca/vault/unlock", json=payload) if payload is not None else c.post("/api/mca/vault/unlock", data="nope", content_type="text/plain")
+        assert resp.status_code == 400 and resp.get_json()["error_code"] == "passphrase_required"
+    assert c.post("/api/mca/vault/unlock", json={"recovery_key": _recovery.encode(created.recovery_key)}).status_code == 200
+
+
+def test_unlock_is_refused_with_a_clear_message_when_memory_is_low(monkeypatch, vault_dir):
+    workspace, _ = vault_dir
+    _with_vault(monkeypatch, workspace, free_ram=lambda: 40 * 1024 * 1024)
+    c = _client(monkeypatch, _FakeFacade())
+    resp = c.post("/api/mca/vault/unlock", json={"passphrase": _VAULT_PASS})
+    assert resp.status_code == 503 and resp.get_json()["error_code"] == "insufficient_memory"
+    assert "48 MiB needed" in resp.get_json()["error"] and "40 MiB free" in resp.get_json()["error"]
+
+
+def test_the_login_and_csrf_hooks_answer_before_the_lock_so_an_unauthenticated_caller_learns_nothing(monkeypatch, vault_dir):
+    """server.py registers the login and CSRF hooks after the attachments routes; the gate is on the view, so it never
+    runs ahead of them (found in the live round: a before_request gate answered 423 before the CSRF check)."""
+    workspace, _ = vault_dir
+    _with_vault(monkeypatch, workspace)
+    c = _client(monkeypatch, _FakeFacade())
+    c.application.before_request(lambda: ({"error_code": "auth_required"}, 401))       # registered later, like server.py's hooks
+    for method, path in _GATED[:4]:
+        assert getattr(c, method)(path, json={}).status_code == 401, path

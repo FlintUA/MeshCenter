@@ -188,7 +188,18 @@ Same code path, same in-memory key. The passphrase is never an environment varia
 
 - `GET /api/mca/vault`: `{state: disabled | locked | unlocked | migrating, kdf: {memlimit, opslimit, measured_ms}, locked_items}`; never a key, passphrase or name while locked.
 - `POST /api/mca/vault/enable | unlock | lock | change-passphrase | recalibrate | new-recovery-key | disable`: authenticated, CSRF-protected, rate limited (unlock), danger dialogs for enable and disable (UI1).
-- New worker command kinds (`vault_enable`, `vault_unlock`, `vault_lock`, `vault_change_passphrase`, `vault_recalibrate`, `vault_disable`), added to `COMMAND_KINDS` with the pinned-set tests updated in the same PR, because keys, files and the database are worker-owned.
+- **Amended in PR 2:** unlock and lock are not worker commands. A command payload sits in the command queue and the
+  command registry, and a passphrase must never be stored there. Unlock and lock run on the request thread inside the
+  vault runtime, and unlock takes the service's tick lock for the duration of the derivation, so it is serialized
+  with all MCAttach worker activity exactly as a command would be. `GET /api/mca/vault`, `POST /api/mca/vault/unlock`
+  and `POST /api/mca/vault/lock` are the PR 2 surface. The state-changing, file-touching operations of PR 3 (enable,
+  disable, change passphrase, re-calibrate) will still be worker commands, because they touch files and the
+  database, and they receive the passphrase through a one-shot in-memory hand-off that is never queued or logged.
+- Locked behaviour at the API: the requests that need the identity seed or the storage key answer HTTP 423
+  `vault_locked` (create, retry, download, reject, cancel, save, revoke, request-key, confirm, accept or reject a key
+  change, set an upload token); the worker refuses the same commands with `vault_locked` if one was queued before the
+  lock. A wrong passphrase or recovery key is 403 `unlock_failed`, a delay window is 429 `unlock_rate_limited` with
+  `Retry-After`, too little free memory is 503 `insufficient_memory` with the numbers.
 - The attachments snapshot carries `vault: {state}` and per-record `locked: true` with `file_name` and `comment` absent while locked.
 
 ### 11. Roll back and downgrade are refused while a vault exists
@@ -287,6 +298,16 @@ the vault (leak test across receive, save, send, schedule, purge); PR 5 UI (pers
 System, strength hint, disabled Roll back button, the "gallery not covered" note); PR 6 Docker and documentation
 (swap notes, downgrade notes). Details, tests and the live round of each are in section 13 of
 `docs/proposals/MCA-VAULT.md`.
+
+## Notes for later PRs (from the owner's PR 1 review)
+
+- **PR 2 (done here):** unlock is serialized with MCAttach work and refused with a clear message when free memory is
+  too low: the unlock needs the header's `memlimit` plus a 16 MiB margin (48 MiB for the 32 MiB floor); on a Zero 2 W
+  with about 120 MB free that is allowed, below it the answer is 503 `insufficient_memory` with the numbers, and it is
+  not counted as a wrong attempt.
+- **PR 4:** "Download to device" streams before the final tag is verified. On any stream error the HTTP response is
+  aborted (no clean end of the body), so the browser marks the download failed instead of saving a truncated file.
+  A preview is served only after the whole file has been verified.
 
 ## Open questions
 

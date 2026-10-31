@@ -732,6 +732,7 @@ def handle_offer(
     now: Optional[float] = None,
     source_address: Optional[str] = None,
     reply_route: Optional[ReplyRoute] = None,
+    defer_replies: bool = False,
 ) -> ReceiveResult:
     """Handle one inbound OFFER frame's already-`ingest()`-ed logical
     bytes. `key_exchange` is this workspace/adapter's own
@@ -880,7 +881,9 @@ def handle_offer(
     )
 
     replies: List[bytes] = []
-    ack = enqueue_control_message(
+    # MCA-VAULT: while the vault is locked the offer is recorded but nothing is signed; `enqueue_missing_acks()` sends
+    # the acknowledgement (once, through the same idempotency ledger) after the unlock
+    ack = None if defer_replies else enqueue_control_message(
         conn,
         attachment_id=attachment_id,
         transfer_id=unverified.transfer_id,
@@ -918,9 +921,46 @@ def handle_offer(
         provider_registry=provider_registry,
         network_available=network_available,
         now=now,
-        on_provider_unknown=_send_provider_unknown_ack,
+        on_provider_unknown=None if defer_replies else _send_provider_unknown_ack,
     )
     return ReceiveResult(attachment_id=attachment_id, state=result.state, replies=replies + result.replies)
+
+
+def enqueue_missing_acks(
+    conn: sqlite3.Connection,
+    *,
+    workspace_manager: MCAWorkspaceManager,
+    principal: MCAPrincipal,
+    now: Optional[float] = None,
+    limit: int = 50,
+) -> int:
+    """MCA-VAULT: the ACK_RECEIVED of every received transfer that was recorded while the vault was locked. The
+    idempotency ledger (`mca_outgoing_replies`) makes this safe to call on any tick: a transfer that already has its
+    acknowledgement is skipped. Returns how many were enqueued."""
+    now = time.time() if now is None else now
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        """
+        SELECT a.id, a.transfer_id FROM attachments a
+        WHERE a.workspace_id = ? AND a.direction = 'received' AND a.transfer_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM mca_outgoing_replies r WHERE r.attachment_id = a.id AND r.event_type = ?)
+        ORDER BY a.created_at LIMIT ?
+        """,
+        (principal.workspace_id, _EVENT_ACK_RECEIVED_SENT, limit),
+    ).fetchall()
+    enqueued = 0
+    for row in rows:
+        try:
+            transfer_id = bytes.fromhex(row["transfer_id"])
+        except ValueError:
+            continue
+        if enqueue_control_message(
+            conn, attachment_id=row["id"], transfer_id=transfer_id, message_type=_ACK_RECEIVED_TYPE,
+            event_type=_EVENT_ACK_RECEIVED_SENT, principal=principal, workspace_manager=workspace_manager, now=now,
+        ) is not None:
+            enqueued += 1
+    conn.commit()
+    return enqueued
 
 
 # ---- entry point 2: advance one attachment as far as automatic logic goes --

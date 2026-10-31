@@ -860,7 +860,7 @@
     "send_too_many": "At most {max} pictures per send: select fewer.",
     "send_unavailable": "Sending is not available right now. Reload the page.",
     "filter_label": "Filter pictures",
-    "filter_placeholder": "Filter by file or camera name",
+    "filter_placeholder": "File or camera",
     "filter_open": "Search pictures",
     "filter_close": "Close search",
     "filter_clear": "Clear filter",

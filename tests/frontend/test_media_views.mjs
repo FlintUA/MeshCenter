@@ -374,4 +374,40 @@ assert.ok(html.indexOf('id="cameraFullscreenBtn"') > html.indexOf('class="video-
     assert.ok(media.includes('observer.observe(box)') && media.includes("'orientationchange'"), 'and re-measured on resize and rotation');
 }
 
+
+// ---------------------------------------------------------------- G4: the filter field is ONE frame (found on a real iPhone and Android)
+{
+    const css = read('style-part4.css');
+    const media = read('media.js');
+    const rule = (selector) => {
+        const at = css.indexOf(selector + ' {');
+        assert.ok(at >= 0, selector + ' exists');
+        return css.slice(at, css.indexOf('}', at));
+    };
+    // the wrapper is the frame and shows the focus ring (mouse and keyboard)
+    const wrapperFocus = rule('.media-filter:focus-within');
+    assert.ok(/outline: 2px solid/.test(wrapperFocus) && /border-color/.test(wrapperFocus), 'the ring is drawn on the wrapper');
+    // the input has no frame, background or native look of its own; the doubled class beats ui-kit.css (loaded later)
+    const input = rule('.media-filter .media-filter-input.media-filter-input');
+    for (const needle of ['border: 0 !important', 'outline: 0 !important', 'box-shadow: none !important', 'background: transparent !important',
+        '-webkit-appearance: none', 'appearance: none', 'min-height: 0', 'min-width: 0', 'width: auto', 'max-width: 100%', 'box-sizing: border-box', 'flex: 1 1 0']) {
+        assert.ok(input.includes(needle), 'the input has ' + needle);
+    }
+    // 16 px at least: iOS Safari zooms the page on focus below that
+    const size = /font-size: (\d+)px/.exec(input);
+    assert.ok(size && Number(size[1]) >= 16, 'font-size >= 16px');
+    assert.ok(/\.media-filter \.media-filter-input\.media-filter-input:focus-visible/.test(css), 'also while focused');
+    assert.ok(css.includes('::-webkit-search-cancel-button'), 'a search-type input would show no native cancel button');
+    // ui-kit.css loads after style-part4.css, so the global focus ring, the phone min-height and the dark input background
+    // would win at equal specificity: this is why the class is doubled
+    assert.ok(template.indexOf('style-part4.css') < template.indexOf('ui-kit.css'), 'ui-kit.css loads after style-part4.css');
+    assert.ok(/html\[data-theme="dark"\] :is\(input, select, textarea, \.message-input\) \{ background:/.test(read('ui-kit.css').split('\n').join(' ').replace(/\s+/g, ' ')), 'the dark-theme rule this has to beat is still there (if it goes, the doubled class can go too)');
+    // the placeholder is short enough for a 320 px phone
+    for (const loc of ['en', 'de', 'ru', 'uk']) {
+        const catalog = JSON.parse(readFileSync(path.join(__dirname, '..', '..', 'static', 'i18n', loc + '.json'), 'utf8'));
+        assert.ok(catalog.media.filter_placeholder.length <= 20, loc + ' placeholder is short: ' + catalog.media.filter_placeholder);
+    }
+    assert.ok(media.includes('placeholder="${mediaEscapeHtml(mediaT(\'media.filter_placeholder\'))}"'), 'the field uses the placeholder key');
+}
+
 console.log('test_media_views.mjs: ok');

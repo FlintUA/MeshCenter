@@ -377,8 +377,12 @@ class AttachmentsService:
         recipient_snapshot_publisher: Optional[RecipientSnapshotPublisher] = None,
         key_request_snapshot_publisher: Optional[KeyRequestStatePublisher] = None,
         contact_exists_fn: Optional[Callable[[str], bool]] = None,
+        offer_linked_fn: Optional[Callable[[str, str], None]] = None,
     ):
         self._conn = conn
+        # MCA-UX1: told (transfer_id hex, attachment id) once an inbound OFFER has become an attachment row, so the
+        # chat bubble of that offer can link to it exactly. Cosmetic: a failure here never affects the transfer.
+        self._offer_linked_fn = offer_linked_fn
         # KEY_REQUEST auto-retry: True while the node is still known to MeshCenter; None = never ends a series for it
         self._contact_exists_fn = contact_exists_fn
         self._workspace_manager = workspace_manager
@@ -2193,6 +2197,17 @@ class AttachmentsService:
             result={"deleted": deleted, "bytes": freed, "older_than_days": days},
         )
 
+    def _notify_offer_linked(self, transfer_id: bytes, result) -> None:
+        if self._offer_linked_fn is None:
+            return
+        attachment_id = getattr(result, "attachment_id", None)
+        if not attachment_id:
+            return
+        try:
+            self._offer_linked_fn(bytes(transfer_id).hex(), attachment_id)
+        except Exception:  # cosmetic hook: the transfer is already recorded
+            logger.warning("AttachmentsService: offer link hook failed")
+
     def _auto_request_missing_keys(self) -> None:
         """PR 1 (recoverable missing-key workflow): drive the missing-key
         half of the receiver's WAITING_KEY state forward without a human
@@ -3010,7 +3025,7 @@ class AttachmentsService:
             destination_address=envelope.route_id,
         )
         try:
-            receiver.handle_offer(
+            result = receiver.handle_offer(
                 self._conn,
                 workspace_manager=self._workspace_manager,
                 principal=self._principal,
@@ -3021,6 +3036,7 @@ class AttachmentsService:
                 source_address=source_address,
                 reply_route=reply_route,
             )
+            self._notify_offer_linked(unverified.transfer_id, result)
         except receiver.ReceiverError as exc:
             logger.info("AttachmentsService: rejected OFFER from %s: %s", source_address, exc)
 

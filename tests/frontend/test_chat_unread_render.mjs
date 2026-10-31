@@ -267,4 +267,33 @@ test('MCA-UX1: control frames are hidden, an offer and our own transfer are one 
     assert.match(c.innerHTML, /<div class="message me" data-message-id="sent">[\s\S]*File sent/);
 });
 
+test('MCA-UX1: a bubble with the real attachment id opens exactly that transfer; old ones fall back to the nearest match', async () => {
+    const calls = { fetch: [], tab: [], selected: [] };
+    const sb = {
+        console: { log() {}, error: console.error },
+        encodeURIComponent,
+        fetch: async (url) => {
+            calls.fetch.push(url);
+            return { ok: true, json: async () => ({ attachments: [
+                { id: 'far', direction: 'received', counterparty_contact_id: '!aa', created_at: 100 },
+                { id: 'near', direction: 'received', counterparty_contact_id: '!aa', created_at: 5000 },
+            ] }) };
+        },
+        switchMainTab: (tab) => calls.tab.push(tab),
+        window: { MeshCenterFiles: { selectTransfer: (id) => calls.selected.push(id) } },
+    };
+    vm.createContext(sb);
+    vm.runInContext(viewsSource, sb);
+    vm.runInContext(extractFunction('openTransferFromChatMessage'), sb);
+
+    await sb.openTransferFromChatMessage({ chat_id: '!aa', ts: 5001, mca: { type: 'OFFER', transfer_id: 't', attachment_id: 'exact-id' } });
+    assert.equal(calls.fetch.length, 0, 'the real id needs no lookup');
+    assert.deepEqual(calls.selected, ['exact-id']);
+    assert.deepEqual(calls.tab, ['files']);
+
+    await sb.openTransferFromChatMessage({ chat_id: '!aa', ts: 5001, mca: { type: 'OFFER' } });
+    assert.equal(calls.fetch.length, 1, 'an old message without the id uses the nearest-match fallback');
+    assert.equal(calls.selected[1], 'near');
+});
+
 console.log(`test_chat_unread_render.mjs: ${passed} tests passed`);

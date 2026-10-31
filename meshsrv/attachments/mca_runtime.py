@@ -318,7 +318,8 @@ class _MCARuntimeState:
         self.service: Optional[AttachmentsService] = None
 
     def ensure_service(
-        self, radio_transport: RadioTransport, control_channel_index: Optional[int] = None, contact_exists=None
+        self, radio_transport: RadioTransport, control_channel_index: Optional[int] = None, contact_exists=None,
+        offer_linked=None,
     ) -> AttachmentsService:
         """ADR-0008 decision 1's five-step startup sequence, steps 2-4
         (step 1, migrate(), already happened in __init__ above). Building
@@ -342,10 +343,11 @@ class _MCARuntimeState:
         radio listener's own hot path.
         """
         with _lock:
-            return self._ensure_service_locked(radio_transport, control_channel_index, contact_exists)
+            return self._ensure_service_locked(radio_transport, control_channel_index, contact_exists, offer_linked)
 
     def _ensure_service_locked(
-        self, radio_transport: RadioTransport, control_channel_index: Optional[int] = None, contact_exists=None
+        self, radio_transport: RadioTransport, control_channel_index: Optional[int] = None, contact_exists=None,
+        offer_linked=None,
     ) -> AttachmentsService:
         if self.service is not None:
             return self.service
@@ -365,6 +367,7 @@ class _MCARuntimeState:
             probe_registry=self.probe_registry,
             delivery_adapter=adapter,
             contact_exists_fn=contact_exists,
+            offer_linked_fn=offer_linked,
             # Finding 2 (control-channel correction): thread the configured
             # index into the service so inbound-channel observability can
             # compute match/mismatch against the same value the adapter
@@ -452,7 +455,8 @@ def _get_state(data_dir: str) -> "_MCARuntimeState":
 
 
 def start_attachments_service(
-    data_dir: str, radio_transport: RadioTransport, control_channel_index: Optional[int] = None, contact_exists=None
+    data_dir: str, radio_transport: RadioTransport, control_channel_index: Optional[int] = None, contact_exists=None,
+    offer_linked=None,
 ) -> None:
     """Called once from server.py's `start_runtime()`, alongside its
     existing `threading.Thread(target=..., daemon=True).start()` calls
@@ -469,7 +473,7 @@ def start_attachments_service(
     config.example.py's `MCA_CONTROL_CHANNEL_INDEX` comment and
     `MeshtasticTextAdapter.send()`'s own enforcement."""
     state = _get_state(data_dir)
-    state.ensure_service(radio_transport, control_channel_index, contact_exists)
+    state.ensure_service(radio_transport, control_channel_index, contact_exists, offer_linked)
 
 
 def get_attachments_facade() -> Optional[AttachmentsFacade]:

@@ -741,6 +741,75 @@ def register_attachments_routes(app, handle_errors):
             "total": total,
         })
 
+    # ---- MCA-UX1: the space used by received copies (cache/incoming) -----------------------------------------------
+
+    def _received_cache_records(snapshot):
+        """Received rows whose content sits in the internal cache (not saved with "Save to Files")."""
+        return [
+            r for r in snapshot.records
+            if r.direction == "received" and not r.saved and r.descriptor is not None
+            and str(r.descriptor.locator).startswith("cache/incoming/")
+        ]
+
+    def _parse_older_than_days(raw):
+        try:
+            days = int(raw)
+        except (TypeError, ValueError):
+            return None
+        return days if 1 <= days <= 3650 else None
+
+    @app.route("/api/attachments/received-cache", methods=["GET"])
+    @handle_errors
+    @_mca_error_boundary
+    def received_cache_stats():
+        """How much room the received copies take, and how many of them are older than `older_than_days` (the count
+        and size the confirmation dialog of the purge shows). Computed from the snapshot, no filesystem walk."""
+        facade = _facade()
+        if facade is None:
+            return _not_ready()
+        records = _received_cache_records(facade.attachments_snapshot())
+        body = {
+            "ok": True,
+            "count": len(records),
+            "bytes": sum(int(r.plain_size or 0) for r in records),
+        }
+        raw_days = request.args.get("older_than_days")
+        if raw_days is not None:
+            days = _parse_older_than_days(raw_days)
+            if days is None:
+                return _json_error("invalid_older_than_days", "older_than_days must be 1 to 3650"), 400
+            cutoff = time.time() - days * 86400
+            old = [r for r in records if r.created_at < cutoff]
+            body["older_than_days"] = days
+            body["older_count"] = len(old)
+            body["older_bytes"] = sum(int(r.plain_size or 0) for r in old)
+        return jsonify(body)
+
+    @app.route("/api/attachments/received-cache/purge", methods=["POST"])
+    @handle_errors
+    @_mca_error_boundary
+    def purge_received_cache():
+        """Delete the received copies older than N days. Explicit only (no automatic deletion); never touches a file
+        saved with "Save to Files"."""
+        facade = _facade()
+        if facade is None:
+            return _not_ready()
+        data = request.get_json(silent=True)
+        days = _parse_older_than_days(data.get("older_than_days") if isinstance(data, dict) else None)
+        if days is None:
+            return _json_error("invalid_older_than_days", "older_than_days must be 1 to 3650"), 400
+        command = Command(
+            command_id=mint_command_id(),
+            kind="attachment_purge_received_cache",
+            payload={"older_than_days": days},
+            created_at=time.time(),
+        )
+        try:
+            command_id = facade.submit(command)
+        except CommandQueueFull:
+            return _json_error("command_queue_full", "command queue is full"), 429
+        return jsonify({"ok": True, "command_id": command_id}), 202
+
     @app.route("/api/attachments/<attachment_id>", methods=["GET"])
     @handle_errors
     @_mca_error_boundary
@@ -1617,6 +1686,12 @@ def register_attachments_routes(app, handle_errors):
             return _internal_error_response()
 
         if outcome.kind == "fresh":
+            note = app.extensions.get("mc_transfer_chat_note")
+            if note is not None:
+                try:
+                    note(source_address, attachment_id)
+                except Exception:  # the chat note is cosmetic; the transfer is already queued
+                    _log.warning("MCAttach create endpoint: chat note failed")
             return jsonify({
                 "ok": True,
                 "command_id": command_id,

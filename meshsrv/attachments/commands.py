@@ -74,6 +74,7 @@ COMMAND_KINDS = frozenset({
     "attachment_cancel",
     "attachment_revoke",
     "attachment_delete_local_content",
+    "attachment_purge_received_cache",
     "attachment_import",
     "attachment_copy_code",
     "attachment_add_delivery",

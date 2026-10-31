@@ -2816,6 +2816,146 @@ async function test_send_pictures_loads_providers_without_the_files_tab_being_ac
     console.log('PASS: test_send_pictures_loads_providers_without_the_files_tab_being_active');
 }
 
+// ---- MCA-UX1: summary separator, tab dot, opening a transfer from the chat, received-copies storage -------------
+
+const viewsSource = readFileSync(path.join(__dirname, '..', '..', 'static', 'chat-views.js'), 'utf8');
+
+function sandboxWithViews(fetchImpl) {
+    const sandbox = buildSandbox({ fetchImpl });
+    // chat-views.js attaches MCViews to the global it is run in: run it with the sandbox window as `window`
+    const holder = { Intl, Date, Math, Number, String, Object, Array, Map };
+    holder.window = holder;
+    vm.createContext(holder);
+    vm.runInContext(viewsSource, holder, { filename: 'chat-views.js' });
+    sandbox.window.MCViews = holder.MCViews;
+    sandbox.setInterval = () => 0;   // the tab-dot poll timer is started by hand in the test
+    const store = {};
+    sandbox.window.localStorage = {
+        getItem: (k) => (k in store ? store[k] : null),
+        setItem: (k, v) => { store[k] = String(v); },
+    };
+    sandbox._store = store;
+    return sandbox;
+}
+
+function listRoutes(list, extra) {
+    return defaultRoutes(async (url, options) => {
+        if (url === '/api/attachments?limit=200' || url.startsWith('/api/attachments?')) {
+            return json(200, { ok: true, attachments: list, total: list.length });
+        }
+        return extra ? extra(url, options) : undefined;
+    });
+}
+
+async function test_summary_parts_are_separated() {
+    const list = [
+        attachment('a1', 'received', 'WAITING_CONSENT'),
+        attachment('a2', 'received', 'AVAILABLE', { saved: true, plain_size: 24900 }),
+    ];
+    const sandbox = sandboxWithViews(listRoutes(list));
+    activate(sandbox);
+    await waitFor(() => String(sandbox._document.elements.get('filesSummary')?.innerHTML || '').includes('files-summary-saved'));
+    const html = sandbox._document.elements.get('filesSummary').innerHTML;
+    assert.ok(html.includes('files-summary-attention') && html.includes('files-summary-saved'), html);
+    assert.ok(html.includes('files-summary-sep'), 'a visible separator between "need attention" and "saved"');
+    console.log('PASS: test_summary_parts_are_separated');
+}
+
+async function test_files_tab_dot_counts_new_attention_and_clears_while_files_is_shown() {
+    const list = [
+        attachment('old', 'received', 'WAITING_CONSENT', { created_at: 100 }),
+        attachment('new1', 'received', 'WAITING_CONSENT', { created_at: 500 }),
+        attachment('new2', 'sent', 'FAILED_RADIO', { created_at: 600, error_code: 'radio_send_failed' }),
+        attachment('fine', 'received', 'AVAILABLE', { created_at: 700 }),
+    ];
+    const sandbox = sandboxWithViews(listRoutes(list));
+    sandbox._store['mc.files.seenAt'] = '200';
+    sandbox.window.MeshCenterFiles.startBadge();
+    const badge = sandbox._document.getElementById('mainTabFilesBadge');
+    assert.ok(await waitFor(() => badge.hidden === false), 'the dot shows');
+    assert.equal(badge.textContent, '2', 'only attention transfers newer than the last look');
+
+    activate(sandbox);   // Files is shown
+    await waitFor(() => badge.hidden === true);
+    assert.equal(badge.hidden, true, 'it clears while Files is visible');
+    assert.equal(sandbox._store['mc.files.seenAt'], '700', 'and everything on screen counts as seen');
+    sandbox.window.MeshCenterFiles.deactivate();
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(badge.hidden, true, 'seen transfers do not bring the dot back');
+    console.log('PASS: test_files_tab_dot_counts_new_attention_and_clears_while_files_is_shown');
+}
+
+async function test_chat_bubble_selects_its_transfer_even_before_the_list_has_loaded() {
+    const list = [attachment('a1', 'received', 'AVAILABLE'), attachment('a2', 'received', 'AVAILABLE', { created_at: 1700000100 })];
+    const sandbox = sandboxWithViews(listRoutes(list));
+    sandbox.window.MeshCenterFiles.selectTransfer('a2');   // Files was never shown: remembered
+    activate(sandbox);
+    await waitFor(() => /is-selected[^>]*data-attachment="a2"/.test(sandbox._document.elements.get('filesArchiveList')?.innerHTML || ''));
+    const html = sandbox._document.elements.get('filesArchiveList').innerHTML;
+    assert.ok(/is-selected[^>]*data-attachment="a2"/.test(html), 'a2 is the selected card');
+    assert.ok(!/is-selected[^>]*data-attachment="a1"/.test(html));
+    console.log('PASS: test_chat_bubble_selects_its_transfer_even_before_the_list_has_loaded');
+}
+
+function storageRoutes(opts = {}) {
+    const routes = listRoutes([], async (url) => {
+        if (url === '/api/attachments/received-cache') return json(200, { ok: true, count: 3, bytes: 2048 });
+        if (url.startsWith('/api/attachments/received-cache?older_than_days=')) {
+            return json(200, { ok: true, count: 3, bytes: 2048, older_count: opts.olderCount ?? 2, older_bytes: 1500 });
+        }
+        if (url === '/api/attachments/received-cache/purge') return json(202, { ok: true, command_id: 'purge1' });
+        if (url === '/api/mca/commands/purge1') return json(200, { ok: true, command: { status: 'succeeded' } });
+        return undefined;
+    });
+    return routes;
+}
+
+const purgePosts = (sandbox) => sandbox._fetchLog
+    .filter((e) => e.url === '/api/attachments/received-cache/purge')
+    .map((e) => JSON.parse(e.options.body));
+
+async function test_received_copies_storage_line_and_purge_confirmation() {
+    const sandbox = sandboxWithViews(storageRoutes());
+    const calls = { prompt: 0, confirm: [] };
+    sandbox.window.MCDialog = {
+        prompt: async () => { calls.prompt += 1; return { days: '30' }; },
+        confirm: async (o) => { calls.confirm.push(o); return true; },
+    };
+    activate(sandbox);
+    await waitFor(() => String(sandbox._document.elements.get('filesStorage')?.innerHTML || '').includes('purge-received'));
+    const line = sandbox._document.elements.get('filesStorage').innerHTML;
+    assert.ok(line.includes('Received copies: 3, 2.0 KB') || line.includes('Received copies: 3'), line);
+
+    dispatch(sandbox, { 'data-files-action': 'purge-received' });
+    await waitFor(() => purgePosts(sandbox).length === 1);
+    assert.deepEqual(purgePosts(sandbox), [{ older_than_days: 30 }]);
+    assert.equal(calls.confirm.length, 1);
+    assert.equal(calls.confirm[0].danger, true, 'a danger dialog');
+    assert.ok(calls.confirm[0].message.includes('2') && calls.confirm[0].message.includes('30'), 'it names the count and the days');
+    console.log('PASS: test_received_copies_storage_line_and_purge_confirmation');
+}
+
+async function test_purge_cancelled_or_nothing_old_sends_nothing() {
+    const a = sandboxWithViews(storageRoutes());
+    a.window.MCDialog = { prompt: async () => ({ days: '30' }), confirm: async () => false };
+    activate(a);
+    await waitFor(() => String(a._document.elements.get('filesStorage')?.innerHTML || '').includes('purge-received'));
+    dispatch(a, { 'data-files-action': 'purge-received' });
+    await new Promise((r) => setTimeout(r, 150));
+    assert.equal(purgePosts(a).length, 0, 'Cancel sends nothing');
+
+    const b = sandboxWithViews(storageRoutes({ olderCount: 0 }));
+    let confirmed = 0;
+    b.window.MCDialog = { prompt: async () => ({ days: '30' }), confirm: async () => { confirmed += 1; return true; } };
+    activate(b);
+    await waitFor(() => String(b._document.elements.get('filesStorage')?.innerHTML || '').includes('purge-received'));
+    dispatch(b, { 'data-files-action': 'purge-received' });
+    await new Promise((r) => setTimeout(r, 150));
+    assert.equal(confirmed, 0, 'nothing old: no confirmation is asked');
+    assert.equal(purgePosts(b).length, 0);
+    console.log('PASS: test_purge_cancelled_or_nothing_old_sends_nothing');
+}
+
 async function main() {
     await test_activate_merges_contacts_and_excludes_local();
     await test_trust_confirm_shows_full_fingerprint();
@@ -2889,7 +3029,13 @@ async function main() {
     await test_send_pictures_original_over_the_limit_is_refused_clearly();
     await test_send_pictures_untrusted_contact_offers_connect_securely_and_cannot_send();
     await test_send_pictures_loads_providers_without_the_files_tab_being_active();
-    console.log('All files UI behavior tests passed (64 scenarios).');
+    // MCA-UX1
+    await test_summary_parts_are_separated();
+    await test_files_tab_dot_counts_new_attention_and_clears_while_files_is_shown();
+    await test_chat_bubble_selects_its_transfer_even_before_the_list_has_loaded();
+    await test_received_copies_storage_line_and_purge_confirmation();
+    await test_purge_cancelled_or_nothing_old_sends_nothing();
+    console.log('All files UI behavior tests passed (69 scenarios).');
 }
 
 main()

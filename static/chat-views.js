@@ -697,6 +697,56 @@
         return { visible: true, disabled: released, text: text, reason: released ? String(opts.releasedReason) : '' };
     }
 
+    // ---- MCA-UX1: file transfers in the chat -----------------------------------------------------------------------
+
+    // The server marks MCAttach frames (`msg.mca`): an OFFER is one "File received" bubble, our own queued transfer one
+    // "File sent" bubble, every other frame is a control frame that is never shown.
+    function mcaBubbleKind(msg) {
+        var mca = msg && msg.mca;
+        if (!mca) return null;
+        if (mca.type === 'OFFER') return 'received';
+        if (mca.type === 'FILE_SENT') return 'sent';
+        return 'hidden';
+    }
+
+    function withoutControlFrames(messages) {
+        return (messages || []).filter(function (m) { return mcaBubbleKind(m) !== 'hidden'; });
+    }
+
+    // The transfer an incoming "File received" bubble stands for: the received transfer of that contact whose row
+    // was created closest to the message (the offer frame carries no attachment id the page could use).
+    function pickTransferForOffer(attachments, counterparty, messageTs) {
+        var best = null;
+        var bestGap = Infinity;
+        (attachments || []).forEach(function (a) {
+            if (!a || a.direction !== 'received' || a.counterparty_contact_id !== counterparty) return;
+            var gap = Math.abs((Number(a.created_at) || 0) - (Number(messageTs) || 0));
+            if (gap < bestGap) { best = a; bestGap = gap; }
+        });
+        return bestGap <= 6 * 3600 ? best : null;
+    }
+
+    // The Files tab dot: transfers that need attention and showed up after the user last looked at Files.
+    function newAttentionCount(attachments, isAttention, lastSeenAt) {
+        var seen = Number(lastSeenAt) || 0;
+        return (attachments || []).filter(function (a) {
+            return a && isAttention(a) && (Number(a.created_at) || 0) > seen;
+        }).length;
+    }
+
+    // MCA-UX1: the page was rendered by an older version than the one the server runs now (an update happened while the
+    // tab stayed open): both versions must be known and differ.
+    function pageVersionChanged(loaded, current) {
+        var a = String(loaded || '').trim();
+        var b = String(current || '').trim();
+        return a !== '' && b !== '' && a !== b;
+    }
+
+    function badgeLabel(count) {
+        return count > 99 ? '99+' : String(count);
+    }
+
+
     const api = {
         newMarkReadState: newMarkReadState,
         newestIncomingKey: newestIncomingKey,
@@ -727,6 +777,12 @@
         utf8Length: utf8Length,
         profileConnectionBadge: profileConnectionBadge,
         firstUnreadIndex: firstUnreadIndex,
+        mcaBubbleKind: mcaBubbleKind,
+        withoutControlFrames: withoutControlFrames,
+        pickTransferForOffer: pickTransferForOffer,
+        newAttentionCount: newAttentionCount,
+        badgeLabel: badgeLabel,
+        pageVersionChanged: pageVersionChanged,
         SORT_KEYS: SORT_KEYS,
         FILTER_FLAGS: FILTER_FLAGS,
         DEFAULT_NODE_FILTERS: DEFAULT_NODE_FILTERS,

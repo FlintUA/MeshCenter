@@ -6536,3 +6536,43 @@ body.media-lightbox-open {
         background: rgba(0, 0, 0, 0.45);
     }
 }
+
+/* MCA-UX1: file transfers in the chat, the Files tab dot, the storage line, the new-version notice */
+.bubble.mca-bubble { cursor: pointer; }
+.bubble.mca-bubble .text { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; }
+.bubble.mca-bubble .mca-bubble-link { opacity: 0.85; text-decoration: underline; text-underline-offset: 2px; }
+.bubble.mca-bubble:focus-visible { outline: 2px solid var(--mc-accent, #1769d2); outline-offset: 2px; }
+
+.main-tab-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 17px; height: 17px; padding: 0 5px; margin-left: 5px;
+    border-radius: 9px; background: var(--mc-danger, #d64545); color: #fff;
+    font-size: 11px; font-weight: 700; line-height: 1;
+}
+.main-tab-badge[hidden] { display: none; }
+
+.files-summary-sep { color: var(--mc-muted, #5c7290); }
+
+.files-storage {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+    margin: 0 0 8px; font-size: 12px; color: var(--mc-muted, #5c7290);
+}
+.files-storage:empty { display: none; }
+.files-storage-btn {
+    min-height: 32px; padding: 4px 10px; border-radius: 8px; font-size: 12px; cursor: pointer;
+    border: 1px solid var(--mc-border, #c9d6e5); background: var(--mc-surface, #fff); color: var(--mc-text, #1d2b3a);
+}
+.files-storage-btn:hover:not(:disabled) { border-color: var(--mc-danger, #d64545); color: var(--mc-danger, #d64545); }
+.files-storage-btn:disabled { opacity: 0.5; cursor: default; }
+.files-storage-hint { flex: 1 1 100%; font-size: 11px; opacity: 0.85; }
+
+.page-version-notice {
+    position: fixed; left: 50%; top: 10px; transform: translateX(-50%); z-index: 100000;
+    display: flex; align-items: center; gap: 12px; max-width: min(92vw, 560px); padding: 10px 14px;
+    border-radius: 10px; font-size: 13px; line-height: 1.35;
+    background: var(--mc-primary, #1769d2); color: #fff; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.3);
+}
+.page-version-notice-btn {
+    flex: 0 0 auto; min-height: 34px; padding: 4px 14px; border: 0; border-radius: 8px;
+    background: #fff; color: #0f4fa3; font-weight: 700; cursor: pointer;
+}

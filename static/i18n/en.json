@@ -22,7 +22,9 @@
     "please_wait": "Please wait",
     "error_prefix": "Error: {reason}",
     "reloading": "Reloading…",
-    "undo": "Undo"
+    "undo": "Undo",
+    "new_version_notice": "A new version ({version}) is installed. Reload the page to use it.",
+    "reload": "Reload"
   },
   "dialog": {
     "cancel": "Cancel",
@@ -445,7 +447,21 @@
     "pictures_err_too_large": "A picture ({size}) is larger than the {max} limit of a transfer. Choose a smaller size.",
     "pictures_err_not_trusted": "Set up a secure connection with this contact first.",
     "pictures_err_queue_full": "The send queue is full. Wait a moment and send the rest again.",
-    "pictures_queued": "{done} of {total} queued"
+    "pictures_queued": "{done} of {total} queued",
+    "badge_aria": "Files, needs attention: {count}",
+    "storage_summary": "Received copies: {count}, {size}",
+    "storage_hint": "Files saved with Save to Files are not affected. Nothing is deleted automatically.",
+    "purge_button": "Delete older received copies...",
+    "purge_title": "Delete older received copies",
+    "purge_message": "Received files older than this many days are deleted from this node. Files saved with Save to Files are kept.",
+    "purge_days_label": "Older than (days)",
+    "purge_days_invalid": "Enter a whole number from 1 to 3650",
+    "purge_none": "No received copies older than {days} days.",
+    "purge_confirm_title": "Delete received copies?",
+    "purge_confirm": "Delete {count} received copies ({size}) older than {days} days? This cannot be undone. Files saved with Save to Files are kept.",
+    "purge_confirm_button": "Delete",
+    "purge_queued": "Deleting received copies...",
+    "purge_done": "Received copies deleted"
   },
   "about": {
     "tab_overview": "Overview",
@@ -608,7 +624,10 @@
     "traceroute_reason_busy": "Another radio command is running",
     "traceroute_reason_cooldown": "This node was traced a moment ago, try again in {seconds} s",
     "relay_probably": "probably: {name} ({hex})",
-    "back_to_chats": "Back to chats"
+    "back_to_chats": "Back to chats",
+    "mca_file_received": "File received",
+    "mca_file_sent": "File sent",
+    "mca_open_in_files": "Open in Files"
   },
   "camera": {
     "live_camera": "Live Camera",

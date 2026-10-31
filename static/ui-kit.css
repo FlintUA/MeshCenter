@@ -2136,6 +2136,19 @@ html[data-theme="dark"] :is(.node-card.active, .node-card.selected) {
     border-color: var(--mc-border-active) !important;
 }
 
+/* MCA-UX1: the selected transfer card is highlighted like the selected node / chat, in every theme. The dark rule
+   beats `[data-theme="dark"] .files-transfer-item` of style-part4.css, which used to paint over the selected state. */
+.files-transfer-item.is-selected {
+    background: var(--mc-primary-soft);
+    border-color: var(--mc-border-active);
+    box-shadow: 0 0 0 1px rgba(47, 115, 217, 0.12);
+}
+
+html[data-theme="dark"] .files-transfer-item.is-selected {
+    background: var(--mc-primary-soft) !important;
+    border-color: var(--mc-border-active) !important;
+}
+
 html[data-theme="dark"] :is(.chat-item.active, .chat-item.selected) {
     background: var(--mc-primary-soft) !important;
     border-color: var(--mc-border-active) !important;

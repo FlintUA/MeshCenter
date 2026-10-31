@@ -1023,6 +1023,7 @@ class AttachmentsService:
             "attachment_save": self._command_save,
             "attachment_revoke": self._command_revoke,
             "attachment_delete_local_content": self._command_delete_local_content,
+            "attachment_purge_received_cache": self._command_purge_received_cache,
             "contact_request_key": self._command_request_key,
             "contact_cancel_key_request": self._command_cancel_key_request,
             "contact_confirm": self._command_confirm,
@@ -2148,6 +2149,48 @@ class AttachmentsService:
         return CommandOutcome.succeeded(
             resource_id=attachment_id,
             result={"attachment_id": attachment_id, "saved": False},
+        )
+
+    def _command_purge_received_cache(self, command: Command) -> CommandOutcome:
+        """`attachment_purge_received_cache` (MCA-UX1): delete the received copies in `cache/incoming/` that were
+        received more than `older_than_days` ago. Never touches a file saved with "Save to Files" (those live in
+        `files/`), never touches a sent row's spool, and only ever deletes a path that resolves to a file directly
+        inside `cache/incoming/`. The attachment rows and their history stay; their `saved_path` is cleared so the
+        row no longer claims content. Always an explicit user command, there is no automatic deletion."""
+        days = command.payload.get("older_than_days")
+        if isinstance(days, bool) or not isinstance(days, int) or not 1 <= days <= 3650:
+            return CommandOutcome.failed("invalid_older_than_days")
+        cutoff = time.time() - days * 86400
+        paths = self._workspace_manager.paths(self._principal.principal_id)
+        cache_dir = paths.cache_incoming.resolve()
+        self._conn.row_factory = sqlite3.Row
+        rows = self._conn.execute(
+            "SELECT id, saved_path, plain_size FROM attachments "
+            "WHERE workspace_id = ? AND direction = 'received' AND saved_path IS NOT NULL AND created_at < ?",
+            (self._principal.workspace_id, cutoff),
+        ).fetchall()
+        deleted = 0
+        freed = 0
+        for row in rows:
+            if _is_inside_files(paths, row["saved_path"]):
+                continue
+            path = self._resolve_content_path(paths, row["saved_path"])
+            if path is None or path.parent != cache_dir:
+                continue
+            try:
+                size = path.stat().st_size if path.exists() else 0
+                path.unlink(missing_ok=True)
+            except OSError:
+                logger.warning("AttachmentsService: could not unlink a received cache copy")
+                continue
+            self._conn.execute("UPDATE attachments SET saved_path = NULL WHERE id = ?", (row["id"],))
+            deleted += 1
+            freed += size
+        self._conn.commit()
+        self._refresh_snapshot()
+        return CommandOutcome.succeeded(
+            resource_id="received_cache",
+            result={"deleted": deleted, "bytes": freed, "older_than_days": days},
         )
 
     def _auto_request_missing_keys(self) -> None:

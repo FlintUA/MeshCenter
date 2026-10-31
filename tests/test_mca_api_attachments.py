@@ -3500,3 +3500,42 @@ def test_scheduled_create_refuses_an_untrusted_contact_and_a_full_queue(monkeypa
     full = _FakeFacade(providers={PROVIDER_ID: _provider(max_ttl_seconds=604800)}, spool_dir=tmp_path / "spool2", queue_full=True)
     c2 = _client(monkeypatch, full)
     assert _scheduler(c2)["create"]("!aaaaaaaa", "p.jpg", _JPEG) == (False, "command_queue_full")
+
+
+# ---- MCA-UX1: space used by received copies, purge of old ones ---------------------------------------------------
+
+
+def _cached(id, size, created_at):
+    return _attachment(id=id, direction="received", state="AVAILABLE", plain_size=size, created_at=created_at,
+                       descriptor=_descriptor(id, locator=f"cache/incoming/{id}", plain_size=size))
+
+
+def test_received_cache_stats_count_only_unsaved_received_copies(monkeypatch):
+    import time as _t
+    now = _t.time()
+    records = [
+        _cached("a" * 32, 1000, now - 40 * 86400),
+        _cached("b" * 32, 500, now - 1 * 86400),
+        _attachment(id="c" * 32, direction="received", state="AVAILABLE", saved=True, plain_size=9999,
+                    descriptor=_descriptor("c" * 32, locator="files/kept.jpg")),
+        _attachment(id="d" * 32, direction="sent", state="SENT", plain_size=7777),
+    ]
+    facade = _FakeFacade(snapshot=_snapshot(records))
+    c = _client(monkeypatch, facade)
+    body = c.get("/api/attachments/received-cache?older_than_days=30").get_json()
+    assert (body["count"], body["bytes"]) == (2, 1500)
+    assert (body["older_count"], body["older_bytes"]) == (1, 1000)
+    assert c.get("/api/attachments/received-cache?older_than_days=0").status_code == 400
+    assert c.get("/api/attachments/received-cache").get_json()["count"] == 2
+
+
+def test_received_cache_purge_queues_the_command_and_validates(monkeypatch):
+    facade = _FakeFacade()
+    c = _client(monkeypatch, facade)
+    assert c.post("/api/attachments/received-cache/purge", json={"older_than_days": "x"}).status_code == 400
+    assert c.post("/api/attachments/received-cache/purge", json={}).status_code == 400
+    assert facade.submitted == []
+    resp = c.post("/api/attachments/received-cache/purge", json={"older_than_days": 30})
+    assert resp.status_code == 202 and resp.get_json()["ok"] is True
+    assert facade.submitted[0].kind == "attachment_purge_received_cache"
+    assert dict(facade.submitted[0].payload) == {"older_than_days": 30}

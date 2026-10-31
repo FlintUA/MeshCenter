@@ -643,3 +643,53 @@ test('header fit: a hidden pane (no width) is left alone', () => {
     assert.equal(V.fitNodesHeaderRow(row, fitEnv({ available: 0, natural: 100 })), null);
     assert.equal(row.getAttribute('data-fit'), 'compact');
 });
+
+// ---- MCA-UX1: file transfers in the chat -----------------------------------------------------------------------
+
+test('mca bubble kinds: offer, own transfer, hidden control frame, ordinary message', () => {
+    assert.equal(V.mcaBubbleKind({ mca: { type: 'OFFER' } }), 'received');
+    assert.equal(V.mcaBubbleKind({ mca: { type: 'FILE_SENT', attachment_id: 'a' } }), 'sent');
+    assert.equal(V.mcaBubbleKind({ mca: { type: 'CONTROL' } }), 'hidden');
+    assert.equal(V.mcaBubbleKind({ text: 'hello' }), null);
+    assert.equal(V.mcaBubbleKind(null), null);
+});
+
+test('control frames are dropped from the list, everything else stays in order', () => {
+    const list = [{ id: 1 }, { id: 2, mca: { type: 'CONTROL' } }, { id: 3, mca: { type: 'OFFER' } }, { id: 4, mca: { type: 'FILE_SENT' } }];
+    assert.equal(V.withoutControlFrames(list).map((m) => m.id).join(','), '1,3,4');
+    assert.equal(V.withoutControlFrames(undefined).length, 0);
+});
+
+test('an incoming bubble opens the received transfer of that contact closest in time', () => {
+    const rows = [
+        { id: 'old', direction: 'received', counterparty_contact_id: '!aa', created_at: 1000 },
+        { id: 'near', direction: 'received', counterparty_contact_id: '!aa', created_at: 5000 },
+        { id: 'other', direction: 'received', counterparty_contact_id: '!bb', created_at: 5001 },
+        { id: 'mine', direction: 'sent', counterparty_contact_id: '!aa', created_at: 5002 },
+    ];
+    assert.equal(V.pickTransferForOffer(rows, '!aa', 5010).id, 'near');
+    assert.equal(V.pickTransferForOffer(rows, '!aa', 5000 + 7 * 3600), null, 'nothing within six hours: no guess');
+    assert.equal(V.pickTransferForOffer([], '!aa', 5), null);
+});
+
+test('the Files dot counts attention transfers that appeared after the last look', () => {
+    const attention = (a) => a.state === 'WAITING_CONSENT' || Boolean(a.error_code);
+    const rows = [
+        { state: 'WAITING_CONSENT', created_at: 100 },
+        { state: 'WAITING_CONSENT', created_at: 300 },
+        { state: 'AVAILABLE', created_at: 400 },
+        { state: 'SENT', error_code: 'x', created_at: 500 },
+    ];
+    assert.equal(V.newAttentionCount(rows, attention, 0), 3);
+    assert.equal(V.newAttentionCount(rows, attention, 200), 2);
+    assert.equal(V.newAttentionCount(rows, attention, 9999), 0, 'viewing Files clears it');
+    assert.equal(V.badgeLabel(3), '3');
+    assert.equal(V.badgeLabel(120), '99+');
+});
+
+test('the new-version notice needs two known, different versions', () => {
+    assert.equal(V.pageVersionChanged('1.13.9', '1.13.10'), true);
+    assert.equal(V.pageVersionChanged('1.13.10', '1.13.10'), false);
+    assert.equal(V.pageVersionChanged('', '1.13.10'), false, 'unknown page version: stay quiet');
+    assert.equal(V.pageVersionChanged('1.13.9', undefined), false, 'unknown server version: stay quiet');
+});

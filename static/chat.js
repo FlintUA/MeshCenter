@@ -4291,6 +4291,8 @@ document.addEventListener('DOMContentLoaded', async function() {
     initTimeCard();
     initNotificationsCard();
     initSchedulesCard();
+    if (window.MeshCenterFiles && window.MeshCenterFiles.startBadge) window.MeshCenterFiles.startBadge();   // MCA-UX1
+    startPageVersionWatch();
 
     const title = document.getElementById('appTitle');
     if (title) {
@@ -4383,6 +4385,11 @@ const CHAT_ACTIONS = {
             await reconnectActiveTransport(type);
         }
         setTimeout(() => loadNodeManagerDashboard(), 1800);
+    },
+    'mca-open': async (target) => {
+        const row = target.closest('.message[data-message-id]');
+        const msg = row ? renderedMessagesById.get(row.dataset.messageId) : null;
+        if (msg) await openTransferFromChatMessage(msg);
     },
     'message-focus-sender': (target, event) => {
         const row = target.closest('.message[data-message-id]');
@@ -7150,6 +7157,8 @@ function buildReplyBlockHtml(msg) {
 // ============================================================
 function renderMessages(container, messages, chatId) {
     if (!container) return;
+    // MCA-UX1: MCAttach control frames (acks, key exchange) are never shown; an offer / our own transfer is one bubble
+    messages = window.MCViews.withoutControlFrames(messages);
     
     // Принудительно обновляем, если контейнер показывает загрузку
     const isLoading = container.innerHTML.includes('loading') || container.innerHTML.includes('Loading');
@@ -7252,6 +7261,20 @@ function renderMessages(container, messages, chatId) {
                 ? `<div class="unread-divider" id="unreadDivider" role="separator"><span>${escapeHtml(window.I18N.t('chat.unread_divider', { count: viewState.unreadCount }))}</span></div>`
                 : '';
 
+            const mcaKind = window.MCViews.mcaBubbleKind(msg);
+            if (mcaKind) {
+                const label = escapeHtml(window.I18N.t(mcaKind === 'sent' ? 'chat.mca_file_sent' : 'chat.mca_file_received'));
+                const open = escapeHtml(window.I18N.t('chat.mca_open_in_files'));
+                return unreadDivider + `
+                    <div class="message ${mcaKind === 'sent' ? 'me' : 'rx'}" data-message-id="${messageId}">
+                        <div class="bubble mca-bubble" data-chat-action="mca-open" role="button" tabindex="0" title="${open}" aria-label="${label}. ${open}">
+                            <div class="text">📎 ${label}${mcaKind === 'received' ? ` <span class="mca-bubble-link">&middot; ${open}</span>` : ''}</div>
+                            <div class="time">${time}</div>
+                        </div>
+                    </div>
+                `;
+            }
+
             if (isSystem) {
                 return unreadDivider + `
                     <div class="message system" data-message-id="${messageId}">
@@ -7341,6 +7364,25 @@ function renderMessages(container, messages, chatId) {
 // U1: "at the bottom" = within a few lines of it; only then do new incoming
 // messages keep the view pinned to the latest one.
 const MESSAGES_BOTTOM_THRESHOLD_PX = 48;
+
+// MCA-UX1: a "File sent" / "File received" bubble opens its transfer in Files. Our own transfer carries its id; an
+// incoming offer is matched to the received transfer of that contact closest in time.
+async function openTransferFromChatMessage(msg) {
+    let attachmentId = msg && msg.mca && msg.mca.attachment_id ? String(msg.mca.attachment_id) : '';
+    if (!attachmentId) {
+        try {
+            const chat = msg.chat_id || msg.node_id || '';
+            const response = await fetch('/api/attachments?direction=received&counterparty=' + encodeURIComponent(chat) + '&limit=100');
+            const data = response.ok ? await response.json() : null;
+            const picked = data ? window.MCViews.pickTransferForOffer(data.attachments || [], chat, msg.ts) : null;
+            attachmentId = picked ? picked.id : '';
+        } catch (e) { /* Files opens without a selection */ }
+    }
+    switchMainTab('files');
+    if (attachmentId && window.MeshCenterFiles && window.MeshCenterFiles.selectTransfer) {
+        window.MeshCenterFiles.selectTransfer(attachmentId);
+    }
+}
 
 function isMessagesScrolledToBottom(container) {
     // A container that has not been laid out yet (or holds only a placeholder)

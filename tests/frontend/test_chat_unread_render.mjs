@@ -36,6 +36,9 @@ const STRINGS = {
     'chat.jump_to_latest': 'Jump to latest message',
     'chat.date_yesterday': 'yesterday',
     'nodes.unknown_node': 'Unknown node',
+    'chat.mca_file_received': 'File received',
+    'chat.mca_file_sent': 'File sent',
+    'chat.mca_open_in_files': 'Open in Files',
 };
 
 // Layout model: every rendered .message is 40px tall, the divider 20px; the
@@ -245,6 +248,23 @@ test('message bubbles carry the delegated focus-sender action, never an inline h
     sb.renderMessages(c, list, '!a'); flush(sb);
     assert.equal((c.innerHTML.match(/class="bubble" data-chat-action="message-focus-sender"/g) || []).length, 2);
     assert.doesNotMatch(c.innerHTML, /onclick=/);
+});
+
+test('MCA-UX1: control frames are hidden, an offer and our own transfer are one compact bubble each', () => {
+    const sb = build(); const c = makeContainer();
+    open(sb, '!a', 0);
+    const list = [
+        { id: 'hello', kind: 'rx', sender: 'Peer', text: 'hello', time: '10:00:00', ts: 1_800_000_000 },
+        { id: 'ack', kind: 'rx', sender: 'Peer', text: 'MCA1:AAAA', mca: { type: 'CONTROL' }, time: '10:00:01', ts: 1_800_000_001 },
+        { id: 'offer', kind: 'rx', sender: 'Peer', text: 'MCA1:BBBB', mca: { type: 'OFFER' }, time: '10:00:02', ts: 1_800_000_002 },
+        { id: 'sent', kind: 'me', sender: 'Me', text: 'x', mca: { type: 'FILE_SENT', attachment_id: 'att1' }, time: '10:00:03', ts: 1_800_000_003 },
+    ];
+    sb.renderMessages(c, list, '!a'); flush(sb);
+    assert.ok(!c.innerHTML.includes('MCA1:'), 'no raw frame text anywhere');
+    assert.ok(!c.innerHTML.includes('data-message-id="ack"'), 'the control frame has no bubble');
+    assert.equal((c.innerHTML.match(/data-chat-action="mca-open"/g) || []).length, 2);
+    assert.match(c.innerHTML, /File received[\s\S]*Open in Files/);
+    assert.match(c.innerHTML, /<div class="message me" data-message-id="sent">[\s\S]*File sent/);
 });
 
 console.log(`test_chat_unread_render.mjs: ${passed} tests passed`);

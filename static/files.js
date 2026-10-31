@@ -255,6 +255,9 @@
         lastTransfersQueryKey: '', // last query applied by loadTransfers - a change invalidates detail (P3)
         search: '',
         selectedId: null,
+        pendingSelectId: null,    // a transfer to select as soon as the list has it (MCA-UX1)
+        scrollToSelected: false,
+        storage: null,            // {count, bytes}: the received copies in cache/incoming (MCA-UX1)
 
         sendSignature: null,      // semantic send-form signature (C7 idempotency)
         sendClientRequestId: null,
@@ -720,6 +723,11 @@
             // too, not just a query-key change: a late response for the old
             // selection must never repaint a transfer that's no longer selected.
             var nextId = state.selectedId;
+            if (state.pendingSelectId && state.attachments.some(function (a) { return a.id === state.pendingSelectId; })) {
+                nextId = state.pendingSelectId;   // MCA-UX1: opened from a chat bubble
+                state.pendingSelectId = null;
+                state.scrollToSelected = true;
+            }
             if (!nextId || !state.attachments.some(function (a) { return a.id === nextId; })) {
                 nextId = state.attachments.length ? state.attachments[0].id : null;
             }
@@ -730,6 +738,8 @@
 
             renderTransfers();
             renderSummaries();
+            noteFilesSeen();
+            if (state.scrollToSelected) { state.scrollToSelected = false; scrollSelectedIntoView(); }
             if (state.selectedId) {
                 var sel = null;
                 for (var i = 0; i < state.attachments.length; i++) {
@@ -908,10 +918,174 @@
                 esc(tparams('files.truncated_notice', { limit: LIST_LIMIT, total: state.total },
                     'Showing the newest ' + LIST_LIMIT + ' of ' + state.total + ' transfers')) + '</span>');
         }
-        summary.innerHTML = parts.join('');
+        // the parts are separate inline spans: a visible separator keeps them from running together
+        summary.innerHTML = parts.join('<span class="files-summary-sep" aria-hidden="true"> &middot; </span>');
     }
 
     // ---- rendering: detail + action matrix (C4/C6) -------------------------
+
+    function scrollSelectedIntoView() {
+        var el = typeof document !== 'undefined' ? document.querySelector('.files-transfer-item.is-selected') : null;
+        if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+    }
+
+    // MCA-UX1: select a transfer from outside (a chat bubble). Selected at once when the list has it, otherwise as
+    // soon as the next load brings it.
+    function selectTransferFromOutside(id) {
+        id = String(id || '');
+        if (!id) return;
+        if (state.attachments.some(function (a) { return a.id === id; })) {
+            selectAttachment(id);
+            scrollSelectedIntoView();
+            return;
+        }
+        state.pendingSelectId = id;
+        if (state.active) refresh();
+    }
+
+    // ---- MCA-UX1: the Files tab dot ------------------------------------------------------------------------------
+    // Counts transfers that need attention and appeared after Files was last looked at; hidden while Files is shown.
+    var BADGE_POLL_MS = 60000;
+    var SEEN_KEY = 'mc.files.seenAt';
+    var badgeTimer = null;
+
+    function readSeenAt() {
+        try { return Number(window.localStorage.getItem(SEEN_KEY)) || 0; } catch (e) { return 0; }
+    }
+
+    function writeSeenAt(value) {
+        try { window.localStorage.setItem(SEEN_KEY, String(value)); } catch (e) { /* the dot just stays as it was */ }
+    }
+
+    function newestCreatedAt(list) {
+        return (list || []).reduce(function (acc, a) { return Math.max(acc, Number(a && a.created_at) || 0); }, 0);
+    }
+
+    function renderBadge(count) {
+        var el = getEl('mainTabFilesBadge');
+        if (!el) return;
+        var shown = count > 0 && !state.active;
+        el.hidden = !shown;
+        el.textContent = shown ? ((window.MCViews && window.MCViews.badgeLabel) ? window.MCViews.badgeLabel(count) : String(count)) : '';
+        var tab = getEl('mainTabFiles');
+        if (tab) {
+            if (shown) tab.setAttribute('aria-label', tparams('files.badge_aria', { count: count }, 'Files, needs attention: ' + count));
+            else tab.removeAttribute('aria-label');
+        }
+    }
+
+    // While Files is shown, everything on screen counts as seen
+    function noteFilesSeen() {
+        if (!state.active) return;
+        var newest = newestCreatedAt(state.attachments);
+        if (newest > readSeenAt()) writeSeenAt(newest);
+        renderBadge(0);
+    }
+
+    function refreshBadge() {
+        if (state.active) { renderBadge(0); return Promise.resolve(); }
+        return api('/api/attachments?limit=200').then(function (r) {
+            if (r.status !== 200 || !r.data || r.data.ok !== true) return;
+            var list = Array.isArray(r.data.attachments) ? r.data.attachments : [];
+            if (!readSeenAt()) writeSeenAt(newestCreatedAt(list));   // first run on this device: what is there is not "new"
+            var count = (window.MCViews && window.MCViews.newAttentionCount)
+                ? window.MCViews.newAttentionCount(list, isAttention, readSeenAt()) : 0;
+            renderBadge(count);
+        }).catch(function () { /* keep the dot as it is */ });
+    }
+
+    function startBadge() {
+        if (badgeTimer || typeof window === 'undefined') return;
+        refreshBadge();
+        badgeTimer = setInterval(refreshBadge, BADGE_POLL_MS);
+        if (typeof document !== 'undefined' && document.addEventListener) {
+            document.addEventListener('visibilitychange', function () { if (!document.hidden) refreshBadge(); });
+        }
+    }
+
+    // ---- MCA-UX1: the space the received copies take, and deleting the old ones ---------------------------------
+
+    function loadStorage() {
+        return api('/api/attachments/received-cache').then(function (r) {
+            if (r.status === 200 && r.data && r.data.ok) {
+                state.storage = { count: r.data.count || 0, bytes: r.data.bytes || 0 };
+            } else {
+                state.storage = null;
+            }
+            renderStorage();
+        }).catch(function () { /* the line stays as it was */ });
+    }
+
+    function renderStorage() {
+        var el = getEl('filesStorage');
+        if (!el) return;
+        if (!state.storage) { el.innerHTML = ''; return; }
+        el.innerHTML =
+            '<span class="files-storage-text">' +
+                esc(tparams('files.storage_summary', { count: state.storage.count, size: fmtBytes(state.storage.bytes) },
+                    'Received copies: ' + state.storage.count + ', ' + fmtBytes(state.storage.bytes))) +
+            '</span>' +
+            '<button type="button" class="files-storage-btn" data-files-action="purge-received"' + (state.storage.count ? '' : ' disabled') + '>' +
+                esc(t('files.purge_button', 'Delete older received copies...')) + '</button>' +
+            '<span class="files-storage-hint">' + esc(t('files.storage_hint', 'Files saved with Save to Files are not affected. Nothing is deleted automatically.')) + '</span>';
+    }
+
+    function purgeReceivedCopies() {
+        var dialog = (typeof window !== 'undefined') ? window.MCDialog : null;
+        if (!dialog || !dialog.prompt || !dialog.confirm) return Promise.resolve();
+        return dialog.prompt({
+            title: t('files.purge_title', 'Delete older received copies'),
+            message: t('files.purge_message', 'Received files older than this many days are deleted from this node. Files saved with Save to Files are kept.'),
+            fields: [{
+                name: 'days', label: t('files.purge_days_label', 'Older than (days)'), value: '30', inputmode: 'numeric',
+                validate: function (value) {
+                    var n = Number(String(value).trim());
+                    return Number.isInteger(n) && n >= 1 && n <= 3650 ? '' : t('files.purge_days_invalid', 'Enter a whole number from 1 to 3650');
+                },
+            }],
+        }).then(function (values) {
+            if (!values) return null;
+            var days = Number(String(values.days).trim());
+            return api('/api/attachments/received-cache?older_than_days=' + days).then(function (r) {
+                if (r.status !== 200 || !r.data || !r.data.ok) { toast(filesErrorCode(r.data), 'error'); return null; }
+                if (!r.data.older_count) {
+                    toast(tparams('files.purge_none', { days: days }, 'No received copies older than ' + days + ' days.'), 'info');
+                    return null;
+                }
+                return dialog.confirm({
+                    title: t('files.purge_confirm_title', 'Delete received copies?'),
+                    message: tparams('files.purge_confirm', { count: r.data.older_count, size: fmtBytes(r.data.older_bytes), days: days },
+                        'Delete ' + r.data.older_count + ' received copies (' + fmtBytes(r.data.older_bytes) + ') older than ' + days + ' days? This cannot be undone.'),
+                    confirmLabel: t('files.purge_confirm_button', 'Delete'),
+                    cancelLabel: t('dialog.cancel', 'Cancel'),
+                    danger: true,
+                }).then(function (ok) {
+                    if (!ok) return null;
+                    return api('/api/attachments/received-cache/purge', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ older_than_days: days }),
+                    }).then(function (p) {
+                        if (p.status === 202 && p.data && p.data.command_id) {
+                            trackCommand(p.data.command_id, {
+                                resourceKey: 'purge:received',
+                                queued: t('files.purge_queued', 'Deleting received copies...'),
+                                success: t('files.purge_done', 'Received copies deleted'),
+                                onSuccess: function () { return Promise.all([loadStorage(), refreshTransfers()]); },
+                                onUnknown: function () { return loadStorage(); },
+                            });
+                        } else if (p.status === 429) {
+                            toast(t('files.error.command_queue_full', 'Too many pending actions - try again in a moment'), 'warning');
+                        } else {
+                            toast(filesErrorCode(p.data), 'error');
+                        }
+                    });
+                });
+            });
+        }).catch(function () {
+            toast(t('files.error.network_error', 'Network error'), 'error');
+        });
+    }
 
     function selectAttachment(id) {
         state.selectedId = id;
@@ -1703,6 +1877,7 @@
         if (action === 'providers') { openProviderSettings(); return; }
         if (action === 'relay-wizard') { openRelayWizard(); return; }
         if (action === 'refresh') { refresh(); return; }
+        if (action === 'purge-received') { purgeReceivedCopies(); return; }
 
         // Attachment + contact + provider actions carry a data-attachment /
         // data-contact / data-provider id validated against the current model.
@@ -1905,11 +2080,13 @@
         stopTimer();
         closeModal(false);
         // In-flight reads are dropped by the epoch bump; submitted commands are left untouched.
+        refreshBadge();   // MCA-UX1: the tab dot counts again as soon as Files is left
     }
 
     function refresh() {
         if (!state.active) return;
         refreshContacts();
+        loadStorage();
         // Re-derive the channel notice from the store's *current* selection each
         // refresh, so an already-selected channel (no new onStoreSelection event)
         // still shows the unsupported-transfer notice on reactivate/tick.
@@ -3600,6 +3777,9 @@
         // gallery G2: the Send dialog with pictures from the Media gallery (one transfer per picture)
         openSendPictures: openSendPictures,
         maxSendPictures: MAX_SEND_PICTURES,
+        // MCA-UX1: a chat bubble opens its transfer; the tab dot keeps counting while Files is not shown
+        selectTransfer: selectTransferFromOutside,
+        startBadge: startBadge,
     };
 
     // Static compatibility entry points referenced by the existing template

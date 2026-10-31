@@ -103,6 +103,7 @@ from meshsrv.attachments.provider_registry import (
     normalize_origin,
 )
 from meshsrv.attachments.recipient_snapshot import RecipientRejectionReason, evaluate_recipient_trust
+from meshsrv.attachments.vault.errors import VaultError
 from meshsrv.attachments.snapshots import (
     ContentDisposition,
     ContentLocatorError,
@@ -686,6 +687,103 @@ def register_attachments_routes(app, handle_errors):
     def _facade():
         return mca_runtime.get_attachments_facade()
 
+    # ---- MCA-VAULT: locked behaviour at the API (ADR-0013 Decision 6) ------------------------------------------------
+
+    def _vault():
+        return mca_runtime.get_vault()
+
+    def _vault_is_locked():
+        vault = _vault()
+        return vault is not None and vault.is_locked()
+
+    # what needs the identity seed or the storage key; deleting a local copy, purging received copies, cancelling a
+    # key-request series and the relay probes only touch plain rows or files and stay available
+    _VAULT_GATED_ENDPOINTS = frozenset({
+        "create_attachment", "retry_attachment", "download_attachment", "reject_attachment", "cancel_attachment",
+        "save_attachment", "revoke_attachment", "request_contact_key", "confirm_contact_key",
+        "accept_contact_key_change", "reject_contact_key_change", "set_provider_upload_token",
+    })
+
+    @app.before_request
+    def _vault_gate():
+        if request.endpoint in _VAULT_GATED_ENDPOINTS and _vault_is_locked():
+            return jsonify({
+                "ok": False,
+                "error": "MCAttach is locked. Unlock it first.",
+                "error_code": "vault_locked",
+            }), 423
+        return None
+
+    def _vault_error(error):
+        """A VaultError as an HTTP answer. A wrong passphrase and a damaged header are the same answer."""
+        code = error.code
+        status = {
+            "unlock_failed": 403, "invalid_recovery_key": 403, "passphrase_required": 400, "vault_not_enabled": 409,
+            "unlock_rate_limited": 429, "insufficient_memory": 503, "vault_busy": 503,
+        }.get(code, 400)
+        body = {"ok": False, "error_code": code, "error": error.message if code == "insufficient_memory" else code}
+        retry = getattr(error, "retry_in_s", None)
+        if retry is not None:
+            body["retry_in_s"] = retry
+        response = jsonify(body)
+        if retry is not None:
+            response.headers["Retry-After"] = str(retry)
+        return response, status
+
+    @app.route("/api/mca/vault", methods=["GET"])
+    @handle_errors
+    def vault_status():
+        vault = _vault()
+        if vault is None:
+            return _not_ready()
+        body = vault.status()
+        facade = _facade()
+        if facade is not None and body.get("locked"):
+            try:
+                records = facade.attachments_snapshot().records
+                body["locked_items"] = len(records)
+                body["waiting_offers"] = sum(1 for r in records if r.direction == "received" and r.state == receiver.WAITING_CONSENT)
+            except FacadeNotReady:
+                pass
+        body["ok"] = True
+        return jsonify(body)
+
+    @app.route("/api/mca/vault/unlock", methods=["POST"])
+    @handle_errors
+    def vault_unlock():
+        """Unlock with the passphrase or the recovery key. The secret is read here, handed to the runtime and never
+        logged, echoed or queued (it does not go through the command queue on purpose)."""
+        vault = _vault()
+        if vault is None:
+            return _not_ready()
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return _json_error("passphrase_required", "passphrase required"), 400
+        passphrase = data.get("passphrase")
+        recovery_key = data.get("recovery_key")
+        if (passphrase is not None and not isinstance(passphrase, str)) or (recovery_key is not None and not isinstance(recovery_key, str)):
+            return _json_error("passphrase_required", "passphrase required"), 400
+        try:
+            status = vault.unlock(passphrase=passphrase, recovery_key=recovery_key)
+        except VaultError as error:
+            return _vault_error(error)
+        finally:
+            passphrase = recovery_key = data = None
+        status["ok"] = True
+        return jsonify(status)
+
+    @app.route("/api/mca/vault/lock", methods=["POST"])
+    @handle_errors
+    def vault_lock():
+        vault = _vault()
+        if vault is None:
+            return _not_ready()
+        if not vault.is_enabled():
+            return _vault_error(VaultError("vault_not_enabled"))
+        status = vault.lock()
+        status["ok"] = True
+        return jsonify(status)
+
     @app.route("/api/attachments", methods=["GET"])
     @handle_errors
     @_mca_error_boundary
@@ -737,7 +835,7 @@ def register_attachments_routes(app, handle_errors):
         page = matching[offset:offset + limit]
         return jsonify({
             "ok": True,
-            "attachments": [serialize_attachment_public(r) for r in page],
+            "attachments": [serialize_attachment_public(r, vault_locked=_vault_is_locked()) for r in page],
             "total": total,
         })
 
@@ -825,7 +923,7 @@ def register_attachments_routes(app, handle_errors):
 
         return jsonify({
             "ok": True,
-            "attachment": serialize_attachment_public(record),
+            "attachment": serialize_attachment_public(record, vault_locked=_vault_is_locked()),
             "timeline": [serialize_timeline_event(e) for e in record.timeline],
         })
 

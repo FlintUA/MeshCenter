@@ -135,6 +135,14 @@ def register_updates_routes(app, resolve_version, project_dir, handle_errors, lo
             return jsonify(runtime_env.refusal("can_self_update")), 403
         current = resolve_version()
         preflight = update_service.rollback_preflight(project_dir, current)
+        if preflight.get("reason") == "vault_enabled":
+            log("Rollback refused", "WARNING", "An MCAttach vault exists; disable it first (older versions cannot read it)", source="update")
+            return jsonify({
+                "ok": False,
+                "error": "Disable the vault first",
+                "error_code": "vault_enabled",
+                "preflight": preflight,
+            }), 409
         if not preflight.get("ok"):
             log("Rollback failed", "WARNING", f"not applied: {preflight.get('reason') or 'preflight failed'}", source="update")
             return jsonify({

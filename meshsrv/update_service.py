@@ -15,12 +15,13 @@ whichever radio profile happens to be active.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 import subprocess
 import threading
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 from urllib.request import Request, urlopen
 
 from storage.json_store import safe_read_json, safe_write_json
@@ -80,6 +81,32 @@ def configure(cache_path: str) -> None:
     _cache_path = cache_path
 
 
+_vault_data_dir: Optional[str] = None
+
+
+def configure_vault_dir(data_dir: str) -> None:
+    """MCA-VAULT: where `data/mca/<principal>/vault.json` lives, so Roll back can refuse while a vault exists."""
+    global _vault_data_dir
+    _vault_data_dir = data_dir
+
+
+def vault_enabled() -> bool:
+    """True when a vault (or a half-finished vault migration) exists in any MCA workspace. File presence only: the
+    updater never imports MCAttach. Older code cannot read a vault, so Roll back (and any downgrade) must refuse
+    (ADR-0013 Decision 11)."""
+    if not _vault_data_dir:
+        return False
+    try:
+        base = os.path.join(_vault_data_dir, "mca")
+        for entry in os.listdir(base):
+            workspace = os.path.join(base, entry)
+            if os.path.isfile(os.path.join(workspace, "vault.json")) or os.path.isfile(os.path.join(workspace, "vault-migration.json")):
+                return True
+    except OSError:
+        return False
+    return False
+
+
 def _load_cache() -> dict[str, Any]:
     return {**_DEFAULT_CACHE, **safe_read_json(_cache_path, {})}
 
@@ -101,6 +128,8 @@ def get_status(current_version: str) -> dict[str, Any]:
     cache["current_version"] = current_version
     cache["update_available"] = update_available(current_version, cache)
     cache["rollback_available"] = rollback_available(current_version, cache)
+    # MCA-VAULT: say why Roll back is off, so the card can show "Disable the vault first" (PR 5 draws it)
+    cache["rollback_blocked_reason"] = "vault_enabled" if vault_enabled() else None
     return cache
 
 
@@ -473,6 +502,9 @@ def rollback_preflight(project_dir: str, current_version: str) -> dict[str, Any]
         "previous_version": cache.get("previous_version"), "head_sha": None,
     }
     try:
+        if vault_enabled():
+            result["reason"] = "vault_enabled"       # checked first: whatever else is true, an enabled vault refuses it
+            return result
         if not rollback_available(current_version, cache):
             result["reason"] = "rollback_unavailable"
             return result

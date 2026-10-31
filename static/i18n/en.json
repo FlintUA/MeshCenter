@@ -278,7 +278,14 @@
       "provider_id_mismatch": "The relay answered with a different identity",
       "invalid_older_than_days": "Enter a whole number from 1 to 3650",
       "command_not_found": "The result is no longer known",
-      "invalid_request": "The request was not valid"
+      "invalid_request": "The request was not valid",
+      "vault_locked": "MCAttach is locked. Unlock it first.",
+      "unlock_failed": "The passphrase or recovery key is not correct",
+      "unlock_rate_limited": "Too many attempts. Wait a moment and try again",
+      "insufficient_memory": "Not enough free memory to unlock now. Try again when the node is less busy",
+      "vault_not_enabled": "The vault is not enabled",
+      "vault_busy": "MCAttach is busy. Try again in a moment",
+      "passphrase_required": "Enter the passphrase or the recovery key"
     },
     "accept_download": "Accept and download",
     "accepting_key_change": "Accepting key change…",

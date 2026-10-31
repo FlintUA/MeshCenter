@@ -381,6 +381,7 @@ if not os.path.exists(DATA_DIR):
 # profile happens to be active.
 UPDATE_CHECK_FILE = os.path.join(DATA_DIR, "update_check.json")
 update_service.configure(UPDATE_CHECK_FILE)
+update_service.configure_vault_dir(DATA_DIR)   # MCA-VAULT: Roll back refuses while a vault exists
 _schedule_engine_module.configure_storage(DATA_DIR)
 
 # Persistent identity of this MeshCenter installation. This stage only
@@ -9890,6 +9891,7 @@ def _build_schedule_picture_deps():
     return schedule_picture.PictureDeps(
         clock=_time.time,
         radio_available=is_radio_available,
+        vault_locked=lambda: bool(mca_runtime.get_vault() is not None and mca_runtime.get_vault().is_locked()),
         source_exists=_source_exists,
         contact_trusted=_contact_trusted,
         take_picture=lambda source_id: _call("mc_camera_picture", "take", source_id),
@@ -10124,6 +10126,7 @@ def start_runtime():
         )
         print(f"[MCA] WARNING: {_mca_warning}", flush=True)
         log_system_event("MCAttach control channel not configured", "WARNING", _mca_warning, source="mca")
+    mca_runtime.set_vault_log(lambda level, title, details: log_system_event(title, level, details, source="mca_vault"))   # MCA-VAULT: never a secret
     try:
         mca_runtime.start_attachments_service(
             DATA_DIR, transport_router, MCA_CONTROL_CHANNEL_INDEX,

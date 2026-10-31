@@ -136,6 +136,7 @@ from meshsrv.attachments.provider_registry import ProviderRegistry
 from meshsrv.attachments.recipient_snapshot import RecipientSnapshotPublisher
 from meshsrv.attachments.service import INBOUND_QUEUE_MAXSIZE, AttachmentsService, InboundEvent
 from meshsrv.attachments.snapshots import AttachmentsSnapshotPublisher
+from meshsrv.attachments.vault.runtime import VaultRuntime
 from meshsrv.attachments.workspace import MCAWorkspaceManager
 from meshsrv.connectivity_monitor import ConnectivityMonitor
 from meshsrv.radio_transport import RadioTransport
@@ -202,6 +203,13 @@ class _MCARuntimeState:
         self.conn = sqlite3.connect(str(db_path), check_same_thread=False)
         migrate(self.conn)
         self.principal: MCAPrincipal = ensure_principal(self.conn, self.workspace_manager, WORKSPACE_ID)
+        # MCA-VAULT (ADR-0013): the vault runtime of this workspace. Its state comes from the files in the workspace
+        # directory (no vault.json: disabled); its tick-lock is attached below once that lock exists, so an unlock never
+        # runs Argon2 while the worker is in the middle of a tick.
+        self.vault = VaultRuntime(
+            self.workspace_manager.paths(self.principal.principal_id).root,
+            log=lambda level, title, details: _vault_log(level, title, details),
+        )
         self.coordinator = KeyExchangeCoordinator(
             self.conn, self.workspace_manager, self.principal, ADAPTER_ID
         )
@@ -247,6 +255,7 @@ class _MCARuntimeState:
         # See the module docstring's "CORRECTION" section for the full
         # account.
         self.tick_lock = threading.Lock()
+        self.vault._serialize_with = self.tick_lock
 
         # Step 1.6A.1 (correction #1): this state owns the six request-
         # /worker-facing components of the facade plumbing, constructed
@@ -368,6 +377,7 @@ class _MCARuntimeState:
             delivery_adapter=adapter,
             contact_exists_fn=contact_exists,
             offer_linked_fn=offer_linked,
+            vault=self.vault,
             # Finding 2 (control-channel correction): thread the configured
             # index into the service so inbound-channel observability can
             # compute match/mismatch against the same value the adapter
@@ -473,7 +483,37 @@ def start_attachments_service(
     config.example.py's `MCA_CONTROL_CHANNEL_INDEX` comment and
     `MeshtasticTextAdapter.send()`'s own enforcement."""
     state = _get_state(data_dir)
+    # MCA-VAULT, fail closed (ADR-0013 Decision 11): a vault header this build cannot read or does not know is never
+    # "repaired" or ignored; MCAttach stays down (the API answers not-ready) and the System Log says why
+    problem = state.vault.header_problem()
+    if problem is not None:
+        _vault_log("ERROR", "MCAttach not started", "The vault header cannot be read by this version (%s)" % problem)
+        return
     state.ensure_service(radio_transport, control_channel_index, contact_exists, offer_linked)
+
+
+def get_vault() -> Optional[VaultRuntime]:
+    """The vault runtime, or `None` before the runtime exists (the same rule as `get_attachments_facade()`)."""
+    state = _state
+    return None if state is None else state.vault
+
+
+_vault_log_sink = None
+
+
+def set_vault_log(sink) -> None:
+    """server.py hands in the System Log writer: `sink(level, title, details)`. Nothing secret is ever passed."""
+    global _vault_log_sink
+    _vault_log_sink = sink
+
+
+def _vault_log(level, title, details) -> None:
+    sink = _vault_log_sink
+    if sink is not None:
+        try:
+            sink(level, title, details)
+        except Exception:  # noqa: BLE001 - logging must never break the vault
+            pass
 
 
 def get_attachments_facade() -> Optional[AttachmentsFacade]:

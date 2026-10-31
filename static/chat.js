@@ -850,6 +850,62 @@ function _renderDataReportParams() {
 }
 
 let scheduleChannelCache = [];
+let scheduleCameraCache = [];
+let scheduleTrustedContacts = [];
+const SCHEDULE_PICTURE_MIN_INTERVAL_MIN = 15;
+
+// G3: the choices of the "Send camera picture" action: the saved network cameras and the contacts that already have
+// a trusted key (the same rule the Files send dialog uses). A failed read leaves an empty list, the form says so.
+async function _scheduleLoadPictureChoices() {
+  scheduleCameraCache = [];
+  scheduleTrustedContacts = [];
+  try {
+    const resp = await fetch('/api/camera/sources');
+    if (resp.ok) {
+      const data = await resp.json();
+      scheduleCameraCache = (data.sources || []).filter(s => s && s.id);
+    }
+  } catch (e) { /* the picker shows its empty state */ }
+  try {
+    const resp = await fetch('/api/mca/contacts');
+    if (resp.ok) {
+      const data = await resp.json();
+      scheduleTrustedContacts = (data.contacts || []).filter(c => c && c.status === 'trusted' && c.contact_id).map(c => c.contact_id);
+    }
+  } catch (e) { /* the picker shows its empty state */ }
+}
+
+function _renderPictureParams(params) {
+  const p = params || {};
+  const t = (k) => escapeHtml(window.I18N.t(k));
+  const nodes = Array.isArray(nodeCache) ? nodeCache : [];
+  const nameOf = (id) => {
+    const n = nodes.find(x => x && x.node_id === id);
+    return n ? (n.clean_name || n.name || n.long_name || id) : id;
+  };
+  const camOptions = scheduleCameraCache.map(c =>
+    `<option value="${escapeHtml(c.id)}"${c.id === p.source_id ? ' selected' : ''}>${escapeHtml(c.name || c.id)}</option>`).join('');
+  const contactOptions = scheduleTrustedContacts.map(id =>
+    `<option value="${escapeHtml(id)}"${id === p.contact_id ? ' selected' : ''}>${escapeHtml(nameOf(id))}</option>`).join('');
+  const resize = p.resize || '1280';
+  const resizeOption = (value, key) => `<option value="${value}"${resize === value ? ' selected' : ''}>${t(key)}</option>`;
+  return `
+    <label class="schedule-field-label">${t('time.picture_camera')}</label>
+    <select id="sfPicCamera" class="schedule-select">
+      ${camOptions || `<option value="">${t('time.picture_no_camera')}</option>`}
+    </select>
+    <label class="schedule-field-label">${t('time.picture_contact')}</label>
+    <select id="sfPicContact" class="schedule-select">
+      ${contactOptions || `<option value="">${t('time.picture_no_contact')}</option>`}
+    </select>
+    <label class="schedule-field-label">${t('time.picture_resize')}</label>
+    <select id="sfPicResize" class="schedule-select">
+      ${resizeOption('1280', 'files.pictures_resize_1280')}
+      ${resizeOption('1920', 'files.pictures_resize_1920')}
+      ${resizeOption('original', 'files.pictures_resize_original')}
+    </select>
+    <p class="schedule-placeholder-note">${t('time.picture_note')}</p>`;
+}
 
 async function _scheduleLoadChannels() {
   try {
@@ -864,6 +920,7 @@ async function _scheduleLoadChannels() {
 
 async function openScheduleForm(id) {
   await _scheduleLoadChannels();
+  await _scheduleLoadPictureChoices();
   scheduleEditingId = id;
   const rule = id ? scheduleRules.find(r => r.id === id) : null;
 
@@ -929,6 +986,7 @@ async function openScheduleForm(id) {
         <option value="log_entry"${primaryAction.type === 'log_entry' ? ' selected' : ''}>${escapeHtml(window.I18N.t('time.action_log'))}</option>
         <option value="mesh_send"${primaryAction.type === 'mesh_send' ? ' selected' : ''}>${escapeHtml(window.I18N.t('time.action_mesh'))}</option>
         <option value="send_data_report"${primaryAction.type === 'send_data_report' ? ' selected' : ''}>${escapeHtml(window.I18N.t('time.action_data'))}</option>
+        <option value="send_camera_picture"${primaryAction.type === 'send_camera_picture' ? ' selected' : ''}>${escapeHtml(window.I18N.t('time.action_picture'))}</option>
       </select>
     </div>
 
@@ -944,6 +1002,10 @@ async function openScheduleForm(id) {
 
     <div class="schedule-form-row schedule-action-params" id="sfDataParams" style="display:${primaryAction.type === 'send_data_report' ? '' : 'none'}">
       ${_renderDataReportParams()}
+    </div>
+
+    <div class="schedule-form-row schedule-action-params" id="sfPictureParams" style="display:${primaryAction.type === 'send_camera_picture' ? '' : 'none'}">
+      ${_renderPictureParams(primaryAction.type === 'send_camera_picture' ? primaryAction.params : {})}
     </div>
 
     <div class="schedule-form-section">
@@ -1018,6 +1080,8 @@ function _scheduleUpdateActionVisibility() {
   const data = document.getElementById('sfDataParams');
   if (mesh) mesh.style.display = type === 'mesh_send' ? '' : 'none';
   if (data) data.style.display = type === 'send_data_report' ? '' : 'none';
+  const picture = document.getElementById('sfPictureParams');
+  if (picture) picture.style.display = type === 'send_camera_picture' ? '' : 'none';
 }
 
 function _scheduleUpdateNotifyVisibility() {
@@ -1066,6 +1130,15 @@ function _collectFormData() {
     const message = document.getElementById('sfMeshMessage')?.value.trim() || '';
     const target = _scheduleReadTarget('ms');
     action.params = { message, ...target };
+  } else if (actionType === 'send_camera_picture') {
+    const sourceId = document.getElementById('sfPicCamera')?.value || '';
+    const contactId = document.getElementById('sfPicContact')?.value || '';
+    if (!sourceId) return showError(window.I18N.t('time.error_picture_camera'));
+    if (!contactId) return showError(window.I18N.t('time.error_picture_contact'));
+    if (mode === 'interval' && trigger.interval_minutes < SCHEDULE_PICTURE_MIN_INTERVAL_MIN) {
+      return showError(window.I18N.t('time.error_picture_interval'));
+    }
+    action.params = { source_id: sourceId, contact_id: contactId, resize: document.getElementById('sfPicResize')?.value || '1280' };
   } else if (actionType === 'send_data_report') {
     // Backend field-picker exists (meshsrv/schedule_actions.py
     // _get_field_value) but no UI is shipped to configure `fields` /
@@ -1112,7 +1185,13 @@ async function saveScheduleForm() {
     });
     if (!resp.ok) {
       const errorEl = document.getElementById('sfError');
-      if (errorEl) { errorEl.textContent = `HTTP ${resp.status}`; errorEl.style.display = 'block'; }
+      let message = `HTTP ${resp.status}`;
+      try {
+        const body = await resp.json();
+        const keys = { interval_too_short: 'time.error_picture_interval', camera_required: 'time.error_picture_camera', contact_required: 'time.error_picture_contact' };
+        if (body && keys[body.error_code]) message = window.I18N.t(keys[body.error_code]);
+      } catch (e) { /* keep the HTTP status */ }
+      if (errorEl) { errorEl.textContent = message; errorEl.style.display = 'block'; }
       return;
     }
     _scheduleFormDirty = false;

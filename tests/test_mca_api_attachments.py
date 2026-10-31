@@ -3470,3 +3470,33 @@ def test_provider_mutation_queue_full_is_429(monkeypatch):
     resp = c.post("/api/mca/providers/probe", json={"base_url": "https://relay.example.net"})
     assert resp.status_code == 429
     assert resp.get_json()["error_code"] == "command_queue_full"
+
+
+# ---- G3: the schedule engine creates a transfer through the same route, in-process ----------------------------------
+
+
+def _scheduler(c):
+    return c.application.extensions["mc_attachment_scheduler"]
+
+
+def test_scheduled_create_queues_one_transfer_through_the_same_validation(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider(max_ttl_seconds=604800)}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    assert _scheduler(c)["contact_trusted"]("!aaaaaaaa") is True
+    ok, code = _scheduler(c)["create"]("!aaaaaaaa", "MC_Cam.jpg", _JPEG)
+    assert (ok, code) == (True, None)
+    assert len(facade.submitted) == 1 and facade.submitted[0].kind == "attachment_create"
+    assert facade.submitted[0].payload["client_request_id"].startswith("sched-")
+
+
+def test_scheduled_create_refuses_an_untrusted_contact_and_a_full_queue(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool",
+                         recipient=_recipient_at("!aaaaaaaa", AddressStatus.KEY_UNVERIFIED))
+    c = _client(monkeypatch, facade)
+    assert _scheduler(c)["contact_trusted"]("!aaaaaaaa") is False
+    assert _scheduler(c)["create"]("!aaaaaaaa", "p.jpg", _JPEG) == (False, "recipient_not_trusted")
+    assert facade.submitted == []
+
+    full = _FakeFacade(providers={PROVIDER_ID: _provider(max_ttl_seconds=604800)}, spool_dir=tmp_path / "spool2", queue_full=True)
+    c2 = _client(monkeypatch, full)
+    assert _scheduler(c2)["create"]("!aaaaaaaa", "p.jpg", _JPEG) == (False, "command_queue_full")

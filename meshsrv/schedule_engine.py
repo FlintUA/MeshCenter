@@ -10,6 +10,7 @@ from pathlib import Path
 
 from meshsrv.time_service import is_trusted, get_status as get_time_status
 from meshsrv.notification_service import push_notification
+from meshsrv import schedule_picture
 
 SCHEDULES_FILE = Path('data/schedules.json')
 # Pre-DK1 location: CWD-relative, only correct when DATA_DIR happened to be
@@ -63,6 +64,9 @@ def _normalize(r: dict) -> dict:
     t.setdefault('datetime', '')
     t.setdefault('last_fired_at', 0)
     r.setdefault('actions', [{'type': 'log_entry', 'params': {}}])
+    for a in r['actions']:
+        if isinstance(a, dict) and a.get('type') == schedule_picture.ACTION_TYPE:
+            a['params'] = schedule_picture.normalize_params(a.get('params'))
     n = r.setdefault('notify', {})
     n.setdefault('enabled', False)
     n.setdefault('signal', '')
@@ -225,7 +229,8 @@ def _loop():
 
 def start(nodes=None, state_lock=None, radio_transport=None,
           is_radio_available=None, LOCAL_NODE_ID=None,
-          add_message=None, LOCAL_NODE_NAME=None, CHANNEL_CHAT_ID=None):
+          add_message=None, LOCAL_NODE_NAME=None, CHANNEL_CHAT_ID=None,
+          picture_deps=None):
     """Start the schedule engine background thread.
 
     The optional keyword arguments are dependency-injected references into
@@ -289,6 +294,7 @@ def start(nodes=None, state_lock=None, radio_transport=None,
         add_message=add_message,
         LOCAL_NODE_NAME=LOCAL_NODE_NAME,
         CHANNEL_CHAT_ID=CHANNEL_CHAT_ID,
+        picture_deps=picture_deps,
     )
 
     t = threading.Thread(target=_loop, daemon=True, name='schedule-engine')
@@ -302,6 +308,7 @@ def get_all_rules() -> list:
 
 
 def create_rule(data: dict) -> dict:
+    schedule_picture.validate_rule(data)
     rule = _normalize(data)
     rule['id'] = str(uuid.uuid4())
     with _lock:
@@ -317,6 +324,7 @@ def update_rule(rule_id: str, data: dict):
         for i, r in enumerate(rules):
             if r['id'] == rule_id:
                 data['id'] = rule_id
+                schedule_picture.validate_rule(data)
                 rules[i] = _normalize(data)
                 _save(rules)
                 return rules[i]

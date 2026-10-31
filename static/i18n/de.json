@@ -1821,7 +1821,17 @@
     "timer_stop": "Stopp",
     "timer_reset": "Zurücksetzen",
     "timer_delete": "Entfernen",
-    "timer_start": "▶ Start"
+    "timer_start": "▶ Start",
+    "action_picture": "Kamerabild senden",
+    "picture_camera": "Netzwerkkamera",
+    "picture_no_camera": "Keine Netzwerkkamera gespeichert",
+    "picture_contact": "Senden an",
+    "picture_no_contact": "Noch kein Kontakt mit sicherer Verbindung",
+    "picture_resize": "Vor dem Senden verkleinern",
+    "picture_note": "Jedes Mal wird ein frisches Bild aufgenommen und als Datei gesendet (MCAttach). Höchstens ein Bild alle 15 Minuten. Ist Kamera, Funkgerät oder Schlüssel nicht verfügbar, wird der Lauf übersprungen und im Systemprotokoll vermerkt.",
+    "error_picture_camera": "Wähle eine Netzwerkkamera",
+    "error_picture_contact": "Wähle einen Kontakt mit sicherer Verbindung",
+    "error_picture_interval": "Ein Bildplan darf höchstens alle 15 Minuten wiederholen"
   },
   "auth": {
     "login_title": "MeshCenter",

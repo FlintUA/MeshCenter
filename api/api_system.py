@@ -538,10 +538,15 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
     def api_create_schedule():
         from meshsrv.schedule_engine import create_rule
 
+        from meshsrv.schedule_picture import RuleInvalid
+
         data = _json_object_or_none()
         if data is None:
             return jsonify(_INVALID_BODY[0]), 400
-        return jsonify(create_rule(data)), 201
+        try:
+            return jsonify(create_rule(data)), 201
+        except RuleInvalid as error:
+            return jsonify({"error": error.message, "error_code": error.code}), 400
 
     @app.route("/api/schedules/<sid>", methods=["PUT"])
     def api_update_schedule(sid):
@@ -550,7 +555,12 @@ def register_system_routes(app, get_cpu_temperature=None, get_app_version=None):
         data = _json_object_or_none()
         if data is None:
             return jsonify(_INVALID_BODY[0]), 400
-        result = update_rule(sid, data)
+        from meshsrv.schedule_picture import RuleInvalid
+
+        try:
+            result = update_rule(sid, data)
+        except RuleInvalid as error:
+            return jsonify({"error": error.message, "error_code": error.code}), 400
         if result is None:
             return jsonify({"error": "not found"}), 404
         return jsonify(result)

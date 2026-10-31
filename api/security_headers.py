@@ -15,10 +15,13 @@ cross-origin subresource request. This still never leaks a path or query
 string off-site, and same-origin requests keep the full Referer.
 """
 
+# Security hardening: restrict sensitive browser features/APIs via
+# Permissions-Policy header (defense in depth against malicious embeds or scripts).
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "SAMEORIGIN",
     "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
 }
 
 

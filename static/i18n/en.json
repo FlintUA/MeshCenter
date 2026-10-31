@@ -859,7 +859,25 @@
     "more": "More actions",
     "send": "Send",
     "send_too_many": "At most {max} pictures per send: select fewer.",
-    "send_unavailable": "Sending is not available right now. Reload the page."
+    "send_unavailable": "Sending is not available right now. Reload the page.",
+    "filter_label": "Filter pictures",
+    "filter_placeholder": "File or camera",
+    "filter_open": "Search pictures",
+    "filter_close": "Close search",
+    "filter_clear": "Clear filter",
+    "filter_empty_title": "No pictures match",
+    "filter_empty_text": "No file name or camera name contains the text you typed.",
+    "filter_empty_clear": "Clear filter",
+    "summary_filtered_full": "{pictures} · {used} MB · {free} GB free",
+    "filtered_count": {
+      "one": "{shown} of {total} picture",
+      "few": "{shown} of {total} pictures",
+      "many": "{shown} of {total} pictures",
+      "other": "{shown} of {total} pictures"
+    },
+    "summary_filtered_count": "{shown} of {total}",
+    "size_mb": "{used} MB",
+    "select_found": "Select found"
   },
   "devices": {
     "subtitle": "Peripheral devices and modules assigned to the active radio profile",

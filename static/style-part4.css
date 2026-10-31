@@ -6150,7 +6150,22 @@ html[data-theme="dark"] .media-zip-note {
 }
 
 .media-toolbar.is-compact .media-sum-short {
-    display: inline;
+    display: inline-flex;
+    flex-direction: column;
+    justify-content: center;
+    line-height: 1.2;
+}
+
+.media-toolbar.is-compact .media-tb-summary {
+    flex: 0 1 auto;
+    overflow: hidden;
+    text-overflow: clip;
+}
+
+.media-sum-sub {
+    color: var(--mc-text-secondary, #667085);
+    font-size: 10.5px;
+    font-weight: 500;
 }
 
 .media-toolbar.is-compact .media-tb-check,
@@ -6204,6 +6219,221 @@ html[data-theme="dark"] .media-zip-note {
 
 .media-toolbar.is-compact .media-menu-item {
     min-height: 44px;
+}
+
+/* ---- gallery filter (G4): a field on a wide toolbar, a search button + in-place bar on a phone ---- */
+.media-filter {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex: 0 1 240px;
+    min-width: 120px;
+    height: 36px;
+    box-sizing: border-box;
+    border: 1px solid var(--mc-border);
+    border-radius: 8px;
+    background: var(--mc-bg-panel);
+    color: var(--mc-text-primary);
+}
+
+/* ONE frame: the wrapper. The focus ring is drawn here (it shows for a mouse and for the keyboard alike); the input
+   inside has no border, outline, background or native look of its own. */
+.media-filter:focus-within {
+    border-color: var(--mc-border-focus, var(--mc-accent, #1f6feb));
+    outline: 2px solid var(--mc-border-focus, var(--mc-accent, #1f6feb));
+    outline-offset: 1px;
+}
+
+.media-filter-ico {
+    display: inline-flex;
+    flex: 0 0 auto;
+    padding-left: 8px;
+    color: var(--mc-text-secondary, #667085);
+}
+
+.media-filter-ico .media-ico {
+    width: 16px;
+    height: 16px;
+}
+
+/* The class is doubled on purpose (specificity): the global `input:focus-visible { outline ... }`, the phone rule
+   `input[type="text"] { min-height: 44px }` and the dark theme's `:is(input, ...) { background; border-color }` (all in
+   ui-kit.css, which loads after this file) must not draw a second frame or make the input taller than its box.
+   16 px is the smallest size at which iOS Safari does not zoom the page on focus. */
+.media-filter .media-filter-input.media-filter-input {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
+    max-width: 100%;
+    height: 100%;
+    min-height: 0;
+    margin: 0;
+    padding: 0 4px 0 6px;
+    box-sizing: border-box;
+    /* !important: the dark theme styles every text input with a background and a border at a higher specificity */
+    border: 0 !important;
+    border-radius: 0;
+    outline: 0 !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    -webkit-appearance: none;
+    appearance: none;
+    -webkit-tap-highlight-color: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: 16px;
+}
+
+.media-filter .media-filter-input.media-filter-input:focus,
+.media-filter .media-filter-input.media-filter-input:focus-visible {
+    outline: 0 !important;
+    box-shadow: none !important;
+    border: 0 !important;
+}
+
+.media-filter .media-filter-input::-webkit-search-cancel-button,
+.media-filter .media-filter-input::-webkit-search-decoration,
+.media-filter .media-filter-input::-webkit-search-results-button {
+    -webkit-appearance: none;
+    appearance: none;
+    display: none;
+}
+
+.media-filter .media-filter-input::placeholder {
+    color: var(--mc-text-secondary, #667085);
+    opacity: 1;
+}
+
+.media-filter-clear {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--mc-text-secondary, #667085);
+    cursor: pointer;
+}
+
+.media-filter-clear[hidden] {
+    display: none;
+}
+
+.media-filter-clear .media-ico {
+    width: 16px;
+    height: 16px;
+}
+
+.media-filter-clear:hover,
+.media-filter-clear:focus-visible {
+    color: var(--mc-text-primary);
+}
+
+.media-search-btn.is-active {
+    position: relative;
+    color: var(--mc-accent, #1f6feb);
+}
+
+.media-search-btn.is-active::after {
+    content: "";
+    position: absolute;
+    top: 9px;
+    right: 9px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--mc-accent, #1f6feb);
+}
+
+.media-toolbar.is-compact .media-filter-wide {
+    flex: 1 1 auto;
+    height: 44px;
+}
+
+.media-toolbar.is-compact .media-filter-clear {
+    width: 44px;
+}
+
+/* a 320 px phone has room for only a few characters of summary next to five buttons: smaller targets (40 px); the summary
+   stays in two lines (count on top, size under it), so it fits without an ellipsis */
+@media (max-width: 360px) {
+    .media-toolbar.is-compact .media-tb {
+        gap: 2px;
+    }
+
+    .media-toolbar.is-compact .media-tb-check,
+    .media-toolbar.is-compact .media-tb-btn,
+    .media-toolbar.is-compact .media-sort,
+    .media-toolbar.is-compact .media-sort-ico {
+        width: 40px;
+        min-width: 40px;
+        height: 40px;
+    }
+
+    .media-toolbar.is-compact .media-filter-wide {
+        height: 40px;
+    }
+
+    .media-toolbar.is-compact .media-filter-clear {
+        width: 40px;
+    }
+
+    .media-toolbar.is-compact .media-sum-top {
+        font-size: 12px;
+    }
+
+    .media-toolbar.is-compact .media-sum-sub {
+        font-size: 10px;
+    }
+}
+
+/* the live count and "Select found" next to the filter field */
+.media-filter-tools {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex: 0 0 auto;
+}
+
+.media-filter-count {
+    flex: 0 0 auto;
+    min-width: 36px;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.2;
+    text-align: center;
+    white-space: nowrap;
+    color: var(--mc-text-primary);
+}
+
+.media-filter-count[hidden] {
+    display: none;
+}
+
+.media-filter-count.is-empty {
+    color: var(--mc-danger, #b42318);
+}
+
+.media-filter-select:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.media-tb-search .media-filter-count {
+    padding: 0 2px;
+}
+
+.media-filter-empty {
+    grid-column: 1 / -1;
+    padding: 36px 16px;
+    text-align: center;
+}
+
+.media-filter-empty .media-primary-btn {
+    margin-top: 12px;
 }
 
 /* ---- phone ---- */
@@ -6472,15 +6702,24 @@ body.media-lightbox-open {
 }
 
 @media (max-width: 700px) {
+    /* the picture sits at the top, just under the close button (no empty band above it), and its caption follows it
+       directly. The picture is capped to what is left once the caption and the arrow strip are reserved: both heights
+       are measured by media.js (--lb-caption-h, --lb-h), 56 px is the close button row, 72 px the arrow strip. */
     .media-lb-stage {
-        padding: 56px 8px 8px;
+        flex: 0 1 auto;
+        align-items: flex-start;
+        padding: 56px 8px 0;
     }
 
-    /* the arrows sit in the dark strip just above the caption (its height is measured by media.js), never on the picture or the file name */
+    .media-lb-img {
+        max-height: calc(var(--lb-h, 100vh) - 56px - var(--lb-caption-h, 120px) - 72px);
+    }
+
+    /* the arrows live in their own strip at the bottom edge: never on the picture, the file name or the action row */
     .media-lb-prev,
     .media-lb-next {
         top: auto;
-        bottom: calc(var(--lb-caption-h, 120px) + 8px);
+        bottom: 12px;
         width: 48px;
         height: 48px;
         transform: none;
@@ -6493,6 +6732,50 @@ body.media-lightbox-open {
     .media-lb-next {
         right: 12px;
     }
+
+    /* the file name over the action row; the three actions share the row equally (icon over label), so the row always
+       fits the width whatever the language and however long the name */
+    .media-lb-caption {
+        flex-direction: column;
+        flex-wrap: nowrap;
+        align-items: stretch;
+        gap: 8px;
+        padding: 8px 12px 0;
+    }
+
+    .media-lb-text strong {
+        overflow-wrap: anywhere;
+    }
+
+    .media-lb-actions {
+        width: 100%;
+        gap: 6px;
+    }
+
+    .media-lb-link {
+        flex: 1 1 0;
+        min-width: 0;
+        min-height: 52px;
+        padding: 6px 4px;
+        flex-direction: column;
+        justify-content: center;
+        gap: 2px;
+        font-size: 12px;
+        line-height: 1.15;
+        text-align: center;
+    }
+
+    .media-lb-link .media-ico {
+        width: 20px;
+        height: 20px;
+        margin: 0;
+    }
+
+    .media-lb-link span {
+        max-width: 100%;
+        overflow-wrap: anywhere;
+        hyphens: auto;
+    }
 }
 
 /* a phone on its side: the picture takes the whole screen, the caption lies over its bottom edge */
@@ -6500,6 +6783,8 @@ body.media-lightbox-open {
     .media-lb-stage {
         position: absolute;
         inset: 0;
+        flex: 1 1 auto;
+        align-items: center;
         padding: 0;
     }
 
@@ -6514,8 +6799,32 @@ body.media-lightbox-open {
         font-size: 12px;
     }
 
+    .media-lb-caption {
+        flex-direction: row;
+        align-items: center;
+        gap: 8px 12px;
+    }
+
+    .media-lb-actions {
+        width: auto;
+        flex: 0 0 auto;
+    }
+
+    /* on its side there is no room for labels: three icon buttons (the name stays as title and aria-label) */
     .media-lb-link {
+        flex: 0 0 auto;
+        width: 44px;
         min-height: 36px;
+        padding: 0;
+        flex-direction: row;
+    }
+
+    .media-lb-link span {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
     }
 
     .media-lb-prev,
@@ -6526,6 +6835,10 @@ body.media-lightbox-open {
         height: 44px;
         transform: translateY(-50%);
         background: rgba(0, 0, 0, 0.45);
+    }
+
+    .media-lb-img {
+        max-height: 100%;
     }
 
     .media-lb-close {

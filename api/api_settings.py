@@ -64,6 +64,9 @@ DEFAULT_SETTINGS = {
         "sort": "date_desc",
         "view_desktop": "large",
         "view_mobile": "large",
+        # The text typed in the gallery filter, remembered per kind of device like the view (G4).
+        "filter_desktop": "",
+        "filter_mobile": "",
     },
 
     "timers": {
@@ -170,6 +173,7 @@ def _normalize_coordinate(value, minimum, maximum):
 
 SUPPORTED_LANGUAGES = ("auto", "en", "de", "ru", "uk")
 MEDIA_SORTS = ("date_desc", "date_asc", "name", "size", "camera")
+MEDIA_FILTER_MAX_CHARS = 80      # must match FILTER_MAX in static/media-views.js
 MEDIA_VIEWS = ("large", "small", "list")
 
 # Kept as a plain tuple (like SUPPORTED_LANGUAGES) rather than importing the
@@ -471,6 +475,15 @@ def normalize_settings(settings):
     media_view_desktop = _media_view("view_desktop")
     media_view_mobile = _media_view("view_mobile")
 
+    def _media_filter(key):
+        value = media_settings.get(key, "")
+        if not isinstance(value, str):
+            return ""
+        return " ".join(value.split())[:MEDIA_FILTER_MAX_CHARS]
+
+    media_filter_desktop = _media_filter("filter_desktop")
+    media_filter_mobile = _media_filter("filter_mobile")
+
     # ---------------- Timer form defaults ----------------
 
     timer_settings = settings.get("timers", {})
@@ -624,6 +637,8 @@ def normalize_settings(settings):
             "sort": media_sort,
             "view_desktop": media_view_desktop,
             "view_mobile": media_view_mobile,
+            "filter_desktop": media_filter_desktop,
+            "filter_mobile": media_filter_mobile,
         },
 
         "timers": {

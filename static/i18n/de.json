@@ -859,7 +859,25 @@
     "more": "Weitere Aktionen",
     "send": "Senden",
     "send_too_many": "Höchstens {max} Bilder pro Versand: wähle weniger aus.",
-    "send_unavailable": "Senden ist gerade nicht verfügbar. Seite neu laden."
+    "send_unavailable": "Senden ist gerade nicht verfügbar. Seite neu laden.",
+    "filter_label": "Bilder filtern",
+    "filter_placeholder": "Datei oder Kamera",
+    "filter_open": "Bilder suchen",
+    "filter_close": "Suche schließen",
+    "filter_clear": "Filter löschen",
+    "filter_empty_title": "Keine passenden Bilder",
+    "filter_empty_text": "Kein Datei- oder Kameraname enthält den eingegebenen Text.",
+    "filter_empty_clear": "Filter löschen",
+    "summary_filtered_full": "{pictures} · {used} MB · {free} GB frei",
+    "filtered_count": {
+      "one": "{shown} von {total} Bild",
+      "few": "{shown} von {total} Bildern",
+      "many": "{shown} von {total} Bildern",
+      "other": "{shown} von {total} Bildern"
+    },
+    "summary_filtered_count": "{shown} von {total}",
+    "size_mb": "{used} MB",
+    "select_found": "Gefundene auswählen"
   },
   "devices": {
     "subtitle": "Periphere Geräte und Module, die dem aktiven Funkprofil zugeordnet sind",

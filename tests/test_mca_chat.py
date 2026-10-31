@@ -86,3 +86,49 @@ def test_the_page_is_never_served_from_a_stale_cache(server_module):
     response = server_module.app.test_client().get("/")
     assert response.status_code == 200
     assert response.headers.get("Cache-Control") == "no-cache"
+
+
+# ---- the offer bubble links to the real attachment ------------------------------------------------------------
+
+
+def _real_offer_text(transfer_id):
+    from nacl.signing import SigningKey
+    key = SigningKey.generate()
+    raw = codec.encode_offer(
+        codec.OfferFields(provider_id=b"p" * 8, transfer_id=transfer_id, sender_key_id=b"k" * 8, kind=0,
+                          size_bucket=1, hard_expires_at=2_145_916_800, flags=0),
+        key,
+    )
+    return codec.to_text(raw)
+
+
+def test_an_offer_marker_carries_the_transfer_id():
+    marker = mca_chat.marker_for_text(_real_offer_text(b"" * 16))
+    assert marker == {"type": "OFFER", "transfer_id": ("07" * 16)}
+
+
+def test_link_attachment_writes_the_id_into_the_matching_offer_only():
+    tid_a, tid_b = "aa" * 16, "bb" * 16
+    messages = [
+        {"id": "1", "mca": {"type": "OFFER", "transfer_id": tid_a}},
+        {"id": "2", "mca": {"type": "OFFER", "transfer_id": tid_b}},
+        {"id": "3", "text": "hello"},
+    ]
+    assert mca_chat.link_attachment(messages, tid_b, "att-b") is True
+    assert messages[1]["mca"]["attachment_id"] == "att-b"
+    assert "attachment_id" not in messages[0]["mca"]
+    assert mca_chat.link_attachment(messages, tid_b, "att-b") is False, "idempotent"
+    assert mca_chat.link_attachment(messages, "cc" * 16, "att-c") is False, "an unknown transfer changes nothing"
+
+
+def test_server_links_an_offer_bubble_when_the_handler_reports_the_attachment(server_module):
+    s = server_module
+    node = "!aaaa4444"
+    tid = b"	" * 16
+    with s.state_lock:
+        s.chats.pop(node, None)
+    offer = s.add_message("rx", "Peer", _real_offer_text(tid), node_id=node, chat_id=node)
+    assert offer["mca"]["transfer_id"] == tid.hex() and "attachment_id" not in offer["mca"]
+    s._link_offer_to_chat(tid.hex(), "att-real")
+    history = [m for m in s.get_chat_messages(node) if m["id"] == offer["id"]][0]
+    assert history["mca"]["attachment_id"] == "att-real"

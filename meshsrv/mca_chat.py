@@ -25,10 +25,32 @@ def marker_for_text(text) -> Optional[dict]:
     if not isinstance(text, str) or not text.startswith(codec.TEXT_PREFIX):
         return None
     try:
-        message_type = codec.peek_message_type(codec.from_text(text))
+        raw = codec.from_text(text)
+        message_type = codec.peek_message_type(raw)
     except Exception:  # any undecodable frame is still a control frame, never shown as raw text
         return {"type": CONTROL}
-    return {"type": OFFER} if message_type == codec.MessageType.OFFER else {"type": CONTROL}
+    if message_type != codec.MessageType.OFFER:
+        return {"type": CONTROL}
+    marker = {"type": OFFER}
+    try:
+        # the transfer id is how the attachment row, created a moment later, is tied back to this bubble
+        marker["transfer_id"] = codec.decode_offer(raw, verify_key=None).transfer_id.hex()
+    except Exception:
+        pass
+    return marker
+
+
+def link_attachment(messages: list, transfer_id: str, attachment_id: str) -> bool:
+    """Write the real attachment id into the marker of the OFFER message with this transfer id (newest first).
+    Returns True when a message was changed."""
+    for message in reversed(messages):
+        marker = message.get("mca")
+        if marker and marker.get("type") == OFFER and marker.get("transfer_id") == transfer_id:
+            if marker.get("attachment_id") == attachment_id:
+                return False
+            marker["attachment_id"] = attachment_id
+            return True
+    return False
 
 
 def ensure_marker(message: dict) -> dict:

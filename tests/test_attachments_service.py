@@ -4636,3 +4636,37 @@ def test_purge_received_cache_is_idempotent_and_validates_days(conn, wsm, princi
     assert dict(service._dispatcher.dispatch(_purge_command(1)).result)["deleted"] == 0
     for bad in (0, -3, 4000, "7", None, True):
         assert service._dispatcher.dispatch(_purge_command(bad)).error_code == "invalid_older_than_days"
+
+
+# ---- MCA-UX1: an inbound OFFER is reported to the chat so its bubble links to the attachment --------------------
+
+
+def test_inbound_offer_reports_transfer_id_and_attachment_id_to_the_hook(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client, remote_recipient
+):
+    _, wsm2, principal2 = remote_recipient
+    signing_key = identity.load_signing_key(wsm2, principal2)
+    transfer_id = uuid.uuid4().bytes
+    raw = codec.encode_offer(
+        codec.OfferFields(provider_id=uuid.uuid4().bytes[:8], transfer_id=transfer_id,
+                          sender_key_id=bytes.fromhex(principal2.key_id), kind=0, size_bucket=1,
+                          hard_expires_at=int(time.time()) + 3600, flags=0),
+        signing_key,
+    )
+    adapter = FakeTextAdapter(InMemoryEther(), "local-addr")
+    svc = _service_with_delivery(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, adapter,
+                                 relay_client_factory=lambda _: relay_client)
+    seen = []
+    svc._offer_linked_fn = lambda tid, att: seen.append((tid, att))
+    svc.enqueue_inbound(InboundEvent(text=codec.to_text(raw), source_address="!756f9960", packet_id="p1", received_at=time.time()))
+    svc.tick()
+    row = conn.execute("SELECT id, transfer_id FROM attachments WHERE direction = 'received'").fetchone()
+    assert seen == [(transfer_id.hex(), row[0])]
+
+
+def test_a_failing_offer_hook_never_breaks_the_service(service):
+    from types import SimpleNamespace
+    service._offer_linked_fn = lambda tid, att: (_ for _ in ()).throw(RuntimeError("boom"))
+    service._notify_offer_linked(b"" * 16, SimpleNamespace(attachment_id="x"))  # must not raise
+    service._offer_linked_fn = None
+    service._notify_offer_linked(b"" * 16, SimpleNamespace(attachment_id="x"))

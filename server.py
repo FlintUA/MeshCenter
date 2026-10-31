@@ -9836,6 +9836,14 @@ def _note_transfer_in_chat(contact_id, attachment_id):
 app.extensions["mc_transfer_chat_note"] = _note_transfer_in_chat
 
 
+def _link_offer_to_chat(transfer_id, attachment_id):
+    """MCA-UX1: the MCAttach handler turned an incoming offer into an attachment: tie that offer's chat bubble to it."""
+    with state_lock:
+        changed = mca_chat.link_attachment(messages, transfer_id, attachment_id)
+        if changed:
+            save_messages()
+
+
 def _build_schedule_picture_deps():
     """G3: the real collaborators of the schedule action "send camera picture" (see meshsrv/schedule_picture.py).
     The camera and attachment hooks are looked up per call from app.extensions, so a runtime reset never leaves the
@@ -10107,6 +10115,7 @@ def start_runtime():
         mca_runtime.start_attachments_service(
             DATA_DIR, transport_router, MCA_CONTROL_CHANNEL_INDEX,
             contact_exists=lambda contact_id: mca_key_request_retry.node_known(contact_id, list(nodes)),  # a removed node ends its KEY_REQUEST retries
+            offer_linked=_link_offer_to_chat,
         )
     except Exception as e:
         print(f"[MCA] failed to start AttachmentsService: {e}", flush=True)

@@ -10,7 +10,7 @@ import threading
 import time
 import zipfile
 
-from camera import mjpeg_fallback
+from camera import mjpeg_fallback, send_copy
 from camera.ip_snapshot import SnapshotError
 from camera.camera_manager import build_camera_manager, network_drivers_from_state
 from camera.rtsp_driver import StreamNotReady, ViewerLimitReached
@@ -489,6 +489,21 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
         filepath = camera.safe_screenshot_path(filename)
         if filepath is None or not os.path.isfile(filepath):
             return jsonify({"ok": False, "error": "File not found"}), 404
+
+        if request.args.get("send") is not None:
+            # G2: the picture prepared for sending through MCAttach (resized, metadata removed); the browser uploads it
+            # with the ordinary POST /api/attachments, one transfer per picture
+            if camera.THUMBS_DIRNAME in filepath.split(os.sep) or not filepath.lower().endswith(".jpg"):
+                return jsonify({"ok": False, "error": "File not found"}), 404
+            try:
+                data, (width, height) = send_copy.prepare(filepath, request.args.get("send"))
+            except send_copy.SendCopyError as error:
+                status = {"too_large": 413, "invalid_size": 400}.get(error.code, 422)
+                return jsonify({"ok": False, "error": error.message, "error_code": error.code, **error.extra}), status
+            response = Response(data, mimetype="image/jpeg")
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["X-Send-Width"], response.headers["X-Send-Height"] = str(width), str(height)
+            return response
 
         if request.args.get("thumb") and camera.THUMBS_DIRNAME not in filepath.split(os.sep):
             # the ~480 px thumbnail (made on the first request when the background backfill has not reached it yet);

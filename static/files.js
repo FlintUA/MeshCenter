@@ -50,6 +50,7 @@
     var COMMAND_MAX_WAIT_MS = 60000;
     var LIST_LIMIT = 500;           // mirrors _LIST_LIMIT_MAX server-side
     var MAX_SEND_BYTES = 5 * 1024 * 1024; // mirrors _MAX_FILE_BYTES server-side
+    var MAX_SEND_PICTURES = 10;           // gallery G2: pictures per send (one transfer each)
     var CONTACT_ID_RE = /^![0-9a-f]{8}$/;  // mirrors _CONTACT_ID_RE server-side
 
     // ---- backend state machines (mirrors meshsrv/attachments/{sender,receiver}.py) ----
@@ -258,6 +259,7 @@
         sendSignature: null,      // semantic send-form signature (C7 idempotency)
         sendClientRequestId: null,
         sendInFlight: false,
+        sendPictures: null,     // gallery G2: {items, total, resize, onDone} while the Send dialog sends pictures
         sendGeneration: 0,        // bumped per send-dialog open/close - isolates generations (G2)
         sendReadinessToken: 0,    // monotonic token - stale readiness responses dropped (F2)
         sendReadiness: null,      // authoritative readiness result for the open send dialog
@@ -1801,7 +1803,8 @@
         if (target.id === 'filesSendExpiry') { renderSendCustomTtl(); refreshSendReadiness(); return; }
         if (target.id === 'filesSendFile') { renderSendFileFeedback(); return; }
         if (target.id === 'filesSendProvider') { renderSendProviderReadiness(); refreshSendReadiness(); return; }
-        if (target.id === 'filesSendRecipient') { renderSendSubmit(); return; }
+        if (target.id === 'filesSendRecipient') { renderSendKeyStatus(); renderSendSubmit(); return; }
+        if (target.id === 'filesSendResize') { renderSendSubmit(); return; }
         if (target.id === 'filesFilterSelect') { setFilter(target.value); return; }
     }
 
@@ -1916,9 +1919,17 @@
 
     // ---- send dialog (C7) --------------------------------------------------
 
-    function openSendDialog() {
+    function openSendDialog(options) {
         if (typeof document === 'undefined') return;
         closeModal();
+        // Gallery G2: the same dialog, with pictures from the Media gallery instead of a file picker
+        var pictures = options && Array.isArray(options.pictures) && options.pictures.length ? options.pictures : null;
+        state.sendPictures = pictures ? {
+            items: pictures.slice(0, MAX_SEND_PICTURES),
+            total: pictures.length,
+            resize: '1280',
+            onDone: typeof options.onDone === 'function' ? options.onDone : null,
+        } : null;
         // G2: this dialog owns a fresh generation; every load/readiness it starts
         // is scoped to it and dropped the moment it closes or is replaced.
         var gen = ++state.sendGeneration;
@@ -1927,7 +1938,7 @@
             '<div class="files-modal-backdrop" data-files-action="modal-backdrop-close" role="presentation">' +
                 '<div class="files-modal" role="dialog" aria-modal="true" aria-labelledby="' + id + '-title">' +
                     '<div class="files-modal-header">' +
-                        '<h3 class="files-modal-title" id="' + id + '-title">📤 ' + esc(t('files.send_file', 'Send file')) + '</h3>' +
+                        '<h3 class="files-modal-title" id="' + id + '-title">📤 ' + esc(pictures ? t('files.pictures_title', 'Send pictures') : t('files.send_file', 'Send file')) + '</h3>' +
                         '<button type="button" class="files-modal-close" data-files-action="modal-close" aria-label="' + esc(t('files.dialog_close', 'Close dialog')) + '">×</button>' +
                     '</div>' +
                     '<div class="files-modal-body">' +
@@ -1943,11 +1954,12 @@
                             '<div class="files-send-readiness" id="filesSendReadiness" aria-live="polite"></div>' +
                             '<div class="files-send-readiness-check" id="filesSendReadinessCheck" aria-live="polite"></div>' +
                         '</label>' +
+                        (pictures ? sendPicturesFieldHtml() :
                         '<label class="files-field">' +
                             '<span class="files-field-label">' + esc(t('files.send_file_label', 'File')) + '</span>' +
                             '<input type="file" id="filesSendFile" />' +
                             '<div class="files-send-file-feedback" id="filesSendFileFeedback" aria-live="polite"></div>' +
-                        '</label>' +
+                        '</label>') +
                         '<label class="files-field">' +
                             '<span class="files-field-label">' + esc(t('files.send_expiry', 'Expiry')) + '</span>' +
                             '<select id="filesSendExpiry">' +
@@ -1970,7 +1982,7 @@
                     '</div>' +
                 '</div>' +
             '</div>';
-        var el = openModalHtml(html, function () { state.sendInFlight = false; });
+        var el = openModalHtml(html, function () { state.sendInFlight = false; state.sendPictures = null; });
         el.className = 'files-dialog-root is-send';
         // G2.1/G2.3: never render the cached provider list as actionable, and
         // never check readiness against it, before the fresh provider projection
@@ -1986,6 +1998,143 @@
         loadConnectivityForSend(gen);
         loadSettingsForSend(gen);
         loadProvidersForSend(gen);
+    }
+
+    // ---- gallery G2: pictures instead of a file ------------------------------
+
+    function sendPicturesFieldHtml() {
+        var pics = state.sendPictures;
+        var summary = tparams('files.pictures_count', { count: pics.items.length }, 'Selected: ' + pics.items.length);
+        var capped = pics.total > pics.items.length
+            ? '<div class="files-send-file-feedback">' + esc(tparams('files.pictures_max', { max: MAX_SEND_PICTURES }, 'At most ' + MAX_SEND_PICTURES + ' pictures per send.')) + '</div>' : '';
+        return '<div class="files-field">' +
+            '<span class="files-field-label">' + esc(t('files.pictures_label', 'Pictures')) + '</span>' +
+            '<div class="files-send-pictures-summary" id="filesSendPictures">' + esc(summary) + '</div>' + capped +
+            '</div>' +
+            '<label class="files-field">' +
+                '<span class="files-field-label">' + esc(t('files.pictures_resize', 'Resize before sending')) + '</span>' +
+                '<select id="filesSendResize">' +
+                    '<option value="1280" selected>' + esc(t('files.pictures_resize_1280', 'Small, 1280 px (recommended)')) + '</option>' +
+                    '<option value="1920">' + esc(t('files.pictures_resize_1920', 'Medium, 1920 px')) + '</option>' +
+                    '<option value="original">' + esc(t('files.pictures_resize_original', 'Original (up to 5 MB each)')) + '</option>' +
+                '</select>' +
+                '<div class="files-send-file-feedback" id="filesSendFileFeedback" aria-live="polite">' +
+                    esc(t('files.pictures_metadata_note', 'Location and camera data are removed from the copies.')) + '</div>' +
+            '</label>';
+    }
+
+    // the contact picked in the recipient select (pictures mode needs it before it is sendable, to offer Connect securely)
+    function sendSelectedContact() {
+        var sel = getEl('filesSendRecipient');
+        return sel && sel.value ? findContact(sel.value) : null;
+    }
+
+    function picturesBlobName(item) {
+        var name = String(item.display_name || String(item.filename || '').split('/').pop() || 'picture.jpg');
+        return /\.jpe?g$/i.test(name) ? name : name + '.jpg';
+    }
+
+    // One prepared copy (resized by the server, metadata removed). {ok, blob, name} or {ok: false, message}
+    function fetchPictureBlob(item, resize) {
+        var path = String(item.filename || '').split('/').map(encodeURIComponent).join('/');
+        return fetch('/api/camera/screenshot/' + path + '?send=' + encodeURIComponent(resize)).then(function (r) {
+            if (r.ok) return r.blob().then(function (blob) { return { ok: true, blob: blob, name: picturesBlobName(item) }; });
+            return r.json().catch(function () { return null; }).then(function (data) {
+                if (data && data.error_code === 'too_large') {
+                    return { ok: false, message: tparams('files.pictures_err_too_large', { size: fmtBytes(data.size_bytes), max: fmtBytes(data.max_bytes) },
+                        'A picture ({size}) is larger than the {max} limit of a transfer. Choose a smaller size.') };
+                }
+                return { ok: false, message: (data && data.error) || t('files.error.network_error', 'Network error') };
+            });
+        }, function () { return { ok: false, message: t('files.error.network_error', 'Network error') }; });
+    }
+
+    // One transfer per picture through the ordinary POST /api/attachments (a client_request_id each), one after the other.
+    // A full command queue (429) stops the run: the rest were not sent.
+    function submitSendPictures(recipient, provider) {
+        var pics = state.sendPictures;
+        var contact = findContact(recipient.value);
+        if (!contact || contact.can_send_file !== true) {
+            toast(t('files.pictures_err_not_trusted', 'Set up a secure connection with this contact first'), 'error');
+            return;
+        }
+        var ttl = sendTtlSecondsStrict();
+        if (ttl === null) {
+            toast(t('files.err_ttl_custom', 'Enter a positive whole number of seconds for the custom expiry'), 'error');
+            return;
+        }
+        var grace = sendGraceSeconds(ttl);
+        var resizeEl = getEl('filesSendResize');
+        var resize = resizeEl && resizeEl.value ? resizeEl.value : '1280';
+        var commentEl = getEl('filesSendComment');
+        var comment = commentEl && commentEl.value.trim() ? commentEl.value.trim() : null;
+        var items = pics.items.slice();
+        var onDone = pics.onDone;
+        var submit = getEl('filesSendSubmit');
+        state.sendInFlight = true;
+        if (submit) submit.disabled = true;
+        var result = { queued: 0, failed: 0, total: items.length, firstError: '', stopped: false };
+        function note(message) { if (!result.firstError) result.firstError = message; }
+
+        function step(i) {
+            if (i >= items.length || result.stopped) return Promise.resolve();
+            return fetchPictureBlob(items[i], resize).then(function (got) {
+                if (!got.ok) { result.failed += 1; note(got.message); return step(i + 1); }
+                var form = new FormData();
+                form.append('metadata', JSON.stringify({
+                    client_request_id: newClientRequestId(),
+                    recipient: { source_address: recipient.value },
+                    hard_ttl_seconds: ttl,
+                    download_grace_seconds: grace,
+                    comment: comment,
+                    provider_id: provider.value,
+                }));
+                form.append('file', got.blob, got.name);
+                return api('/api/attachments', { method: 'POST', body: form }).then(function (r2) {
+                    if (r2.status === 202 && r2.data && r2.data.ok && r2.data.command_id) {
+                        result.queued += 1;
+                    } else if (r2.status === 429) {
+                        result.failed += items.length - i;
+                        result.stopped = true;
+                        note(t('files.pictures_err_queue_full', 'The send queue is full. Wait a moment and send the rest again.'));
+                    } else {
+                        result.failed += 1;
+                        note(filesErrorCode(r2.data));
+                    }
+                    return step(i + 1);
+                });
+            });
+        }
+
+        api('/api/mca/providers/' + encodeURIComponent(provider.value) + '/upload-readiness?requested_ttl_seconds=' + ttl).then(function (r) {
+            if (!r.data || r.data.ok !== true || !r.data.ready) {
+                unlockSend();
+                toast(r.data && r.data.reason ? filesReadinessLabel(r.data.reason) : t('files.err_provider_not_ready', 'Selected provider is not ready'), 'error');
+                return null;
+            }
+            return step(0).then(function () {
+                unlockSend();
+                var text = tparams('files.pictures_queued', { done: result.queued, total: result.total }, result.queued + ' of ' + result.total + ' queued');
+                if (result.failed) toast(text + ' ' + result.firstError, result.queued ? 'warning' : 'error');
+                else toast(text, 'success');
+                if (result.queued) {
+                    if (onDone) { try { onDone(result); } catch (_) { /* the gallery's own business */ } }
+                    return refreshTransfers().then(function () { closeModal(false); });
+                }
+                return null;
+            });
+        }).catch(function () {
+            unlockSend();
+            toast(t('files.error.network_error', 'Network error'), 'error');
+        });
+    }
+
+    // Public entry for the Media gallery: refresh the contacts first so the recipient list is current
+    function openSendPictures(pictures, onDone) {
+        var ready = refreshContacts();
+        return Promise.resolve(ready).catch(function () { /* the list may be stale: still usable */ }).then(function () {
+            openSendDialog({ pictures: pictures, onDone: onDone });
+        });
     }
 
     // G2.1/G2.3: an empty, explicitly-cleared provider select while the fresh
@@ -2077,6 +2226,10 @@
                 return '<option value="' + esc(c.contact_id) + '">' + esc(label) + '</option>';
             }
             var reason = fileUnavailableReasonLabel(c.file_unavailable_reason);
+            // gallery G2: a contact that only lacks a key can be chosen, which shows Connect securely under the list
+            if (state.sendPictures && c.status === 'key_unknown') {
+                return '<option value="' + esc(c.contact_id) + '">' + esc(label + ' - ' + reason) + '</option>';
+            }
             return '<option value="' + esc(c.contact_id) + '" disabled>' + esc(label + ' - ' + reason) + '</option>';
         }).join('');
         if (!trusted.length || preselect === null) {
@@ -2116,6 +2269,10 @@
     // and `key_changed` stay exclusively on the sidebar node card's explicit,
     // never-automated screens (per the task's own constraint).
     function sendKeyStatusContact() {
+        if (state.sendPictures) {
+            var picked = sendSelectedContact();
+            return picked && picked.status === 'key_unknown' ? picked : null;
+        }
         var store = (typeof window !== 'undefined') ? window.MeshCenterTargets : null;
         var sel = store && typeof store.selected === 'function' ? store.selected() : null;
         if (!sel || sel.kind !== 'node') return null;
@@ -2468,6 +2625,12 @@
         var file = fileInput && fileInput.files && fileInput.files.length ? fileInput.files[0] : null;
         var fileOk = Boolean(file && fileTypeAllowed(file) &&
             (typeof file.size !== 'number' || file.size <= MAX_SEND_BYTES));
+        if (state.sendPictures) {
+            // pictures: 1 to 10 of them, and a recipient that is really sendable now (a key still missing is not)
+            var picked = sendSelectedContact();
+            fileOk = state.sendPictures.items.length >= 1 && state.sendPictures.items.length <= MAX_SEND_PICTURES;
+            hasRecipient = Boolean(picked && picked.can_send_file === true);
+        }
         var ttlValid = sendTtlSecondsStrict() !== null;
         var readinessOk = Boolean(state.sendReadiness && state.sendReadiness.ready);
         submit.disabled = !(hasRecipient && hasProvider && fileOk && ttlValid && readinessOk);
@@ -2536,6 +2699,7 @@
             toast(t('files.err_no_provider', 'Choose a ready provider'), 'error');
             return;
         }
+        if (state.sendPictures) { submitSendPictures(recipient, provider); return; }
         if (!fileInput || !fileInput.files || !fileInput.files.length) {
             toast(t('files.err_no_file', 'Choose a file'), 'error');
             return;
@@ -3432,6 +3596,9 @@
         // U3: the map's node menu / popup "Request key" - the same function
         // the node card's Request key button runs (data-files-action).
         requestKey: function (contactId) { contactRequestKey(contactId); },
+        // gallery G2: the Send dialog with pictures from the Media gallery (one transfer per picture)
+        openSendPictures: openSendPictures,
+        maxSendPictures: MAX_SEND_PICTURES,
     };
 
     // Static compatibility entry points referenced by the existing template

@@ -432,7 +432,20 @@
       "key_unknown": "Schlüssel unbekannt",
       "key_unverified": "Schlüssel noch nicht verifiziert",
       "key_changed": "Schlüssel geändert"
-    }
+    },
+    "pictures_title": "Bilder senden",
+    "pictures_label": "Bilder",
+    "pictures_count": "Ausgewählt: {count}",
+    "pictures_max": "Höchstens {max} Bilder pro Versand. Die ersten {max} werden gesendet.",
+    "pictures_resize": "Vor dem Senden verkleinern",
+    "pictures_resize_1280": "Klein, 1280 px (empfohlen)",
+    "pictures_resize_1920": "Mittel, 1920 px",
+    "pictures_resize_original": "Original (bis 5 MB je Bild)",
+    "pictures_metadata_note": "Standort und Kameradaten werden aus den Kopien entfernt.",
+    "pictures_err_too_large": "Ein Bild ({size}) ist größer als das Limit von {max} pro Übertragung. Wähle eine kleinere Größe.",
+    "pictures_err_not_trusted": "Richte zuerst eine sichere Verbindung mit diesem Kontakt ein.",
+    "pictures_err_queue_full": "Die Sendewarteschlange ist voll. Kurz warten und den Rest erneut senden.",
+    "pictures_queued": "{done} von {total} eingereiht"
   },
   "about": {
     "tab_overview": "Übersicht",
@@ -775,7 +788,10 @@
     "summary_full": "{pictures} · {used} MB · {free} GB frei",
     "summary_short": "{count} · {used} MB",
     "free_space": "{free} GB frei",
-    "more": "Weitere Aktionen"
+    "more": "Weitere Aktionen",
+    "send": "Senden",
+    "send_too_many": "Höchstens {max} Bilder pro Versand: wähle weniger aus.",
+    "send_unavailable": "Senden ist gerade nicht verfügbar. Seite neu laden."
   },
   "devices": {
     "subtitle": "Periphere Geräte und Module, die dem aktiven Funkprofil zugeordnet sind",

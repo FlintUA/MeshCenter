@@ -238,4 +238,22 @@ assert.ok(html.indexOf('id="cameraFullscreenBtn"') > html.indexOf('class="video-
     assert.deepEqual(fired, ['card-1']);
 }
 
+// ---------------------------------------------------------------- G2: send selection
+{
+    const V = sandbox.MCMediaViews;
+    const items = Array.from({ length: 12 }, (_, i) => ({ filename: 'd/' + i + '.jpg', display_name: i + '.jpg', size: 100 + i }));
+    const pick = (n) => new Set(items.slice(0, n).map((item) => item.filename));
+    assert.equal(V.SEND_MAX, 10);
+    assert.equal(V.bulkState(new Set(), items).canSend, false, 'nothing selected: no send');
+    assert.equal(V.bulkState(pick(1), items).canSend, true);
+    assert.equal(V.bulkState(pick(10), items).canSend, true, '10 is the limit');
+    const eleven = V.bulkState(pick(11), items);
+    assert.equal(eleven.canSend, false);
+    assert.equal(eleven.sendTooMany, true, 'more than 10: the toolbar says so');
+    assert.equal(eleven.sendMax, 10);
+    const chosen = V.sendItems(new Set(['d/3.jpg', 'd/1.jpg']), items);
+    assert.deepEqual(chosen.map((c) => c.filename), ['d/1.jpg', 'd/3.jpg'], 'in the order shown');
+    assert.deepEqual(Object.keys(chosen[0]).sort(), ['display_name', 'filename', 'size']);
+}
+
 console.log('test_media_views.mjs: ok');

@@ -103,6 +103,7 @@ const MEDIA_ICON_PATHS = {
     download: '<path d="M12 4v11"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/>',
     trash: '<path d="M4 7h16"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M6 7l1 13h10l1-13"/><path d="M9 7V4h6v3"/>',
     close: '<path d="M6 6l12 12"/><path d="M18 6L6 18"/>',
+    send: '<path d="M21 3L10 14"/><path d="M21 3l-7 18-4-8-8-4 19-6z"/>',
 };
 
 function mediaIcon(name) {
@@ -180,6 +181,7 @@ function renderMediaGallery(screenshots, storage) {
                 ${mediaBtn('media-tb-btn media-only-phone', 'data-media-bulk="clear"', 'close', mediaT('media.bulk_clear'))}
                 <span class="media-tb-summary" id="mediaBulkSummary"></span>
                 <span class="media-tb-spacer"></span>
+                ${mediaBtn('media-tb-btn media-tb-labeled', 'data-media-bulk="send" id="mediaBulkSend"', 'send', mediaT('media.send'))}
                 ${mediaBtn('media-tb-btn media-tb-labeled', 'data-media-bulk="download" id="mediaBulkDownload"', 'download', mediaT('media.bulk_download'))}
                 ${mediaBtn('media-tb-btn media-tb-labeled media-tb-danger', 'data-media-bulk="delete"', 'trash', mediaT('media.bulk_delete'))}
                 <button type="button" class="media-tb-text media-only-desktop" data-media-bulk="clear">${mediaEscapeHtml(mediaT('common.cancel'))}</button>
@@ -305,6 +307,7 @@ function mediaHandleClick(event) {
         const what = bulk.getAttribute('data-media-bulk');
         if (what === 'clear') { mediaSelection = new Set(); mediaRenderPictures(); }
         else if (what === 'download') mediaDownloadSelected();
+        else if (what === 'send') mediaSendSelected();
         else if (what === 'delete') mediaDeleteSelected();
         return;
     }
@@ -463,13 +466,17 @@ function mediaUpdateSelectionUi() {
     }
     const download = document.getElementById('mediaBulkDownload');
     if (download) download.disabled = !state.canDownload;
+    const send = document.getElementById('mediaBulkSend');
+    if (send) send.disabled = !state.canSend;
     const note = document.getElementById('mediaZipNote');
     if (note) {
         // said right under the toolbar, before the tap: why the download is off and what to do
-        note.hidden = !(state.any && (state.zipTooLarge || state.tooMany));
+        note.hidden = !(state.any && (state.zipTooLarge || state.tooMany || state.sendTooMany));
         note.textContent = state.tooMany
             ? mediaT('media.bulk_too_many', { max: mediaViews().BULK_MAX })
-            : mediaT('media.zip_limit_message', { max: mediaViews().formatBytes(state.zipMaxBytes), size: mediaViews().formatBytes(state.bytes) });
+            : state.zipTooLarge
+                ? mediaT('media.zip_limit_message', { max: mediaViews().formatBytes(state.zipMaxBytes), size: mediaViews().formatBytes(state.bytes) })
+                : mediaT('media.send_too_many', { max: state.sendMax });
     }
 }
 
@@ -500,6 +507,33 @@ async function mediaDownloadSelected() {
         console.error('Error preparing the download:', error);
         if (typeof showToast === 'function') showToast(`❌ ${error.message}`, 'error', { duration: 10000 });
     }
+}
+
+// G2: the selected pictures go through the Files send dialog (contact, relay, expiry), one MCAttach transfer each
+function mediaOpenSend(pictures) {
+    if (!pictures.length) return;
+    const files = window.MeshCenterFiles;
+    if (!files || typeof files.openSendPictures !== 'function') {
+        if (typeof showToast === 'function') showToast(`❌ ${mediaT('media.send_unavailable')}`, 'error', { duration: 10000 });
+        return;
+    }
+    files.openSendPictures(pictures, () => {
+        mediaSelection = new Set();
+        mediaUpdateSelectionUi();
+    });
+}
+
+function mediaSendSelected() {
+    const state = mediaViews().bulkState(mediaSelection, mediaShown);
+    if (!state.canSend) return;
+    mediaOpenSend(mediaViews().sendItems(mediaSelection, mediaShown));
+}
+
+function mediaSendFromLightbox() {
+    const item = mediaShown[mediaLightboxIndex];
+    if (!item) return;
+    mediaCloseLightbox();   // the send dialog opens above the page, not behind the viewer
+    mediaOpenSend([{ filename: item.filename, display_name: item.display_name || '', size: Number(item.size) || 0 }]);
 }
 
 async function mediaDeleteSelected() {
@@ -554,6 +588,7 @@ function mediaEnsureLightbox() {
         <div class="media-lb-caption">
             <div class="media-lb-text"><strong id="mediaLbName"></strong><span id="mediaLbMeta"></span><span id="mediaLbFacts"></span></div>
             <div class="media-lb-actions">
+                <button type="button" class="media-lb-link" data-lb="send">${mediaIcon('send')}<span>${mediaEscapeHtml(mediaT('media.send'))}</span></button>
                 <a class="media-lb-link" id="mediaLbDownload" download>${mediaIcon('download')}<span>${mediaEscapeHtml(mediaT('media.download'))}</span></a>
                 <button type="button" class="media-lb-link media-lb-danger" data-lb="delete">${mediaIcon('trash')}<span>${mediaEscapeHtml(mediaT('common.delete'))}</span></button>
             </div>
@@ -566,6 +601,7 @@ function mediaEnsureLightbox() {
             else if (what === 'prev') mediaStepLightbox(-1);
             else if (what === 'next') mediaStepLightbox(1);
             else if (what === 'delete') mediaDeleteFromLightbox();
+            else if (what === 'send') mediaSendFromLightbox();
         } else if (event.target === box || event.target.classList.contains('media-lb-stage')) {
             mediaCloseLightbox();
         }

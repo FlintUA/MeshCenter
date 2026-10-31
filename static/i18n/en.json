@@ -432,7 +432,20 @@
       "key_unknown": "Key unknown",
       "key_unverified": "Key not yet verified",
       "key_changed": "Key changed"
-    }
+    },
+    "pictures_title": "Send pictures",
+    "pictures_label": "Pictures",
+    "pictures_count": "Selected: {count}",
+    "pictures_max": "At most {max} pictures per send. The first {max} are sent.",
+    "pictures_resize": "Resize before sending",
+    "pictures_resize_1280": "Small, 1280 px (recommended)",
+    "pictures_resize_1920": "Medium, 1920 px",
+    "pictures_resize_original": "Original (up to 5 MB each)",
+    "pictures_metadata_note": "Location and camera data are removed from the copies.",
+    "pictures_err_too_large": "A picture ({size}) is larger than the {max} limit of a transfer. Choose a smaller size.",
+    "pictures_err_not_trusted": "Set up a secure connection with this contact first.",
+    "pictures_err_queue_full": "The send queue is full. Wait a moment and send the rest again.",
+    "pictures_queued": "{done} of {total} queued"
   },
   "about": {
     "tab_overview": "Overview",
@@ -775,7 +788,10 @@
     "summary_full": "{pictures} · {used} MB · {free} GB free",
     "summary_short": "{count} · {used} MB",
     "free_space": "{free} GB free",
-    "more": "More actions"
+    "more": "More actions",
+    "send": "Send",
+    "send_too_many": "At most {max} pictures per send: select fewer.",
+    "send_unavailable": "Sending is not available right now. Reload the page."
   },
   "devices": {
     "subtitle": "Peripheral devices and modules assigned to the active radio profile",

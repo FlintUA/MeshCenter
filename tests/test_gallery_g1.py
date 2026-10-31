@@ -186,3 +186,75 @@ def test_choosing_on_one_device_leaves_the_other_and_the_shared_sort_alone():
     assert after_phone == {"sort": "name", "view_desktop": "list", "view_mobile": "large"}
     after_sort = normalize_settings(_deep_merge(stored, {"media": {"sort": "size"}}))["media"]
     assert after_sort == {"sort": "size", "view_desktop": "list", "view_mobile": "small"}
+
+
+# ---------------------------------------------------------------- G2: a picture prepared for sending
+
+def _exif_picture(directory, name, size=(3840, 2160)):
+    """A JPEG with EXIF: a camera make, an orientation and a GPS position."""
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / name
+    image = Image.new("RGB", size, (30, 120, 200))
+    exif = Image.Exif()
+    exif[0x010F] = "TestCam"
+    exif[0x0112] = 1
+    gps = exif.get_ifd(0x8825)
+    gps[1], gps[2], gps[3], gps[4] = "N", (52.0, 31.0, 0.0), "E", (13.0, 23.0, 0.0)
+    image.save(path, "JPEG", quality=90, exif=exif)
+    return path
+
+
+def _has_exif(data):
+    with Image.open(io.BytesIO(data)) as image:
+        return len(image.getexif()) > 0 or b"Exif" in data[:200] or b"TestCam" in data
+
+
+def test_send_copy_resizes_to_the_long_edge_and_strips_exif_and_gps(env):
+    path = _exif_picture(env["day"], "MC_g.jpg")
+    assert _has_exif(path.read_bytes()), "the fixture really carries EXIF"
+    response = env["client"].get("/api/camera/screenshot/2026/10/30/MC_g.jpg?send=1280")
+    assert response.status_code == 200 and response.mimetype == "image/jpeg" and "no-store" in response.headers["Cache-Control"]
+    with Image.open(io.BytesIO(response.data)) as image:
+        assert image.size == (1280, 720) and image.format == "JPEG"
+    assert (response.headers["X-Send-Width"], response.headers["X-Send-Height"]) == ("1280", "720")
+    assert not _has_exif(response.data), "no EXIF, no GPS"
+    assert len(response.data) < path.stat().st_size, "smaller than the original"
+    full = env["client"].get("/api/camera/screenshot/2026/10/30/MC_g.jpg?send=1920")
+    with Image.open(io.BytesIO(full.data)) as image:
+        assert image.size == (1920, 1080)
+    assert path.read_bytes()[:2] == b"\xff\xd8" and _has_exif(path.read_bytes()), "the gallery original is never touched"
+
+
+def test_send_copy_keeps_a_small_picture_without_re_encoding_it(env):
+    path = _exif_picture(env["day"], "MC_small.jpg", size=(640, 360))
+    data = env["client"].get("/api/camera/screenshot/2026/10/30/MC_small.jpg?send=1280").data
+    assert not _has_exif(data)
+    with Image.open(io.BytesIO(data)) as a, Image.open(path) as b:
+        assert a.size == b.size == (640, 360)
+        assert list(a.getdata())[:50] == list(b.getdata())[:50], "pixels untouched: only the metadata went"
+
+
+def test_send_copy_original_is_lossless_minus_metadata_and_limited_to_5_mb(env, monkeypatch):
+    path = _exif_picture(env["day"], "MC_o.jpg")
+    data = env["client"].get("/api/camera/screenshot/2026/10/30/MC_o.jpg?send=original").data
+    assert not _has_exif(data) and len(data) < path.stat().st_size
+    with Image.open(io.BytesIO(data)) as a, Image.open(path) as b:
+        assert a.size == b.size == (3840, 2160)
+        assert list(a.getdata())[::5000] == list(b.getdata())[::5000]
+    import camera.send_copy as send_copy
+    monkeypatch.setattr(send_copy, "MAX_SEND_BYTES", 1000)
+    refused = env["client"].get("/api/camera/screenshot/2026/10/30/MC_o.jpg?send=original")
+    body = refused.get_json()
+    assert refused.status_code == 413 and body["error_code"] == "too_large" and body["max_bytes"] == 1000 and body["size_bytes"] > 1000
+
+
+def test_send_copy_rejects_bad_sizes_unknown_files_and_the_thumbnail_tree(env):
+    _picture(env["day"], "MC_p.jpg")
+    assert env["client"].get("/api/camera/screenshot/2026/10/30/MC_p.jpg?send=999").status_code == 400
+    assert env["client"].get("/api/camera/screenshot/2026/10/30/nope.jpg?send=1280").status_code == 404
+    assert env["client"].get("/api/camera/screenshot/../../etc/passwd?send=1280").status_code in (404, 400)
+    camera.ensure_thumbnail(str(env["day"] / "MC_p.jpg"))
+    assert env["client"].get("/api/camera/screenshot/.thumbs/2026/10/30/MC_p.jpg?send=1280").status_code == 404
+    broken = env["day"] / "MC_bad.jpg"
+    broken.write_bytes(b"not a jpeg")
+    assert env["client"].get("/api/camera/screenshot/2026/10/30/MC_bad.jpg?send=original").status_code == 422

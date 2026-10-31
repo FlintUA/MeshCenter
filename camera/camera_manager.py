@@ -46,6 +46,11 @@ class CameraManager:
             return None
         return self._drivers.get(self._active_id)
 
+    def get_driver(self, driver_id: str) -> CameraDriver | None:
+        """The registered driver with this id, active or not (None when unknown)."""
+        with self._lock:
+            return self._drivers.get(driver_id)
+
     def list_drivers(self) -> list[dict[str, Any]]:
         """One summary dict per registered driver - id, display_name,
         device_type, active flag, plus model/vendor/product info. Used

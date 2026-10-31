@@ -1918,3 +1918,39 @@ def register_attachments_routes(app, handle_errors):
             body, status = err
             return body, status
         return _submit_provider_command(facade, "provider_check", {"provider_id": provider_id})
+
+    # ---- G3: the schedule engine sends through the very same create route -----------------------------------------
+
+    def _scheduled_contact_trusted(contact_id):
+        facade = _facade()
+        if facade is None:
+            return False
+        return evaluate_recipient_trust(facade.recipient_snapshot(), contact_id) is None
+
+    def _scheduled_create(contact_id, file_name, data):
+        """Run POST /api/attachments in-process (no HTTP, no browser session) for a file the server itself made.
+        Returns (True, None) when the transfer was queued, else (False, error_code). Every validation of the route
+        (trust, provider, size, MIME) applies unchanged; only the login/CSRF hooks of a browser request are not
+        involved, because the caller is the server's own scheduler."""
+        import io
+
+        metadata = {
+            "client_request_id": "sched-" + uuid.uuid4().hex,
+            "recipient": {"source_address": contact_id},
+        }
+        with app.test_request_context(
+            "/api/attachments",
+            method="POST",
+            data={"metadata": json.dumps(metadata), "file": (io.BytesIO(data), file_name, "image/jpeg")},
+            content_type="multipart/form-data",
+        ):
+            response = app.make_response(create_attachment())
+        if response.status_code == 202:
+            return True, None
+        body = response.get_json(silent=True) or {}
+        return False, str(body.get("error_code") or "send_failed")
+
+    app.extensions["mc_attachment_scheduler"] = {
+        "contact_trusted": _scheduled_contact_trusted,
+        "create": _scheduled_create,
+    }

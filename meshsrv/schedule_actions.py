@@ -30,16 +30,18 @@ _LOCAL_NODE_ID = None
 _add_message = None
 _LOCAL_NODE_NAME = None
 _CHANNEL_CHAT_ID = None
+_picture_deps = None
 
 
 def configure(nodes=None, state_lock=None, radio_transport=None,
               is_radio_available=None, LOCAL_NODE_ID=None,
-              add_message=None, LOCAL_NODE_NAME=None, CHANNEL_CHAT_ID=None):
+              add_message=None, LOCAL_NODE_NAME=None, CHANNEL_CHAT_ID=None,
+              picture_deps=None):
     """Called once from meshsrv.schedule_engine.start() with references
     injected from server.py. See this module's docstring."""
     global _nodes, _state_lock, _radio_transport
     global _is_radio_available, _LOCAL_NODE_ID
-    global _add_message, _LOCAL_NODE_NAME, _CHANNEL_CHAT_ID
+    global _add_message, _LOCAL_NODE_NAME, _CHANNEL_CHAT_ID, _picture_deps
     _nodes = nodes
     _state_lock = state_lock
     _radio_transport = radio_transport
@@ -48,6 +50,7 @@ def configure(nodes=None, state_lock=None, radio_transport=None,
     _add_message = add_message
     _LOCAL_NODE_NAME = LOCAL_NODE_NAME
     _CHANNEL_CHAT_ID = CHANNEL_CHAT_ID
+    _picture_deps = picture_deps
 
 
 def run_action(action: dict, rule: dict):
@@ -58,6 +61,8 @@ def run_action(action: dict, rule: dict):
         _do_mesh_send(action, rule)
     elif t == 'send_data_report':
         _do_send_data_report(action, rule)
+    elif t == 'send_camera_picture':
+        _do_send_camera_picture(action, rule)
     else:
         print(f"[Schedule] Unknown action type: {t}", flush=True)
 
@@ -167,6 +172,16 @@ def send_mesh_message(message: str, target_type: str, node_id: str, channel_inde
     except Exception as e:
         print(f"[Schedule] send_mesh_message: error: {e}", flush=True)
         return False
+
+
+def _do_send_camera_picture(action: dict, rule: dict):
+    """G3: see meshsrv/schedule_picture.py. Without injected dependencies (tests, a half-started server) the run is
+    skipped and logged, never raised."""
+    from meshsrv import schedule_picture
+    if _picture_deps is None:
+        print("[Schedule] send_camera_picture: not configured", flush=True)
+        return
+    schedule_picture.run(action, rule, _picture_deps)
 
 
 def _do_mesh_send(action: dict, rule: dict):

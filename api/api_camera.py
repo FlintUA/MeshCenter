@@ -522,6 +522,47 @@ def register_camera_routes(app, camera, camera_manager_state, device_manager, ha
         result, status = camera.list_screenshots()
         return jsonify(result), status
 
+    # G3: what the schedule action "send camera picture" uses. The same Take picture service as the button (one
+    # picture per 2 s per source, gallery limits, sidecar), for a named network camera whether or not it is the active
+    # one; the copy for sending comes from the same code as the gallery's Send.
+    def _scheduled_source_exists(source_id):
+        manager = camera_manager_state.get("manager")
+        driver = manager.get_driver(source_id) if manager else None
+        return getattr(driver, "source_type", None) == "rtsp"
+
+    def _scheduled_take(source_id):
+        from meshsrv.schedule_picture import PictureError
+
+        if not power_state["enabled"]:
+            raise PictureError("camera_off", "the camera is turned off")
+        manager = camera_manager_state.get("manager")
+        driver = manager.get_driver(source_id) if manager else None
+        if getattr(driver, "source_type", None) != "rtsp" or ip_snapshot is None:
+            raise PictureError("camera_unavailable", "the network camera is not available")
+        try:
+            result = ip_snapshot(driver)
+        except SnapshotError as error:
+            raise PictureError(error.code, str(error))
+        return {"filename": result["filename"], "display_name": result.get("display_name") or ""}
+
+    def _scheduled_prepare(filename, size_key):
+        from meshsrv.schedule_picture import PictureError
+
+        filepath = camera.safe_screenshot_path(filename)
+        if filepath is None or not os.path.isfile(filepath) or camera.THUMBS_DIRNAME in filepath.split(os.sep):
+            raise PictureError("picture_missing", "the picture was not found")
+        try:
+            data, _size = send_copy.prepare(filepath, size_key)
+        except send_copy.SendCopyError as error:
+            raise PictureError(error.code, error.message)
+        return data
+
+    app.extensions["mc_camera_picture"] = {
+        "source_exists": _scheduled_source_exists,
+        "take": _scheduled_take,
+        "prepare": _scheduled_prepare,
+    }
+
     @app.route("/api/camera/screenshot/<path:filename>", methods=["DELETE"])
     @handle_errors
     def api_camera_screenshot_delete(filename):

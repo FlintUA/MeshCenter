@@ -9812,6 +9812,49 @@ def restore_active_transport(accepted_radio, identity_match):
         )
         print(f"[TRANSPORT] Could not restore {active_transport} on startup: {error}", flush=True)
 
+def _build_schedule_picture_deps():
+    """G3: the real collaborators of the schedule action "send camera picture" (see meshsrv/schedule_picture.py).
+    The camera and attachment hooks are looked up per call from app.extensions, so a runtime reset never leaves the
+    scheduler holding a stale object."""
+    import time as _time
+    from meshsrv import schedule_picture
+    from meshsrv.notification_service import push_notification
+
+    def _hook(name):
+        return app.extensions.get(name) or {}
+
+    def _call(name, key, *args):
+        fn = _hook(name).get(key)
+        if fn is None:
+            raise schedule_picture.PictureError("not_ready", "the " + name.replace("mc_", "") + " service is not started")
+        return fn(*args)
+
+    def _create(contact_id, file_name, data):
+        ok, code = _call("mc_attachment_scheduler", "create", contact_id, file_name, data)
+        if not ok:
+            raise schedule_picture.PictureError(code or "send_failed")
+
+    def _contact_trusted(contact_id):
+        fn = _hook("mc_attachment_scheduler").get("contact_trusted")
+        return bool(fn and fn(contact_id))
+
+    def _source_exists(source_id):
+        fn = _hook("mc_camera_picture").get("source_exists")
+        return bool(fn and fn(source_id))
+
+    return schedule_picture.PictureDeps(
+        clock=_time.time,
+        radio_available=is_radio_available,
+        source_exists=_source_exists,
+        contact_trusted=_contact_trusted,
+        take_picture=lambda source_id: _call("mc_camera_picture", "take", source_id),
+        prepare_copy=lambda filename, size_key: _call("mc_camera_picture", "prepare", filename, size_key),
+        create_transfer=_create,
+        log=lambda level, title, details: log_system_event(title=title, details=details, level=level, source="schedule_engine"),
+        notify=lambda level, title, body: push_notification(level=level, source="schedule_engine", title=title, body=body),
+    )
+
+
 def start_runtime():
     """Runs everything server.py needs before it can actually serve traffic:
     radio identity verification, loading persisted state, starting every
@@ -10177,6 +10220,7 @@ def start_runtime():
     start_time_service()
     start_installation_time_assignment(instance_manager)
     start_schedule_engine(
+        picture_deps=_build_schedule_picture_deps(),
         nodes=nodes,
         state_lock=state_lock,
         radio_transport=transport_router,

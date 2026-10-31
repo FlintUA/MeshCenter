@@ -1821,7 +1821,17 @@
     "timer_stop": "Stop",
     "timer_reset": "Reset",
     "timer_delete": "Remove",
-    "timer_start": "▶ Start"
+    "timer_start": "▶ Start",
+    "action_picture": "Send camera picture",
+    "picture_camera": "Network camera",
+    "picture_no_camera": "No network camera saved",
+    "picture_contact": "Send to",
+    "picture_no_contact": "No contact with a secure connection yet",
+    "picture_resize": "Resize before sending",
+    "picture_note": "A fresh picture is taken each time and sent as a file (MCAttach). At most one picture every 15 minutes. If the camera, the radio or the key is not available, the run is skipped and noted in the System Log.",
+    "error_picture_camera": "Choose a network camera",
+    "error_picture_contact": "Choose a contact with a secure connection",
+    "error_picture_interval": "A picture schedule can repeat at most every 15 minutes"
   },
   "auth": {
     "login_title": "MeshCenter",

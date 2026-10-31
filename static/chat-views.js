@@ -570,6 +570,8 @@
 
     // One-line previews (chat list, browser notifications, reply composer): line breaks become " · ".
     function previewText(text) {
+        // MCA-UX2: a raw MCAttach frame (stored before frames were marked) is never shown as text
+        if (typeof text === 'string' && text.indexOf('MCA1:') === 0) return '\u{1F4CE}';
         return expandEscapedNewlines(text).split('\n').map((part) => part.trim()).filter(Boolean).join(' · ');
     }
 

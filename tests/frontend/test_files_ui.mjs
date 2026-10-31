@@ -2956,6 +2956,54 @@ async function test_purge_cancelled_or_nothing_old_sends_nothing() {
     console.log('PASS: test_purge_cancelled_or_nothing_old_sends_nothing');
 }
 
+// ---- MCA-UX2: Accept needs no second confirmation, Reject asks once -----------------------------------------------
+
+function consentRoutes() {
+    return listRoutes([attachment('o1', 'received', 'WAITING_CONSENT')], async (url) => {
+        if (url === '/api/attachments/o1/download' || url === '/api/attachments/o1/reject') {
+            return json(202, { ok: true, command_id: 'c-' + url.split('/').pop() });
+        }
+        return undefined;
+    });
+}
+
+const consentPosts = (sandbox, action) => sandbox._fetchLog.filter((e) => e.url === '/api/attachments/o1/' + action);
+
+async function test_accept_and_download_sends_at_once_without_a_confirm_dialog() {
+    const sandbox = sandboxWithViews(consentRoutes());
+    let asked = 0;
+    sandbox.window.MCDialog = { confirm: async () => { asked += 1; return true; }, prompt: async () => null };
+    activate(sandbox);
+    await waitFor(() => String(sandbox._document.elements.get('filesArchiveList')?.innerHTML || '').includes('data-attachment="o1"'));
+    dispatch(sandbox, { 'data-files-action': 'attach-download', 'data-attachment': 'o1' });
+    await waitFor(() => consentPosts(sandbox, 'download').length === 1);
+    assert.equal(consentPosts(sandbox, 'download').length, 1, 'the download command is queued');
+    assert.equal(asked, 0, 'no confirmation: clicking Accept and download is the decision');
+    assert.ok(!sandbox._document.elements.get('filesModalRoot'), 'and no Files modal either');
+    console.log('PASS: test_accept_and_download_sends_at_once_without_a_confirm_dialog');
+}
+
+async function test_reject_asks_once_with_a_danger_dialog_and_cancel_sends_nothing() {
+    const sandbox = sandboxWithViews(consentRoutes());
+    const asked = [];
+    let answer = false;
+    sandbox.window.MCDialog = { confirm: async (o) => { asked.push(o); return answer; }, prompt: async () => null };
+    activate(sandbox);
+    await waitFor(() => String(sandbox._document.elements.get('filesArchiveList')?.innerHTML || '').includes('data-attachment="o1"'));
+    dispatch(sandbox, { 'data-files-action': 'attach-reject', 'data-attachment': 'o1' });
+    await waitFor(() => asked.length === 1);
+    assert.equal(asked[0].danger, true, 'a danger dialog (red confirm, focus on Cancel)');
+    assert.ok(asked[0].title && asked[0].message && asked[0].confirmLabel && asked[0].cancelLabel, 'every text is set');
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(consentPosts(sandbox, 'reject').length, 0, 'Cancel sends nothing');
+
+    answer = true;
+    dispatch(sandbox, { 'data-files-action': 'attach-reject', 'data-attachment': 'o1' });
+    await waitFor(() => consentPosts(sandbox, 'reject').length === 1);
+    assert.equal(consentPosts(sandbox, 'reject').length, 1, 'Confirm sends the reject command');
+    console.log('PASS: test_reject_asks_once_with_a_danger_dialog_and_cancel_sends_nothing');
+}
+
 async function main() {
     await test_activate_merges_contacts_and_excludes_local();
     await test_trust_confirm_shows_full_fingerprint();
@@ -3035,7 +3083,10 @@ async function main() {
     await test_chat_bubble_selects_its_transfer_even_before_the_list_has_loaded();
     await test_received_copies_storage_line_and_purge_confirmation();
     await test_purge_cancelled_or_nothing_old_sends_nothing();
-    console.log('All files UI behavior tests passed (69 scenarios).');
+    // MCA-UX2
+    await test_accept_and_download_sends_at_once_without_a_confirm_dialog();
+    await test_reject_asks_once_with_a_danger_dialog_and_cancel_sends_nothing();
+    console.log('All files UI behavior tests passed (71 scenarios).');
 }
 
 main()

@@ -876,7 +876,8 @@
       "other": "{shown} из {total} изображения"
     },
     "summary_filtered_count": "{shown} из {total}",
-    "size_mb": "{used} МБ"
+    "size_mb": "{used} МБ",
+    "select_found": "Выбрать найденные"
   },
   "devices": {
     "subtitle": "Периферийные устройства и модули, привязанные к активному профилю радиостанции",

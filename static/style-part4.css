@@ -6390,6 +6390,42 @@ html[data-theme="dark"] .media-zip-note {
     }
 }
 
+/* the live count and "Select found" next to the filter field */
+.media-filter-tools {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex: 0 0 auto;
+}
+
+.media-filter-count {
+    flex: 0 0 auto;
+    min-width: 36px;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.2;
+    text-align: center;
+    white-space: nowrap;
+    color: var(--mc-text-primary);
+}
+
+.media-filter-count[hidden] {
+    display: none;
+}
+
+.media-filter-count.is-empty {
+    color: var(--mc-danger, #b42318);
+}
+
+.media-filter-select:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.media-tb-search .media-filter-count {
+    padding: 0 2px;
+}
+
 .media-filter-empty {
     grid-column: 1 / -1;
     padding: 36px 16px;

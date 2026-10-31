@@ -876,7 +876,8 @@
       "other": "{shown} von {total} Bildern"
     },
     "summary_filtered_count": "{shown} von {total}",
-    "size_mb": "{used} MB"
+    "size_mb": "{used} MB",
+    "select_found": "Gefundene auswählen"
   },
   "devices": {
     "subtitle": "Periphere Geräte und Module, die dem aktiven Funkprofil zugeordnet sind",

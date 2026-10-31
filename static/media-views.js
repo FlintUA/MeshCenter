@@ -119,6 +119,17 @@
             || String((item && item.camera) || '').toLowerCase().indexOf(needle) !== -1;
     }
 
+    // "3 of 14": what the filter shows and how many pictures there are
+    function filterCount(items, query) {
+        const list = Array.isArray(items) ? items : [];
+        return { shown: filterItems(list, query).length, total: list.length };
+    }
+
+    // "Select found": everything the filter shows, as a new selection (replacing any earlier one)
+    function selectFound(items, query) {
+        return new Set(filterItems(items, query).map((item) => item.filename));
+    }
+
     // A new array, in the caller's order.
     function filterItems(items, query) {
         const list = Array.isArray(items) ? items : [];
@@ -262,7 +273,7 @@
         SEND_MAX, sendItems,
         LONG_PRESS_MS, LONG_PRESS_SLOP_PX, selectionMode, tapAction, createLongPress,
         SORTS, VIEWS, DEFAULT_SORT, DEFAULT_VIEW, ZIP_MAX_BYTES, BULK_MAX,
-        FILTER_MAX, normalizeFilter, filterField, pickFilter, matchesFilter, filterItems,
+        FILTER_MAX, normalizeFilter, filterField, pickFilter, matchesFilter, filterItems, filterCount, selectFound,
         normalizeSort, normalizeView, viewField, pickView, sortItems, formatBytes, formatResolution,
         toggle, allSelected, toggleAll, prune, totals, bulkState, neighbour, indexAfterDelete,
     };

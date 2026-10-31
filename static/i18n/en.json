@@ -876,7 +876,8 @@
       "other": "{shown} of {total} pictures"
     },
     "summary_filtered_count": "{shown} of {total}",
-    "size_mb": "{used} MB"
+    "size_mb": "{used} MB",
+    "select_found": "Select found"
   },
   "devices": {
     "subtitle": "Peripheral devices and modules assigned to the active radio profile",

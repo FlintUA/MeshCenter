@@ -876,7 +876,8 @@
       "other": "{shown} з {total} зображення"
     },
     "summary_filtered_count": "{shown} з {total}",
-    "size_mb": "{used} МБ"
+    "size_mb": "{used} МБ",
+    "select_found": "Вибрати знайдені"
   },
   "devices": {
     "subtitle": "Периферійні пристрої та модулі, прив'язані до активного профілю радіостанції",

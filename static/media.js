@@ -113,6 +113,7 @@ const MEDIA_ICON_PATHS = {
     trash: '<path d="M4 7h16"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M6 7l1 13h10l1-13"/><path d="M9 7V4h6v3"/>',
     close: '<path d="M6 6l12 12"/><path d="M18 6L6 18"/>',
     search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
+    found: '<path d="M3 12.5l4.5 4.5L15 8"/><path d="M11 17l1 1 9-10"/>',
     back: '<path d="M15 5l-7 7 7 7"/>',
     send: '<path d="M21 3L10 14"/><path d="M21 3l-7 18-4-8-8-4 19-6z"/>',
 };
@@ -133,6 +134,35 @@ function mediaFilterField(id) {
         + `<input type="text" id="${id}" class="media-filter-input" value="${mediaEscapeHtml(mediaFilter)}" maxlength="${mediaViews().FILTER_MAX}" `
         + `placeholder="${mediaEscapeHtml(mediaT('media.filter_placeholder'))}" aria-label="${label}" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search">`
         + `<button type="button" class="media-filter-clear" data-media-action="filter-clear" aria-label="${mediaEscapeHtml(mediaT('media.filter_clear'))}" title="${mediaEscapeHtml(mediaT('media.filter_clear'))}"${mediaFilter ? '' : ' hidden'}>${mediaIcon('close')}</button>`;
+}
+
+// G4: the live count ("1 of 23") and the "Select found" button that sit next to the filter field, in the phone bar and on the
+// desktop toolbar alike (updated by mediaUpdateFilterTools() on every keystroke)
+function mediaFilterTools() {
+    const label = mediaEscapeHtml(mediaT('media.select_found'));
+    return `<span class="media-filter-count" role="status" aria-live="polite" hidden></span>`
+        + `<button type="button" class="media-tb-btn media-filter-select" data-media-action="select-found" aria-label="${label}" title="${label}" disabled>${mediaIcon('found')}</button>`;
+}
+
+function mediaUpdateFilterTools() {
+    const { shown, total } = mediaViews().filterCount(mediaItems, mediaFilter);
+    const active = Boolean(mediaViews().normalizeFilter(mediaFilter));
+    document.querySelectorAll('.media-filter-count').forEach((count) => {
+        count.hidden = !active;
+        count.textContent = active ? mediaT('media.summary_filtered_count', { shown, total }) : '';
+        count.classList.toggle('is-empty', active && shown === 0);
+    });
+    document.querySelectorAll('.media-filter-select').forEach((button) => { button.disabled = shown === 0; });
+}
+
+// "Select found": everything the filter shows is selected, the phone bar closes and the toolbar switches to the selection
+// state (Download / Delete / Send)
+function mediaSelectFound() {
+    const found = mediaViews().selectFound(mediaItems, mediaFilter);
+    if (!found.size) return;
+    mediaSelection = found;
+    mediaSearchOpen = false;
+    mediaRenderPictures();
 }
 
 function renderMediaGallery(screenshots, storage) {
@@ -177,6 +207,7 @@ function renderMediaGallery(screenshots, storage) {
                 <span class="media-tb-summary" id="mediaSummary"></span>
                 <span class="media-tb-spacer"></span>
                 <div class="media-filter media-only-desktop">${mediaFilterField('mediaFilterInput')}</div>
+                <span class="media-only-desktop media-filter-tools">${mediaFilterTools()}</span>
                 <button type="button" class="media-tb-btn media-only-phone media-search-btn${mediaFilter ? ' is-active' : ''}" id="mediaSearchBtn" data-media-action="search-open" aria-label="${mediaEscapeHtml(mediaT('media.filter_open'))}" title="${mediaEscapeHtml(mediaT('media.filter_open'))}">${mediaIcon('search')}</button>
                 <label class="media-sort">
                     <span class="media-sort-caption">${mediaEscapeHtml(mediaT('media.sort_label'))}</span>
@@ -201,6 +232,7 @@ function renderMediaGallery(screenshots, storage) {
             <div class="media-tb media-tb-search" id="mediaTbSearch" hidden>
                 <button type="button" class="media-tb-btn" data-media-action="search-close" aria-label="${mediaEscapeHtml(mediaT('media.filter_close'))}" title="${mediaEscapeHtml(mediaT('media.filter_close'))}">${mediaIcon('back')}</button>
                 <div class="media-filter media-filter-wide">${mediaFilterField('mediaFilterInputPhone')}</div>
+                ${mediaFilterTools()}
             </div>
             <div class="media-tb media-tb-selection" id="mediaTbSelection" hidden>
                 <label class="media-tb-check media-only-desktop" title="${selectAllLabel}"><input type="checkbox" data-media-selectall aria-label="${selectAllLabel}"></label>
@@ -358,6 +390,7 @@ function mediaHandleClick(event) {
         else if (what === 'search-open') mediaOpenSearch();
         else if (what === 'search-close') mediaCloseSearch();
         else if (what === 'filter-clear') mediaSetFilter('', null, true);
+        else if (what === 'select-found') mediaSelectFound();
         return;
     }
     const bulk = event.target.closest('[data-media-bulk]');
@@ -451,6 +484,7 @@ function mediaRenderPictures() {
                <button type="button" class="media-primary-btn" data-media-action="filter-clear">${mediaEscapeHtml(mediaT('media.filter_empty_clear'))}</button>
            </div>`;
     mediaUpdateSelectionUi();
+    mediaUpdateFilterTools();
 }
 
 // ---- filter (G4) ---------------------------------------------------------------------------------------------------

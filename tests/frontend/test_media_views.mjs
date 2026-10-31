@@ -410,4 +410,59 @@ assert.ok(html.indexOf('id="cameraFullscreenBtn"') > html.indexOf('class="video-
     assert.ok(media.includes('placeholder="${mediaEscapeHtml(mediaT(\'media.filter_placeholder\'))}"'), 'the field uses the placeholder key');
 }
 
+
+// ---------------------------------------------------------------- G4: the live count and "Select found"
+{
+    const pictures = [
+        item('MC_Garazh_1.jpg', { camera: 'Гараж', size: 100 }),
+        item('MC_Front-Door_2.jpg', { camera: 'Front Door', size: 200 }),
+        item('MC_3.jpg', { camera: '', size: 400 }),
+        item('IMG_0001.JPG', { camera: '', size: 800 }),
+    ];
+    // the count: "N of M", also when everything matches (the "MC_" a user typed and saw no change) and when nothing does
+    assert.deepEqual({ ...V.filterCount(pictures, 'MC_') }, { shown: 3, total: 4 });
+    assert.deepEqual({ ...V.filterCount(pictures, 'mc_') }, { shown: 3, total: 4 }, 'case-insensitive');
+    assert.deepEqual({ ...V.filterCount(pictures, 'door') }, { shown: 1, total: 4 });
+    assert.deepEqual({ ...V.filterCount(pictures, 'гараж') }, { shown: 1, total: 4 }, 'Cyrillic camera name');
+    assert.deepEqual({ ...V.filterCount(pictures, 'zzz') }, { shown: 0, total: 4 }, '0 of 4 when nothing matches');
+    assert.deepEqual({ ...V.filterCount(pictures, '') }, { shown: 4, total: 4 });
+    assert.deepEqual({ ...V.filterCount(null, 'x') }, { shown: 0, total: 0 });
+
+    // "Select found": exactly the pictures the filter shows, replacing any earlier selection
+    const found = V.selectFound(pictures, 'MC_');
+    assert.deepEqual(Array.from(found).sort(), pictures.slice(0, 3).map((p) => p.filename).sort());
+    assert.equal(found.has(pictures[3].filename), false, 'a hidden picture is never selected');
+    assert.equal(V.selectFound(pictures, 'zzz').size, 0, 'nothing found: nothing selected (the button is disabled)');
+    assert.equal(V.selectFound(pictures, '').size, 4, 'an empty filter finds everything');
+    assert.equal(V.selectFound(pictures, 'door').size, 1);
+    // it feeds the selection toolbar: the bulk state counts and sizes exactly the found pictures
+    const state = V.bulkState(found, V.filterItems(pictures, 'MC_'));
+    assert.equal(state.count, 3);
+    assert.equal(state.bytes, 700);
+    assert.equal(state.canDownload && state.canDelete && state.canSend, true, 'Download, Delete and Send are available');
+    assert.equal(V.selectionMode(found), true, 'the toolbar switches to the selection state');
+    assert.equal(V.selectionMode(V.selectFound(pictures, 'zzz')), false);
+
+    // the wiring in media.js
+    const media = read('media.js');
+    const css = read('style-part4.css');
+    assert.ok(media.includes("data-media-action=\"select-found\"") && media.includes('aria-label="${label}"') && media.includes('title="${label}"'), 'an icon button with an aria-label and a title');
+    assert.ok(media.includes("what === 'select-found'") && media.includes('function mediaSelectFound()'), 'the click is handled');
+    const select = media.slice(media.indexOf('function mediaSelectFound()'), media.indexOf('function renderMediaGallery'));
+    assert.ok(select.includes('selectFound(mediaItems, mediaFilter)') && select.includes('mediaSearchOpen = false') && select.includes('mediaRenderPictures()'), 'selects, closes the bar and shows the selection toolbar');
+    assert.ok(select.includes('if (!found.size) return;'), 'nothing found: nothing happens');
+    const tools = media.slice(media.indexOf('function mediaUpdateFilterTools()'), media.indexOf('// "Select found": everything'));
+    assert.ok(tools.includes("button.disabled = shown === 0") && tools.includes("count.hidden = !active") && tools.includes("media.summary_filtered_count"), 'count shown while filtering, button disabled at 0');
+    assert.ok(/mediaUpdateSelectionUi\(\);\n    mediaUpdateFilterTools\(\);\n\}/.test(media), 'the count follows every render (every keystroke)');
+    // in the phone bar AND next to the inline field on a desktop toolbar
+    const phoneBar = media.slice(media.indexOf('id="mediaTbSearch"'), media.indexOf('id="mediaTbSelection"'));
+    assert.ok(phoneBar.includes('mediaFilterField(\'mediaFilterInputPhone\')') && phoneBar.includes('${mediaFilterTools()}'), 'the phone bar has the field, the count and the button');
+    assert.ok(media.includes('media-only-desktop media-filter-tools') && media.includes("${mediaFilterField('mediaFilterInput')}"), 'the desktop toolbar too');
+    assert.ok(/\.media-filter-select:disabled \{[^}]*opacity/.test(css) && /\.media-filter-count\.is-empty \{[^}]*color/.test(css), 'a disabled button and a "0 of N" look');
+    for (const loc of ['en', 'de', 'ru', 'uk']) {
+        const catalog = JSON.parse(readFileSync(path.join(__dirname, '..', '..', 'static', 'i18n', loc + '.json'), 'utf8'));
+        assert.ok(catalog.media.select_found && catalog.media.select_found.length <= 24, loc + ' has a short select_found label');
+    }
+}
+
 console.log('test_media_views.mjs: ok');

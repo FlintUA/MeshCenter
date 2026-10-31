@@ -104,6 +104,7 @@ from meshsrv.attachments.provider_registry import (
 )
 from meshsrv.attachments.recipient_snapshot import RecipientRejectionReason, evaluate_recipient_trust
 from meshsrv.attachments.vault.errors import VaultError
+from meshsrv.attachments.vault import migration as vault_migration, passphrase as vault_passphrase, runtime as vault_runtime
 from meshsrv.attachments.snapshots import (
     ContentDisposition,
     ContentLocatorError,
@@ -711,14 +712,190 @@ def register_attachments_routes(app, handle_errors):
             return view(*args, **kwargs)
         return wrapper
 
+    def _vault_acknowledged(data):
+        return isinstance(data, dict) and data.get("acknowledge_flash") is True
+
+    def _vault_job_response(kind, payload, *, check=None):
+        """Validate, then queue a vault command: a 202 with the command id (poll /api/mca/commands/<id>)."""
+        facade = _facade()
+        if facade is None:
+            return _not_ready()
+        if check is not None:
+            refusal = check(facade)
+            if refusal is not None:
+                return refusal
+        command = Command(command_id=mint_command_id(), kind=kind, payload=payload, created_at=time.time())
+        try:
+            command_id = facade.submit(command)
+        except CommandQueueFull:
+            return _json_error("command_queue_full", "command queue is full"), 429
+        return jsonify({"ok": True, "command_id": command_id}), 202
+
+    @app.route("/api/mca/vault/enable", methods=["POST"])
+    @handle_errors
+    def vault_enable():
+        """Enable the vault: validate, then the worker runs the migration (backup, encrypt, verify). The passphrase goes
+        to the worker through the runtime's one-shot in-memory hand-off, never through the command queue."""
+        vault = _vault()
+        if vault is None:
+            return _not_ready()
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict) or not isinstance(data.get("passphrase"), str):
+            return _json_error("passphrase_required", "passphrase required"), 400
+        if not vault_runtime.enable_allowed():
+            return _json_error("vault_not_ready", "Encrypted file operations are not available yet"), 409
+        if not _vault_acknowledged(data):
+            return _json_error("acknowledgement_required", "The flash storage notice must be acknowledged"), 400
+        if vault.is_enabled():
+            return _json_error("vault_already_enabled", "The vault is already enabled"), 409
+        assessment = vault_passphrase.assess(data["passphrase"])
+        if not assessment["ok"]:
+            body = {"ok": False, "error_code": "passphrase_too_weak", "error": "passphrase_too_weak", "level": assessment["level"]}
+            return jsonify(body), 400
+        make_backup_copy = data.get("backup", True) is not False
+        try:
+            vault.check_migration_memory("enable")
+        except VaultError as error:
+            return _vault_error(error)
+        token = uuid.uuid4().hex
+
+        def check(facade):
+            blocking = sum(1 for r in facade.attachments_snapshot().records if r.state in vault_migration.BLOCKING_STATES)
+            if blocking:
+                return jsonify({"ok": False, "error_code": "transfers_in_progress", "error": "transfers_in_progress", "count": blocking}), 409
+            return None
+        vault.put_handoff(token, vault_passphrase.normalize(data["passphrase"]))
+        response = _vault_job_response("vault_enable", {"handoff": token, "backup": make_backup_copy}, check=check)
+        data = None
+        if (response[1] if isinstance(response, tuple) else 200) != 202:
+            vault.take_handoff(token)                    # refused: the secret does not wait around
+        return response
+
+    @app.route("/api/mca/vault/disable", methods=["POST"])
+    @handle_errors
+    def vault_disable():
+        vault = _vault()
+        if vault is None:
+            return _not_ready()
+        data = request.get_json(silent=True)
+        if not vault.is_enabled():
+            return _vault_error(VaultError("vault_not_enabled"))
+        if vault.storage_key() is None:
+            return _vault_error(VaultError("vault_locked"))
+        if not _vault_acknowledged(data):
+            return _json_error("acknowledgement_required", "Acknowledge the notice first"), 400
+        try:
+            vault.check_migration_memory("disable")
+        except VaultError as error:
+            return _vault_error(error)
+        return _vault_job_response("vault_disable", {"backup": not (isinstance(data, dict) and data.get("backup") is False)})
+
+    @app.route("/api/mca/vault/resume", methods=["POST"])
+    @handle_errors
+    def vault_resume():
+        vault = _vault()
+        if vault is None:
+            return _not_ready()
+        if vault.state() != "migrating":
+            return _json_error("nothing_to_resume", "No interrupted vault job"), 409
+        if vault.storage_key() is None:
+            return _vault_error(VaultError("vault_locked"))
+        try:
+            vault.check_migration_memory()
+        except VaultError as error:
+            return _vault_error(error)
+        return _vault_job_response("vault_resume", {})
+
+    def _header_op(action):
+        vault = _vault()
+        if vault is None:
+            return _not_ready()
+        if not vault.is_enabled():
+            return _vault_error(VaultError("vault_not_enabled"))
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict) or not isinstance(data.get("current_passphrase"), str):
+            return _json_error("passphrase_required", "passphrase required"), 400
+        try:
+            result = action(vault, data)
+        except VaultError as error:
+            return _vault_error(error)
+        finally:
+            data = None
+        return jsonify(result)
+
+    @app.route("/api/mca/vault/change-passphrase", methods=["POST"])
+    @handle_errors
+    def vault_change_passphrase():
+        def action(vault, data):
+            if not isinstance(data.get("new_passphrase"), str):
+                raise VaultError("passphrase_required")
+            status = vault.change_passphrase(data["current_passphrase"], data["new_passphrase"])
+            status["ok"] = True
+            return status
+        return _header_op(action)
+
+    @app.route("/api/mca/vault/recalibrate", methods=["POST"])
+    @handle_errors
+    def vault_recalibrate():
+        def action(vault, data):
+            status = vault.recalibrate(data["current_passphrase"])
+            status["ok"] = True
+            return status
+        return _header_op(action)
+
+    @app.route("/api/mca/vault/new-recovery-key", methods=["POST"])
+    @handle_errors
+    def vault_new_recovery_key():
+        def action(vault, data):
+            return {"ok": True, "recovery_key": vault.new_recovery_key(data["current_passphrase"])}
+        response = _header_op(action)
+        if isinstance(response, tuple):
+            return response
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.route("/api/mca/vault/recovery-key", methods=["GET"])
+    @handle_errors
+    def vault_recovery_key():
+        """The recovery key made by an enable, shown ONCE: it is forgotten as soon as it is read."""
+        vault = _vault()
+        if vault is None:
+            return _not_ready()
+        text = vault.take_recovery_key()
+        if text is None:
+            return _json_error("recovery_key_not_available", "The recovery key was already shown"), 410
+        response = jsonify({"ok": True, "recovery_key": text})
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.route("/api/mca/vault/backup/delete", methods=["POST"])
+    @handle_errors
+    def vault_backup_delete():
+        data = request.get_json(silent=True)
+        data_dir = mca_runtime.get_data_dir()
+        if data_dir is None:
+            return _not_ready()
+        name = data.get("name") if isinstance(data, dict) else None
+        if not isinstance(name, str):
+            return _json_error("invalid_backup_name", "invalid backup name"), 400
+        try:
+            deleted = vault_migration.delete_backup(data_dir, name)
+        except VaultError as error:
+            return _vault_error(error)
+        return jsonify({"ok": True, "deleted": deleted})
+
     def _vault_error(error):
         """A VaultError as an HTTP answer. A wrong passphrase and a damaged header are the same answer."""
         code = error.code
         status = {
             "unlock_failed": 403, "invalid_recovery_key": 403, "passphrase_required": 400, "vault_not_enabled": 409,
-            "unlock_rate_limited": 429, "insufficient_memory": 503, "vault_busy": 503,
+            "unlock_rate_limited": 429, "insufficient_memory": 503, "vault_busy": 503, "vault_locked": 423,
+            "passphrase_too_weak": 400, "invalid_backup_name": 400,
         }.get(code, 400)
         body = {"ok": False, "error_code": code, "error": error.message if code == "insufficient_memory" else code}
+        level = getattr(error, "level", None)
+        if level is not None:
+            body["level"] = level
         retry = getattr(error, "retry_in_s", None)
         if retry is not None:
             body["retry_in_s"] = retry
@@ -742,6 +919,15 @@ def register_attachments_routes(app, handle_errors):
                 body["waiting_offers"] = sum(1 for r in records if r.direction == "received" and r.state == receiver.WAITING_CONSENT)
             except FacadeNotReady:
                 pass
+        data_dir = mca_runtime.get_data_dir()
+        if data_dir is not None:
+            backups = vault_migration.list_backups(data_dir)
+            # the plain backup is a liability: this is derived from the folder, so a restart cannot lose the warning
+            body["plain_backups"] = backups
+            body["plain_backup_warning"] = bool(backups)
+        body["enable_allowed"] = vault_runtime.enable_allowed()
+        if body.get("state") == "disabled":
+            body["notices"] = ["flash_remanence", "gallery_not_covered", "downgrade_refused"]
         body["ok"] = True
         return jsonify(body)
 

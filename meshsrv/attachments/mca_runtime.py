@@ -492,6 +492,12 @@ def start_attachments_service(
     state.ensure_service(radio_transport, control_channel_index, contact_exists, offer_linked)
 
 
+def get_data_dir():
+    """The instance data directory (where a plain vault backup lives), or `None` before the runtime exists."""
+    state = _state
+    return None if state is None else state.workspace_manager.data_dir
+
+
 def get_vault() -> Optional[VaultRuntime]:
     """The vault runtime, or `None` before the runtime exists (the same rule as `get_attachments_facade()`)."""
     state = _state

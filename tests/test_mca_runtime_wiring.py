@@ -1001,7 +1001,7 @@ def test_real_service_wires_the_lifecycle_and_create_handlers(tmp_path):
             "attachment_create", "attachment_retry", "attachment_download",
             "attachment_reject", "attachment_cancel", "attachment_save",
             "attachment_revoke", "attachment_delete_local_content",
-            "attachment_purge_received_cache",
+            "attachment_purge_received_cache", "vault_enable", "vault_disable", "vault_resume",
             "contact_request_key", "contact_cancel_key_request",
             "contact_confirm", "contact_accept_key_change",
             "contact_reject_key_change",

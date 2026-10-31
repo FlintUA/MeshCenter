@@ -17,10 +17,11 @@ Design points:
 * Nothing here logs or returns a passphrase, a key, a file name or a comment.
 """
 import math
+import os
 import threading
 import time
 from pathlib import Path
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, Optional, Tuple
 
 from meshsrv.attachments.vault import header as header_mod
 from meshsrv.attachments.vault import kdf, memory, passphrase as passphrase_mod, recovery as recovery_mod, swapcheck
@@ -31,12 +32,25 @@ HEADER_FILE = "vault.json"
 MIGRATION_FILE = "vault-migration.json"
 HEADER_BACKUP_FILE = "vault.json.bak"
 RAM_MARGIN_BYTES = 16 * 1024 * 1024
+# What a migration needs ON TOP of the running process (measured: a Zero 2 W peaked at 74 MiB total, of which about 40 MiB
+# was the service itself): chunk buffers, the in-memory verify, SQLite page cache and VACUUM. Enable adds the KDF memory.
+MIGRATION_WORKING_BYTES = 16 * 1024 * 1024
 LOCK_WAIT_SECONDS = 5.0
 
 STATE_DISABLED, STATE_LOCKED, STATE_UNLOCKED, STATE_MIGRATING = "disabled", "locked", "unlocked", "migrating"
 
 
 MEMINFO_PATH = "/proc/meminfo"
+
+
+EXPERIMENTAL_ENV = "MESHCENTER_MCA_VAULT_EXPERIMENTAL"
+
+
+def enable_allowed() -> bool:
+    """Until the encrypted file operations of PR 4 exist (receive, send, preview, download under the vault) the
+    migration is available only where this variable is set to 1: the live round on a copy, and the tests. With it
+    unset an enable is refused, so no node can end up with an encrypted workspace its service cannot read yet."""
+    return os.environ.get(EXPERIMENTAL_ENV, "") == "1"
 
 
 def free_ram_bytes(meminfo_path: Optional[str] = None) -> Optional[int]:
@@ -86,6 +100,10 @@ class VaultRuntime:
         self._failures = 0
         self._next_attempt_at = 0.0
         self._postponed_logged = False
+        self._progress: Optional[Dict[str, object]] = None   # the running enable / disable / resume job
+        self._handoffs: Dict[str, Tuple[bytes, float]] = {}  # one-shot secrets for a job, never queued or logged
+        self._recovery_pending: Optional[str] = None         # a new recovery key waiting to be shown once
+        self._reissue_recovery = False                       # an interrupted enable was resumed: issue a new recovery key
 
     # ---- files and state ---------------------------------------------------------------------------------------
 
@@ -194,6 +212,36 @@ class VaultRuntime:
                       "Not enough free memory (%d MiB needed, %d MiB free)" % (needed // (1024 * 1024), available // (1024 * 1024)))
             raise error
 
+    def migration_memory_needed(self, op: str) -> int:
+        """Bytes of free memory required before an enable ("enable") or a disable ("disable") may start. An enable derives
+        a key (at least the 32 MiB floor; the calibration ceiling is a quarter of what is free, so this is never more than
+        the floor on a small node); a disable derives nothing."""
+        needed = MIGRATION_WORKING_BYTES + RAM_MARGIN_BYTES
+        if op == "enable":
+            needed += kdf.MIN_MEMLIMIT
+        return needed
+
+    def _journal_op(self) -> str:
+        try:
+            import json
+            return str(json.loads((self._dir / MIGRATION_FILE).read_text(encoding="utf-8")).get("op") or "enable")
+        except (OSError, ValueError):
+            return "enable"
+
+    def check_migration_memory(self, op: Optional[str] = None) -> None:
+        """Refuse BEFORE anything is touched (HTTP 503 insufficient_memory), never fail in the middle of a migration.
+        `op` None means a resume: the interrupted job's own kind, read from the journal."""
+        op = op or self._journal_op()
+        needed = self.migration_memory_needed(op)
+        available = self._free_ram()
+        if available is not None and available < needed:
+            error = VaultError("insufficient_memory", "Not enough free memory for this now (%d MiB needed, %d MiB free)."
+                               % (needed // (1024 * 1024), available // (1024 * 1024)))
+            error.needed_bytes, error.available_bytes = needed, available
+            self._log("WARNING", "MCAttach vault %s refused" % op,
+                      "Not enough free memory (%d MiB needed, %d MiB free)" % (needed // (1024 * 1024), available // (1024 * 1024)))
+            raise error
+
     def _derive(self, header: header_mod.VaultHeader, passphrase: Optional[str], recovery_key: Optional[str]) -> bytearray:
         try:
             if recovery_key:
@@ -254,6 +302,167 @@ class VaultRuntime:
 
     # ---- observability -------------------------------------------------------------------------------------------
 
+    # ---- jobs: progress, hand-offs, the one-time recovery key ---------------------------------------------------------
+
+    HANDOFF_TTL_S = 120.0
+
+    def set_progress(self, phase: str, done: int, total: int) -> None:
+        with self._guard:
+            self._progress = {"phase": phase, "done": done, "total": total}
+
+    def clear_progress(self) -> None:
+        with self._guard:
+            self._progress = None
+
+    def put_handoff(self, token: str, secret: bytes) -> None:
+        """The passphrase for a job goes from the request thread to the worker through here, in memory, once. It is
+        never in the command queue, the command registry, a log line or a response."""
+        with self._guard:
+            now = self._clock()
+            for key in [k for k, (_v, t) in self._handoffs.items() if now - t > self.HANDOFF_TTL_S]:
+                del self._handoffs[key]
+            self._handoffs[token] = (bytes(secret), now)
+
+    def take_handoff(self, token: str) -> Optional[bytes]:
+        with self._guard:
+            entry = self._handoffs.pop(token, None)
+        if entry is None or self._clock() - entry[1] > self.HANDOFF_TTL_S:
+            return None
+        return entry[0]
+
+    def finish_enable(self, storage_key: bytearray, recovery_key: bytes) -> None:
+        """An enable finished: the vault is now unlocked with the key the job made, and the recovery key waits to be
+        shown once (`take_recovery_key`)."""
+        self._install(storage_key)
+        with self._guard:
+            self._recovery_pending = recovery_mod.encode(recovery_key)
+            self._progress = None
+        self._log("INFO", "MCAttach vault enabled", "MCAttach files are now encrypted")
+
+    def finish_disable(self) -> None:
+        old = None
+        with self._guard:
+            old, self._key = self._key, None
+            self._generation += 1
+            self._progress = None
+            self._recovery_pending = None
+        if old is not None:
+            old.zero()
+        self._log("INFO", "MCAttach vault disabled", "MCAttach files are plain again")
+
+    def take_recovery_key(self) -> Optional[str]:
+        """The recovery key text, once. After this call it is gone from memory."""
+        with self._guard:
+            text, self._recovery_pending = self._recovery_pending, None
+        return text
+
+    def note_enable_resumed(self) -> None:
+        """An enable was finished after a crash: its recovery key was never shown. Say so until a new one is issued."""
+        with self._guard:
+            self._reissue_recovery = True
+            self._progress = None
+
+    def has_recovery_pending(self) -> bool:
+        with self._guard:
+            return self._recovery_pending is not None
+
+    # ---- header operations (an unlocked vault; they never touch data) ---------------------------------------------
+
+    def _write_header(self, new_header: header_mod.VaultHeader) -> None:
+        """Atomic rewrite; the previous header is kept as vault.json.bak until the next successful unlock."""
+        path = self.header_path
+        backup = self._dir / HEADER_BACKUP_FILE
+        if path.exists():
+            backup.write_bytes(path.read_bytes())
+        part = path.with_name(path.name + ".part")
+        with open(part, "w", encoding="utf-8") as handle:
+            handle.write(new_header.to_json())
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(part, path)
+
+    def _require_unlocked_key(self) -> bytes:
+        key = self.storage_key()
+        if key is None:
+            raise VaultError("vault_locked")
+        return key
+
+    def _verify_current(self, header: header_mod.VaultHeader, current_passphrase: str) -> None:
+        """Re-authentication for a header change: the current passphrase must derive the same storage key."""
+        derived = header_mod.unlock(header, passphrase_mod.normalize(current_passphrase))
+        try:
+            if bytes(derived) != self._require_unlocked_key():
+                raise VaultError("unlock_failed")
+        finally:
+            for i in range(len(derived)):
+                derived[i] = 0
+
+    def _locked_section(self):
+        lock = self._serialize_with
+        if lock is not None and not lock.acquire(timeout=LOCK_WAIT_SECONDS):
+            raise VaultError("vault_busy")
+        return lock
+
+    def change_passphrase(self, current_passphrase: str, new_passphrase: str) -> Dict[str, object]:
+        assessment = passphrase_mod.assess(new_passphrase)
+        if not assessment["ok"]:
+            error = VaultError("passphrase_too_weak")
+            error.level = assessment["level"]
+            raise error
+        header = self._read_header()
+        lock = self._locked_section()
+        try:
+            self._check_memory(header)
+            self._verify_current(header, current_passphrase)
+            new_header = header_mod.change_passphrase(header, self._require_unlocked_key(),
+                                                      passphrase_mod.normalize(new_passphrase), header.kdf_params)
+            self._write_header(new_header)
+        finally:
+            if lock is not None:
+                lock.release()
+        self._log("INFO", "MCAttach vault passphrase changed", "The passphrase was changed")
+        return self.status()
+
+    def recalibrate(self, current_passphrase: str, *, calibrate=None) -> Dict[str, object]:
+        """Derive the parameters again for this host (about one second, within a quarter of the free RAM) and re-wrap
+        the storage key under the same passphrase. Files are not touched."""
+        header = self._read_header()
+        calibrate = calibrate or (lambda: kdf.calibrate(ceiling_bytes=self._calibration_ceiling()))
+        lock = self._locked_section()
+        try:
+            self._check_memory(header)
+            self._verify_current(header, current_passphrase)
+            params = calibrate()
+            new_header = header_mod.change_passphrase(header, self._require_unlocked_key(),
+                                                      passphrase_mod.normalize(current_passphrase), params)
+            self._write_header(new_header)
+        finally:
+            if lock is not None:
+                lock.release()
+        self._log("INFO", "MCAttach vault re-calibrated", "The key derivation cost was re-calibrated for this node")
+        return self.status()
+
+    def _calibration_ceiling(self) -> int:
+        available = self._free_ram()
+        return kdf.MIN_MEMLIMIT if available is None else max(kdf.MIN_MEMLIMIT, available // 4)
+
+    def new_recovery_key(self, current_passphrase: str) -> str:
+        """Issue a new recovery key (the old one stops working). Returns its text, to be shown once."""
+        header = self._read_header()
+        lock = self._locked_section()
+        try:
+            self._check_memory(header)
+            self._verify_current(header, current_passphrase)
+            new_header, recovery_key = header_mod.new_recovery_key(header, self._require_unlocked_key())
+            self._write_header(new_header)
+            with self._guard:
+                self._reissue_recovery = False
+        finally:
+            if lock is not None:
+                lock.release()
+        self._log("INFO", "MCAttach vault recovery key replaced", "A new recovery key was issued")
+        return recovery_mod.encode(recovery_key)
+
     def note_dropped(self, count: int) -> None:
         """One System Log line when frames that waited for the unlock were dropped (the waiting queue was full)."""
         self._log("WARNING", "MCAttach locked: messages dropped",
@@ -271,6 +480,10 @@ class VaultRuntime:
         state = self.state()
         out: Dict[str, object] = {"state": state, "enabled": state != STATE_DISABLED, "locked": state in (STATE_LOCKED, STATE_MIGRATING)}
         if state == STATE_DISABLED:
+            with self._guard:
+                if self._progress is not None:
+                    out["progress"] = dict(self._progress)
+                out["recovery_key_pending"] = self._recovery_pending is not None
             return out
         with self._guard:
             wait = max(0, math.ceil(self._next_attempt_at - self._clock()))
@@ -285,4 +498,9 @@ class VaultRuntime:
             out["kdf"] = None
         swap = self._swap_inspector()
         out["swap"] = {"disk_swap": bool(swap.get("disk_swap")), "known": bool(swap.get("known"))}
+        with self._guard:
+            if self._progress is not None:
+                out["progress"] = dict(self._progress)
+            out["recovery_key_pending"] = self._recovery_pending is not None
+            out["recovery_key_needs_reissue"] = self._reissue_recovery
         return out

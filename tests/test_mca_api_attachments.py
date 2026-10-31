@@ -3709,3 +3709,190 @@ def test_the_login_and_csrf_hooks_answer_before_the_lock_so_an_unauthenticated_c
     c.application.before_request(lambda: ({"error_code": "auth_required"}, 401))       # registered later, like server.py's hooks
     for method, path in _GATED[:4]:
         assert getattr(c, method)(path, json={}).status_code == 401, path
+
+
+# ---- MCA-VAULT PR 3: enable / disable / header operations through the API ---------------------------------------------
+
+_NEW_PASS = "a brand new passphrase 2026"
+from meshsrv.attachments.vault.errors import VaultError
+
+
+def _enable_body(**kw):
+    body = {"passphrase": _VAULT_PASS, "acknowledge_flash": True, "backup": True}
+    body.update(kw)
+    return body
+
+
+@pytest.fixture
+def allowed(monkeypatch):
+    monkeypatch.setenv("MESHCENTER_MCA_VAULT_EXPERIMENTAL", "1")
+
+
+def test_enable_is_refused_unless_the_experimental_flag_is_set(monkeypatch, tmp_path):
+    monkeypatch.delenv("MESHCENTER_MCA_VAULT_EXPERIMENTAL", raising=False)
+    _with_vault(monkeypatch, tmp_path)
+    facade = _FakeFacade()
+    c = _client(monkeypatch, facade)
+    resp = c.post("/api/mca/vault/enable", json=_enable_body())
+    assert resp.status_code == 409 and resp.get_json()["error_code"] == "vault_not_ready" and facade.submitted == []
+    assert c.get("/api/mca/vault").get_json()["enable_allowed"] is False
+
+
+def test_enable_validates_before_anything_is_queued(monkeypatch, tmp_path, allowed):
+    rt, _ = _with_vault(monkeypatch, tmp_path)
+    facade = _FakeFacade(snapshot=_snapshot([_attachment(id="d" * 32, state="UPLOADING", direction="sent")]))
+    c = _client(monkeypatch, facade)
+    assert c.post("/api/mca/vault/enable", json={}).get_json()["error_code"] == "passphrase_required"
+    assert c.post("/api/mca/vault/enable", json=_enable_body(acknowledge_flash=False)).get_json()["error_code"] == "acknowledgement_required"
+    weak = c.post("/api/mca/vault/enable", json=_enable_body(passphrase="short"))
+    assert weak.status_code == 400 and weak.get_json()["error_code"] == "passphrase_too_weak" and weak.get_json()["level"] == "too_short"
+    busy = c.post("/api/mca/vault/enable", json=_enable_body())
+    assert busy.status_code == 409 and busy.get_json() == {"ok": False, "error_code": "transfers_in_progress", "error": "transfers_in_progress", "count": 1}
+    assert facade.submitted == []
+    assert rt.take_handoff("anything") is None
+
+
+def test_a_valid_enable_queues_a_command_whose_payload_never_holds_the_passphrase(monkeypatch, tmp_path, allowed):
+    rt, _ = _with_vault(monkeypatch, tmp_path)
+    facade = _FakeFacade()
+    c = _client(monkeypatch, facade)
+    resp = c.post("/api/mca/vault/enable", json=_enable_body(backup=False))
+    assert resp.status_code == 202 and resp.get_json()["ok"] is True
+    command = facade.submitted[0]
+    assert command.kind == "vault_enable" and dict(command.payload).keys() == {"handoff", "backup"} and command.payload["backup"] is False
+    assert _VAULT_PASS not in repr(command) and _VAULT_PASS not in resp.get_data(as_text=True)
+    assert rt.take_handoff(command.payload["handoff"]) == _vault_pass.normalize(_VAULT_PASS), "the secret waits in memory, once"
+    assert rt.take_handoff(command.payload["handoff"]) is None, "and only once"
+
+
+def test_a_refused_enable_does_not_leave_the_passphrase_waiting(monkeypatch, tmp_path, allowed):
+    rt, _ = _with_vault(monkeypatch, tmp_path)
+    facade = _FakeFacade(queue_full=True)
+    c = _client(monkeypatch, facade)
+    assert c.post("/api/mca/vault/enable", json=_enable_body()).status_code == 429
+    assert rt._handoffs == {}
+
+
+def test_enable_refuses_an_existing_vault(monkeypatch, vault_dir, allowed):
+    workspace, _ = vault_dir
+    _with_vault(monkeypatch, workspace)
+    c = _client(monkeypatch, _FakeFacade())
+    resp = c.post("/api/mca/vault/enable", json=_enable_body())
+    assert resp.status_code == 409 and resp.get_json()["error_code"] == "vault_already_enabled"
+
+
+def test_status_of_a_disabled_vault_carries_the_notices_and_the_plain_backup_warning(monkeypatch, tmp_path):
+    _with_vault(monkeypatch, tmp_path / "ws")
+    monkeypatch.setattr(mca_runtime, "get_data_dir", lambda: tmp_path)
+    (tmp_path / "ws").mkdir()
+    c = _client(monkeypatch, _FakeFacade())
+    status = c.get("/api/mca/vault").get_json()
+    assert status["state"] == "disabled" and status["plain_backup_warning"] is False
+    assert set(status["notices"]) == {"flash_remanence", "gallery_not_covered", "downgrade_refused"}
+    (tmp_path / "mca-vault-backup-20261031-1200").mkdir()
+    (tmp_path / "mca-vault-backup-20261031-1200" / "x").write_bytes(b"plain")
+    status = c.get("/api/mca/vault").get_json()
+    assert status["plain_backup_warning"] is True and status["plain_backups"][0]["name"] == "mca-vault-backup-20261031-1200"
+    assert status["plain_backups"][0]["bytes"] == 5
+
+
+def test_a_plain_backup_can_be_deleted_by_name_only(monkeypatch, tmp_path):
+    _with_vault(monkeypatch, tmp_path / "ws")
+    monkeypatch.setattr(mca_runtime, "get_data_dir", lambda: tmp_path)
+    (tmp_path / "ws").mkdir()
+    (tmp_path / "mca-vault-backup-20261031-1200").mkdir()
+    (tmp_path / "keep").mkdir()
+    c = _client(monkeypatch, _FakeFacade())
+    for bad in ("../keep", "keep", "", "mca-vault-backup-../keep"):
+        assert c.post("/api/mca/vault/backup/delete", json={"name": bad}).status_code == 400
+    assert (tmp_path / "keep").exists()
+    assert c.post("/api/mca/vault/backup/delete", json={"name": "mca-vault-backup-20261031-1200"}).get_json() == {"ok": True, "deleted": True}
+    assert not (tmp_path / "mca-vault-backup-20261031-1200").exists()
+
+
+def test_disable_and_resume_need_an_unlocked_vault(monkeypatch, vault_dir):
+    workspace, _ = vault_dir
+    rt, _clock = _with_vault(monkeypatch, workspace)
+    facade = _FakeFacade()
+    c = _client(monkeypatch, facade)
+    assert c.post("/api/mca/vault/disable", json={"acknowledge_flash": True}).status_code == 423
+    assert c.post("/api/mca/vault/resume", json={}).status_code == 409, "no interrupted job"
+    rt.unlock(passphrase=_VAULT_PASS)
+    assert c.post("/api/mca/vault/disable", json={}).get_json()["error_code"] == "acknowledgement_required"
+    resp = c.post("/api/mca/vault/disable", json={"acknowledge_flash": True, "backup": False})
+    assert resp.status_code == 202 and facade.submitted[0].kind == "vault_disable" and facade.submitted[0].payload["backup"] is False
+
+
+def test_disable_on_a_node_without_a_vault(monkeypatch, tmp_path):
+    _with_vault(monkeypatch, tmp_path)
+    c = _client(monkeypatch, _FakeFacade())
+    assert c.post("/api/mca/vault/disable", json={"acknowledge_flash": True}).get_json()["error_code"] == "vault_not_enabled"
+
+
+def test_change_passphrase_recalibrate_and_new_recovery_key_through_the_api(monkeypatch, vault_dir):
+    from meshsrv.attachments.vault import recovery as _rec
+    workspace, created = vault_dir
+    rt, _clock = _with_vault(monkeypatch, workspace)
+    c = _client(monkeypatch, _FakeFacade())
+    assert c.post("/api/mca/vault/change-passphrase", json={"current_passphrase": _VAULT_PASS, "new_passphrase": _NEW_PASS}).status_code == 423, "locked"
+    rt.unlock(passphrase=_VAULT_PASS)
+    weak = c.post("/api/mca/vault/change-passphrase", json={"current_passphrase": _VAULT_PASS, "new_passphrase": "short"})
+    assert weak.status_code == 400 and weak.get_json()["error_code"] == "passphrase_too_weak"
+    wrong = c.post("/api/mca/vault/change-passphrase", json={"current_passphrase": "not the current one 1", "new_passphrase": _NEW_PASS})
+    assert wrong.status_code == 403 and wrong.get_json()["error_code"] == "unlock_failed"
+    _clock.now += 5
+    ok = c.post("/api/mca/vault/change-passphrase", json={"current_passphrase": _VAULT_PASS, "new_passphrase": _NEW_PASS})
+    assert ok.status_code == 200 and (workspace / "vault.json.bak").exists(), "the old header waits until the next unlock"
+    rt.lock()
+    rt.unlock(passphrase=_NEW_PASS)
+    assert not (workspace / "vault.json.bak").exists(), "the first unlock removes it"
+    assert bytes(rt.storage_key()) == bytes(created.storage_key), "the same storage key: nothing was re-encrypted"
+    resp = c.post("/api/mca/vault/new-recovery-key", json={"current_passphrase": _NEW_PASS})
+    assert resp.status_code == 200 and resp.headers["Cache-Control"] == "no-store"
+    fresh = resp.get_json()["recovery_key"]
+    rt.lock()
+    rt.unlock(recovery_key=fresh)
+    assert rt.state() == "unlocked"
+    rt.lock()
+    with pytest.raises(VaultError):
+        rt.unlock(recovery_key=_rec.encode(created.recovery_key))
+    _clock.now += 5
+    rt.unlock(passphrase=_NEW_PASS)
+    assert c.post("/api/mca/vault/recalibrate", json={"current_passphrase": _NEW_PASS}).status_code == 200
+
+
+def test_the_recovery_key_of_an_enable_can_be_read_exactly_once(monkeypatch, tmp_path):
+    rt, _ = _with_vault(monkeypatch, tmp_path)
+    c = _client(monkeypatch, _FakeFacade())
+    assert c.get("/api/mca/vault/recovery-key").status_code == 410
+    rt._recovery_pending = "ABCD-EFGH"
+    assert c.get("/api/mca/vault").get_json()["recovery_key_pending"] is True
+    first = c.get("/api/mca/vault/recovery-key")
+    assert first.status_code == 200 and first.get_json()["recovery_key"] == "ABCD-EFGH" and first.headers["Cache-Control"] == "no-store"
+    assert c.get("/api/mca/vault/recovery-key").status_code == 410, "forgotten after the first read"
+
+
+def test_enable_and_disable_are_refused_with_503_before_anything_starts_when_memory_is_low(monkeypatch, vault_dir, allowed):
+    workspace, _ = vault_dir
+    low = {"bytes": 40 * 1024 * 1024}
+    rt, _clock = _with_vault(monkeypatch, workspace, free_ram=lambda: low["bytes"])
+    facade = _FakeFacade()
+    c = _client(monkeypatch, facade)
+
+    low["bytes"] = 4 * 1024 ** 3
+    rt.unlock(passphrase=_VAULT_PASS)
+    low["bytes"] = 20 * 1024 * 1024                                   # 20 MiB free: a disable needs 32
+    resp = c.post("/api/mca/vault/disable", json={"acknowledge_flash": True})
+    assert resp.status_code == 503 and resp.get_json()["error_code"] == "insufficient_memory"
+    assert "32 MiB needed" in resp.get_json()["error"] and "20 MiB free" in resp.get_json()["error"]
+    assert facade.submitted == [], "nothing was queued"
+
+
+def test_a_refused_enable_for_memory_queues_nothing_and_keeps_no_passphrase(monkeypatch, tmp_path, allowed):
+    rt, _ = _with_vault(monkeypatch, tmp_path, free_ram=lambda: 50 * 1024 * 1024)   # an enable needs 64 MiB
+    facade = _FakeFacade()
+    c = _client(monkeypatch, facade)
+    resp = c.post("/api/mca/vault/enable", json=_enable_body())
+    assert resp.status_code == 503 and resp.get_json()["error_code"] == "insufficient_memory"
+    assert "64 MiB needed" in resp.get_json()["error"]
+    assert facade.submitted == [] and rt._handoffs == {}

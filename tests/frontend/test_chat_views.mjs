@@ -693,3 +693,9 @@ test('the new-version notice needs two known, different versions', () => {
     assert.equal(V.pageVersionChanged('', '1.13.10'), false, 'unknown page version: stay quiet');
     assert.equal(V.pageVersionChanged('1.13.9', undefined), false, 'unknown server version: stay quiet');
 });
+
+test('a raw MCAttach frame is never previewed as text', () => {
+    assert.equal(V.previewText('MCA1:AAAAbbbb'), '\u{1F4CE}');
+    assert.equal(V.previewText('hello\nworld'), 'hello \u00b7 world', 'ordinary text is unchanged');
+    assert.equal(V.previewText('see MCA1: in the middle'), 'see MCA1: in the middle', 'only a leading frame counts');
+});

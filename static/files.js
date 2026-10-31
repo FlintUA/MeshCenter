@@ -328,7 +328,11 @@
     function filesErrorCode(data) {
         var code = (data && data.error_code) ? data.error_code : 'internal_error';
         var fallback = (data && data.error) || code;
-        return t('files.error.' + code, fallback);
+        var known = t('files.error.' + code, '');
+        if (known) return known;
+        // a request the page itself should never send badly (invalid_id, invalid_filter ...): one translated line
+        if (code.indexOf('invalid_') === 0) return t('files.error.invalid_request', 'The request was not valid');
+        return fallback;
     }
 
     function sleep(ms) {
@@ -1401,19 +1405,27 @@
         });
     }
 
+    // "Accept and download" is itself the explicit decision: no second confirmation (MCA-UX2)
     function attachmentDownload(id) {
-        confirmDialog(confirmSpec('files.confirm_accept_title', 'files.confirm_accept_body', 'files.accept_download',
-            'Accept incoming transfer?', 'Download the verified content from this transfer.')).then(function (yes) {
-            if (!yes) return;
-            attachmentCommand(id, 'download', {
-                queued: t('files.download_started', 'Download started'),
-                success: t('files.downloaded', 'Downloaded'),
-            });
+        attachmentCommand(id, 'download', {
+            queued: t('files.download_started', 'Download started'),
+            success: t('files.downloaded', 'Downloaded'),
         });
     }
+    // Reject cannot be undone: one danger confirmation (the shared UI1 dialog; the Files modal where it is missing)
     function attachmentReject(id) {
-        confirmDialog(confirmSpec('files.confirm_reject_title', 'files.confirm_reject_body', 'files.reject',
-            'Reject incoming transfer?', 'This declines the incoming transfer.')).then(function (yes) {
+        var dialog = (typeof window !== 'undefined') ? window.MCDialog : null;
+        var asked = (dialog && dialog.confirm)
+            ? dialog.confirm({
+                title: t('files.confirm_reject_title', 'Reject this transfer?'),
+                message: t('files.confirm_reject_body', 'The sender is told that you declined. This cannot be undone.'),
+                confirmLabel: t('files.reject', 'Reject'),
+                cancelLabel: t('dialog.cancel', 'Cancel'),
+                danger: true,
+            })
+            : confirmDialog(confirmSpec('files.confirm_reject_title', 'files.confirm_reject_body', 'files.reject',
+                'Reject this transfer?', 'The sender is told that you declined. This cannot be undone.'));
+        asked.then(function (yes) {
             if (!yes) return;
             attachmentCommand(id, 'reject', {
                 queued: t('files.rejecting', 'Rejecting…'),

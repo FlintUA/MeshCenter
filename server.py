@@ -4785,14 +4785,27 @@ def get_chats_list():
             unread = chat.get("unread", 0)
             total_unread += unread
             last_msg = chat.get("last_message", "")
+            last_time = chat.get("last_time", "")
+            last_ts = chat.get("last_ts")
             last_sender = ""
             last_sender_id = ""
             sender_display = ""
-            for msg in reversed(messages):
-                if msg.get("chat_id") == chat_id:
-                    last_sender = msg.get("sender", "")
-                    last_sender_id = msg.get("node_id", "")
-                    break
+            chat_messages = [m for m in messages if m.get("chat_id") == chat_id]
+            if chat_messages:
+                newest = chat_messages[-1]
+                # MCA-UX2: a stored preview may be a raw MCAttach frame (made before the frames were marked), and
+                # the newest message may be a control frame: the preview then comes from the newest visible message
+                if str(last_msg).startswith("MCA1:") or mca_chat.ensure_marker(newest).get("mca", {}).get("type") == mca_chat.CONTROL:
+                    visible = mca_chat.last_visible_message(chat_messages)
+                    if visible is None:
+                        last_msg, last_time, last_ts = "", "", None
+                    else:
+                        last_msg = mca_chat.preview_text(visible.get("mca"), visible.get("text", "")) or ""
+                        last_time = visible.get("time", "")
+                        last_ts = visible.get("ts")
+                        newest = visible
+                last_sender = newest.get("sender", "")
+                last_sender_id = newest.get("node_id", "")
             if (chat_id == CHANNEL_CHAT_ID or chat_id.startswith("channel:")) and last_sender:
                 if last_sender_id:
                     sender_display = f"{last_sender} [{last_sender_id}]"
@@ -4801,7 +4814,7 @@ def get_chats_list():
             chat_list.append({
                 "id": chat_id, "name": chat.get("name", chat_id),
                 "type": chat.get("type", "dm"), "last_message": last_msg,
-                "last_time": chat.get("last_time", ""), "last_ts": chat.get("last_ts"),
+                "last_time": last_time, "last_ts": last_ts,
                 "unread": unread,
                 "is_channel": chat_id == CHANNEL_CHAT_ID or chat_id.startswith("channel:"),
                 "ignored": chat_id.startswith("!") and nodes.get(chat_id, {}).get("ignored", False),

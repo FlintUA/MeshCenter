@@ -1122,6 +1122,9 @@ class AttachmentsService:
             "attachment_revoke": self._command_revoke,
             "attachment_delete_local_content": self._command_delete_local_content,
             "attachment_purge_received_cache": self._command_purge_received_cache,
+            "vault_enable": self._command_vault_enable,
+            "vault_disable": self._command_vault_disable,
+            "vault_resume": self._command_vault_resume,
             "contact_request_key": self._command_request_key,
             "contact_cancel_key_request": self._command_cancel_key_request,
             "contact_confirm": self._command_confirm,
@@ -2301,6 +2304,83 @@ class AttachmentsService:
             self._offer_linked_fn(bytes(transfer_id).hex(), attachment_id)
         except Exception:  # cosmetic hook: the transfer is already recorded
             logger.warning("AttachmentsService: offer link hook failed")
+
+    # ---- MCA-VAULT: enable, disable, resume (ADR-0013 Decision 8) ---------------------------------------------------
+    # Worker commands because they touch files and the database. The passphrase of an enable never rides in the
+    # payload: it arrives through the runtime's one-shot in-memory hand-off.
+
+    def _vault_env(self):
+        from meshsrv.attachments.vault import migration
+        return migration.Env(
+            paths=self._workspace_manager.paths(self._principal.principal_id),
+            data_dir=self._workspace_manager.data_dir,
+            conn=self._conn,
+            workspace_id=self._principal.workspace_id,
+            progress=self._vault.set_progress,
+        )
+
+    def _command_vault_enable(self, command: Command) -> CommandOutcome:
+        from meshsrv.attachments.vault import kdf, migration
+        vault = getattr(self, "_vault", None)
+        if vault is None:
+            return CommandOutcome.failed("vault_not_available")
+        secret = vault.take_handoff(str(command.payload.get("handoff") or ""))
+        if secret is None:
+            return CommandOutcome.failed("vault_handoff_expired")
+        try:
+            params = kdf.calibrate(ceiling_bytes=vault._calibration_ceiling())
+            result = migration.enable(self._vault_env(), secret, params=params, make_backup_copy=bool(command.payload.get("backup", True)))
+        except migration.MigrationError as error:
+            vault.clear_progress()
+            return CommandOutcome.failed(error.code)
+        finally:
+            secret = b""
+        vault.finish_enable(result.storage_key, result.recovery_key)
+        self._refresh_snapshot()
+        return CommandOutcome.succeeded(resource_id="vault", result={
+            "files": result.summary["files"], "db_values": result.summary["db_values"],
+            "backup": result.backup.name if result.backup else None})
+
+    def _command_vault_disable(self, command: Command) -> CommandOutcome:
+        from meshsrv.attachments.vault import migration
+        vault = getattr(self, "_vault", None)
+        key = vault.storage_key() if vault is not None else None
+        if key is None:
+            return CommandOutcome.failed("vault_locked")
+        try:
+            summary = migration.disable(self._vault_env(), key, make_backup_copy=bool(command.payload.get("backup", True)))
+        except migration.MigrationError as error:
+            vault.clear_progress()
+            return CommandOutcome.failed(error.code)
+        finally:
+            key = b""
+        vault.finish_disable()
+        self._refresh_snapshot()
+        return CommandOutcome.succeeded(resource_id="vault", result={"files": summary["files"], "backup": summary["backup"]})
+
+    def _command_vault_resume(self, command: Command) -> CommandOutcome:
+        """Finish an interrupted enable or disable (the user unlocked with the passphrase first)."""
+        from meshsrv.attachments.vault import migration
+        vault = getattr(self, "_vault", None)
+        key = vault.storage_key() if vault is not None else None
+        if key is None:
+            return CommandOutcome.failed("vault_locked")
+        journal = migration.read_journal(self._vault_env())
+        try:
+            if journal and journal.get("op") == "disable":
+                migration.resume_disable(self._vault_env(), key)
+                vault.finish_disable()
+            else:
+                migration.resume_enable(self._vault_env(), key)
+                vault.note_enable_resumed()
+        except migration.MigrationError as error:
+            vault.clear_progress()
+            return CommandOutcome.failed(error.code)
+        finally:
+            key = b""
+        vault.clear_progress()
+        self._refresh_snapshot()
+        return CommandOutcome.succeeded(resource_id="vault", result={"resumed": (journal or {}).get("op") or "enable"})
 
     def _auto_request_missing_keys(self) -> None:
         if self._vault_locked():

@@ -46,7 +46,7 @@ def make_runtime(path, **kw):
 def test_no_vault_files_means_disabled_and_nothing_is_locked(tmp_path):
     rt = make_runtime(tmp_path)
     assert rt.state() == "disabled" and rt.is_enabled() is False and rt.is_locked() is False
-    assert rt.storage_key() is None and rt.status() == {"state": "disabled", "enabled": False, "locked": False}
+    assert rt.storage_key() is None and rt.status() == {"state": "disabled", "enabled": False, "locked": False, "recovery_key_pending": False}
     with pytest.raises(VaultError) as info:
         rt.unlock(passphrase=PASS)
     assert info.value.code == "vault_not_enabled"

@@ -299,6 +299,32 @@ System, strength hint, disabled Roll back button, the "gallery not covered" note
 (swap notes, downgrade notes). Details, tests and the live round of each are in section 13 of
 `docs/proposals/MCA-VAULT.md`.
 
+## Amendments made in PR 3 (enable, disable, migration)
+
+- **The experimental flag.** The consumers of the encrypted layout (receive into `.mcv`, send from an encrypted spool,
+  preview, download, Save to Files as a move inside the vault, the identity seed read through the vault) are PR 4. A
+  vault enabled before that would leave a node whose service cannot read its own workspace. So the enable endpoint
+  answers 409 `vault_not_ready` unless the process environment has `MESHCENTER_MCA_VAULT_EXPERIMENTAL=1`. The flag exists
+  for the live round on a copy and for the tests, and PR 4 removes it. Disable, resume and the header operations do not
+  need it (they only matter once a vault exists).
+- **Enable and disable are worker commands** (`vault_enable`, `vault_disable`, `vault_resume`). The passphrase of an
+  enable reaches the worker through the runtime's one-shot in-memory hand-off (120 s), never in the payload; the payload
+  holds a random single-use token. The recovery key is not in the command result either: it is read once from
+  `GET /api/mca/vault/recovery-key` (410 afterwards).
+- **Change passphrase, re-calibrate and new recovery key** run on the request thread under the tick lock, like unlock,
+  and need the current passphrase again (re-authentication); the old header is kept as `vault.json.bak` until the next
+  successful unlock.
+- **Verification is stronger than the prefix.** A database value counts as encrypted only if it authenticates for its
+  table, column and row (a plain value that happens to start with `v1:` is still encrypted), and the final scan decrypts
+  every sensitive value. After the database phase the job runs `PRAGMA secure_delete` and `VACUUM`, because SQLite keeps
+  the old bytes of an updated value in free pages (a test searches the raw database file for the plain names, comments
+  and secrets).
+- **The plain backup** is a folder `mca-vault-backup-<timestamp>` next to the MCA tree (workspace copy plus a consistent
+  SQLite snapshot, mode 0700). `GET /api/mca/vault` lists it (`plain_backups`, `plain_backup_warning`) from the folder
+  itself, and `POST /api/mca/vault/backup/delete` removes one by exact folder name.
+- **Resume after a crash** needs an unlock first (the key is not on disk). A resumed enable never showed its recovery
+  key, so the status reports `recovery_key_needs_reissue` until a new key is issued.
+
 ## Notes for later PRs (from the owner's PR 1 review)
 
 - **PR 2 (done here):** unlock is serialized with MCAttach work and refused with a clear message when free memory is

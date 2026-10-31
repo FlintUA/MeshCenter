@@ -288,7 +288,7 @@ def test_one_unclassified_snap_error_is_retried_with_a_new_login_not_hidden_by_t
     _fill_relay(env["driver"].upstream.relay)
     env["fake"].snap_failures = 1
     body = _shoot(env).get_json()
-    assert body["method"] == "camera_api_full" and body["fallback"] is False and env["fake"].logins == 2
+    assert body["method"] == "camera_api_full" and body["fallback"] is False and env["fake"].logins == 2 and env["fake"].logouts == 1 and len(env["fake"].tokens) == 1, "the old session is logged out before the new login"
 
 
 def test_a_persistent_api_error_falls_back_and_says_so(env):

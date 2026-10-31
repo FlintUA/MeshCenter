@@ -79,6 +79,7 @@ class FakeReolink:
         self.reads_left = 0
         self.log: list[dict] = []  # what the client sent: method, command, whether the token was in the query
         self.logins = 0
+        self.logouts = 0
         self.snaps = 0
         self.snap_types: list[str] = []
         self.snap_failures = 0  # the next N Snap requests are answered with an unclassified error (rspCode -104)
@@ -159,6 +160,7 @@ class FakeReolink:
                     user = fake.tokens.get(token)
                 if user is None:
                     return self._send(200, json.dumps([fake._error(command["cmd"], -6, "please login first")]).encode())
+                fake._current_token = token
                 self._send(200, json.dumps(fake._run(command, user)).encode())
 
         self._server = _QuietServer(("127.0.0.1", 0), Handler)
@@ -225,6 +227,11 @@ class FakeReolink:
             self.target, self.reads_left = pos, self.settle_reads
             return [{"cmd": name, "code": 0, "value": {"rspCode": 200}}]
         if name == "Logout":
+            with self._lock:
+                self.logouts += 1
+                for token, owner in list(self.tokens.items()):  # the session is really gone
+                    if owner == user and token == getattr(self, "_current_token", None):
+                        del self.tokens[token]
             return [{"cmd": name, "code": 0, "value": {"rspCode": 200}}]
         return [self._error(name or "?", -2, "not support")]
 

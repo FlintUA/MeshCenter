@@ -187,7 +187,9 @@ const tick = (ms = 5) => new Promise((resolve) => setTimeout(resolve, ms));
     assert.equal(plain.registry.cameraControlTabLens.hidden, true);
     assert.equal(plain.registry.ipSnapshotQuality, undefined);
     // no API: the hint says where the picture comes from, and that the preview has to run
-    assert.equal(plain.registry.ipSnapshotHint.textContent, 'ipctl.snapshot_hint_stream_running ipctl.image_note');
+    assert.equal(plain.registry.ipSnapshotHint.textContent, 'ipctl.snapshot_hint_stream_running:{"resolution":"640x360"} ipctl.image_note', 'sub stream: the real size, and to switch to Main for full resolution');
+    plain.api.update({ ...STATUS, zoom_control: false, control_type: 'none', profile: 'main', resolution: '3840x2160' });
+    assert.equal(plain.registry.ipSnapshotHint.textContent, 'ipctl.snapshot_hint_stream_running_main:{"resolution":"3840x2160"} ipctl.image_note');
     plain.api.update({ ...STATUS, zoom_control: false, control_type: 'none', state: 'stopped' });
     assert.equal(plain.registry.ipSnapshotHint.textContent, 'ipctl.snapshot_hint_stream_stopped ipctl.image_note');
     plain.api.update(null);
@@ -271,17 +273,19 @@ const tick = (ms = 5) => new Promise((resolve) => setTimeout(resolve, ms));
 // ---------------------------------------------------------------- the Snapshot button
 {
     const answers = [
-        json(200, { ok: true, method: 'camera_api_full' }),
+        json(200, { ok: true, method: 'camera_api_full', resolution: '3840x2160' }),
         json(429, { ok: false, error_code: 'rate_limited', retry_after_s: 1.2 }),
         json(507, { ok: false, error_code: 'storage_full' }),
         json(409, { ok: false, error_code: 'preview_not_running' }),
-        json(200, { ok: true, method: 'stream_frame' }),
+        json(200, { ok: true, method: 'stream_frame', fallback: true, resolution: '640x360' }),
+        json(200, { ok: true, method: 'stream_frame', fallback: false, resolution: '640x360' }),
+        json(200, { ok: true, method: 'camera_api_small', resolution: '640x360' }),
     ];
     const env = makeEnv({ fetchImpl: async () => answers.shift() });
     env.api.update(STATUS);
     const click = async () => { env.registry.ipSnapshotBtn.fire('click'); await tick(15); };
     await click();
-    assert.equal(env.toasts[0][0], 'ipctl.snapshot_saved');
+    assert.equal(env.toasts[0][0], 'ipctl.snapshot_saved_api_full:{"resolution":"3840x2160"}', 'the toast names the real size and the source');
     assert.equal(env.win.mediaGalleryLoaded, false, 'the Media gallery is refreshed next time it opens');
     assert.equal(env.registry.ipSnapshotBtn.disabled, false);
     await click();
@@ -291,7 +295,12 @@ const tick = (ms = 5) => new Promise((resolve) => setTimeout(resolve, ms));
     await click();
     assert.equal(env.toasts[3][0], 'ipctl.snap_err_preview_not_running');
     await click();
-    assert.equal(env.toasts[4][0], 'ipctl.snapshot_saved_stream', 'the API camera that fell back to the stream says so');
+    assert.equal(env.toasts[4][0], 'ipctl.snapshot_saved_stream:{"resolution":"640x360"}', 'the API camera that fell back to the stream says so');
+    assert.equal(env.toasts[4][1], 'warning', 'a fallback is a warning, not a plain success');
+    await click();
+    assert.equal(env.toasts[5][0], 'ipctl.snapshot_saved_stream_only:{"resolution":"640x360"}');
+    await click();
+    assert.equal(env.toasts[6][0], 'ipctl.snapshot_saved_api_small:{"resolution":"640x360"}');
     assert.equal(env.calls.every((c) => c.url === '/api/camera/screenshot' && c.options.method === 'POST'), true);
 }
 

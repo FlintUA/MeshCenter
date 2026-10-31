@@ -103,8 +103,8 @@ class IpSnapshotService:
         self._rate_limit(source_id)
         source = self._store.get_source(source_id)
         control = source.get("control") or {}
-        jpeg, method = self._picture(driver, source_id, control)
-        return self._save(source, control, jpeg, method)
+        jpeg, method, fallback_reason = self._picture(driver, source_id, control)
+        return self._save(source, control, jpeg, method, fallback_reason)
 
     def _rate_limit(self, source_id: str) -> None:
         with self._lock:
@@ -117,17 +117,20 @@ class IpSnapshotService:
 
     # -- getting the picture ---------------------------------------------------
 
-    def _picture(self, driver, source_id: str, control: dict) -> tuple[bytes, str]:
+    def _picture(self, driver, source_id: str, control: dict) -> tuple[bytes, str, str]:
+        """(jpeg, method, fallback_reason). A fallback_reason means the camera's own picture was wanted and could not
+        be had: the user is told, never silently handed the (smaller) stream frame."""
+        reason = ""
         if control.get("type") == "reolink":
             try:
                 small = control.get("snapshot_quality") == "small"
-                return self._control.capture(source_id, small=small), "camera_api_small" if small else "camera_api_full"
+                return self._control.capture(source_id, small=small), "camera_api_small" if small else "camera_api_full", ""
             except rc.ReolinkError as error:
                 if error.code not in FALLBACK_CODES or driver.upstream.relay.snapshot_input() is None:
                     raise self._from_control(error)
-                # the API is unreachable but the preview runs: the picture comes from the running stream
+                reason = error.code  # the API is unreachable but the preview runs: the picture comes from the running stream
         try:
-            return self._grab(driver.upstream.relay), "stream_frame"
+            return self._grab(driver.upstream.relay), "stream_frame", reason
         except frame_grab.GrabError as error:
             raise SnapshotError(error.code, error.message)
 
@@ -138,7 +141,7 @@ class IpSnapshotService:
 
     # -- storing it --------------------------------------------------------------
 
-    def _save(self, source: dict, control: dict, jpeg: bytes, method: str) -> dict:
+    def _save(self, source: dict, control: dict, jpeg: bytes, method: str, fallback_reason: str = "") -> dict:
         cam = self._camera
         os.makedirs(cam.SCREENSHOTS_DIR, exist_ok=True)
         cam.cleanup_old_screenshots(max_mb=GALLERY_MAX_MB, keep_days=GALLERY_KEEP_DAYS)
@@ -152,6 +155,8 @@ class IpSnapshotService:
         profile = {"camera_api_full": "full", "camera_api_small": "small"}.get(method, str(source.get("preferred_profile") or ""))
         meta = {"source_id": source["id"], "source_name": source.get("name") or "", "taken_at": taken.isoformat(timespec="seconds"),
                 "method": method, "profile": profile}
+        if fallback_reason:
+            meta["fallback_reason"] = fallback_reason
         if size:
             meta["width"], meta["height"] = size
         part, side_part = path + ".part", cam.sidecar_path(path) + ".part"
@@ -174,4 +179,6 @@ class IpSnapshotService:
         rel = os.path.relpath(path, cam.SCREENSHOTS_DIR).replace("\\", "/")
         return {"ok": True, "success": True, "filename": rel, "display_name": filename, "size": len(jpeg),
                 "source": meta["source_name"], "method": method, "profile": profile,
-                "resolution": f"{size[0]}x{size[1]}" if size else ""}
+                "resolution": f"{size[0]}x{size[1]}" if size else "",
+                "requested_quality": (control.get("snapshot_quality") or "full") if control.get("type") == "reolink" else "",
+                "fallback": bool(fallback_reason), "fallback_reason": fallback_reason}

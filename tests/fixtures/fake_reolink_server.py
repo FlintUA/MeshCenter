@@ -81,6 +81,7 @@ class FakeReolink:
         self.logins = 0
         self.snaps = 0
         self.snap_types: list[str] = []
+        self.snap_failures = 0  # the next N Snap requests are answered with an unclassified error (rspCode -104)
         self.zoom_commands: list[int] = []
         self._lock = threading.Lock()
         self._server: _QuietServer | None = None
@@ -232,6 +233,12 @@ class FakeReolink:
             user = self.tokens.get(token)
         self.log.append({"method": "GET", "command": "Snap", "token_in_query": bool(token), "array": False})
         self.snap_types.append((parse_qs(urlparse(handler.path).query).get("snapType") or [""])[0])
+        with self._lock:
+            failing = self.snap_failures > 0
+            if failing:
+                self.snap_failures -= 1
+        if failing:
+            return handler._send(200, json.dumps([self._error("Snap", -104, "unexpected")]).encode())
         if user is None:
             return handler._send(200, json.dumps([self._error("Snap", -6, "please login first")]).encode())
         if user in self.snap_denied or not self.snapshot:

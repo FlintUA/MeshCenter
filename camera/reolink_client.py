@@ -472,7 +472,9 @@ class ReolinkClient:
                     raise ReolinkError(BAD_RESPONSE, "The camera did not return a picture.", command="Snap")
                 if isinstance(item, dict):
                     error = self._classify(item, "Snap")
-                    if error.code == TOKEN_EXPIRED and attempt == 0:
+                    # An answer we cannot classify (seen live on .104: rspCode -104 on a Snap while a fresh login worked at once) gets one new login and one retry, like an expired token;
+                    # without it every picture silently fell back to the 640x360 stream frame.
+                    if error.code in (TOKEN_EXPIRED, API_ERROR) and attempt == 0:
                         self._token = ""
                         continue
                     raise error

@@ -151,7 +151,65 @@
         return Math.min(index, remaining - 1);
     }
 
+    // ---- selection mode and long press (touch) ----------------------------------------------------------------------
+
+    const LONG_PRESS_MS = 500;
+    const LONG_PRESS_SLOP_PX = 10;
+
+    // selection mode = something is selected; the toolbar switches state and a touch tap toggles instead of opening
+    function selectionMode(selection) {
+        return Boolean(selection && selection.size > 0);
+    }
+
+    // What a click on a picture does: 'toggle' while selecting (touch only: a mouse has the checkbox), else 'open'
+    function tapAction(selection, touch) {
+        return touch && selectionMode(selection) ? 'toggle' : 'open';
+    }
+
+    // A long press that is cancelled by moving more than `slop` px (a scroll) or by lifting early. All timing is
+    // injected, so the unit test needs no real clock. end() says whether the press had already fired.
+    function createLongPress(options) {
+        const delay = (options && options.delay) || LONG_PRESS_MS;
+        const slop = (options && options.slop) || LONG_PRESS_SLOP_PX;
+        const setTimer = (options && options.setTimer) || ((fn, ms) => setTimeout(fn, ms));
+        const clearTimer = (options && options.clearTimer) || ((id) => clearTimeout(id));
+        const onFire = (options && options.onFire) || function () {};
+        let timer = null;
+        let origin = null;
+        let fired = false;
+        function cancel() {
+            if (timer !== null) clearTimer(timer);
+            timer = null;
+            origin = null;
+        }
+        return {
+            start(x, y, context) {
+                cancel();
+                fired = false;
+                origin = { x, y };
+                timer = setTimer(() => {
+                    timer = null;
+                    fired = true;
+                    onFire(context);
+                }, delay);
+            },
+            move(x, y) {
+                if (!origin) return;
+                if (Math.hypot(x - origin.x, y - origin.y) > slop) cancel();
+            },
+            cancel,
+            end() {
+                cancel();
+                const did = fired;
+                fired = false;
+                return did;
+            },
+            get pending() { return timer !== null; },
+        };
+    }
+
     root.MCMediaViews = {
+        LONG_PRESS_MS, LONG_PRESS_SLOP_PX, selectionMode, tapAction, createLongPress,
         SORTS, VIEWS, DEFAULT_SORT, DEFAULT_VIEW, ZIP_MAX_BYTES, BULK_MAX,
         normalizeSort, normalizeView, viewField, pickView, sortItems, formatBytes, formatResolution,
         toggle, allSelected, toggleAll, prune, totals, bulkState, neighbour, indexAfterDelete,

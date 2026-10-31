@@ -741,10 +741,10 @@
     "bulk_delete": "Delete",
     "bulk_clear": "Clear selection",
     "selected_summary": {
-      "one": "{count} selected, {size}",
-      "few": "{count} selected, {size}",
-      "many": "{count} selected, {size}",
-      "other": "{count} selected, {size}"
+      "one": "{count} selected · {size}",
+      "few": "{count} selected · {size}",
+      "many": "{count} selected · {size}",
+      "other": "{count} selected · {size}"
     },
     "zip_limit_message": "A zip download is limited to {max}. You selected {size}: select fewer pictures, or download them in parts.",
     "bulk_too_many": "At most {max} pictures at once: select fewer.",
@@ -771,7 +771,11 @@
     "lightbox_label": "Picture viewer",
     "lightbox_close": "Close",
     "lightbox_prev": "Previous picture",
-    "lightbox_next": "Next picture"
+    "lightbox_next": "Next picture",
+    "summary_full": "{pictures} · {used} MB · {free} GB free",
+    "summary_short": "{count} · {used} MB",
+    "free_space": "{free} GB free",
+    "more": "More actions"
   },
   "devices": {
     "subtitle": "Peripheral devices and modules assigned to the active radio profile",
@@ -1991,7 +1995,7 @@
     "quality_small": "Small (faster)",
     "image_note": "Image settings are changed in the camera app.",
     "snapshot_saved": "Picture saved to Media.",
-    "snapshot_saved_stream": "Picture saved to Media (taken from the stream, the camera's own function was not reachable).",
+    "snapshot_saved_stream": "Picture saved to Media: {resolution}, taken from the running stream because the camera's own picture function was not reachable.",
     "quality_save_failed": "The picture quality could not be saved.",
     "snap_err_rate_limited": "Pictures are limited to one every two seconds. Try again in {seconds} s.",
     "snap_err_storage_full": "The gallery storage is full. Delete pictures in Media or free space on the disk.",
@@ -2011,10 +2015,14 @@
     "lens_not_arrived": "The lens has not reached the position yet; the number shown is the camera's own reading.",
     "snapshot_hint_api_full": "Full-resolution picture from the camera itself, saved to Media.",
     "snapshot_hint_api_small": "Small picture from the camera itself, saved to Media.",
-    "snapshot_hint_stream_running": "The picture is taken from the running preview and saved to Media.",
+    "snapshot_hint_stream_running": "The picture is taken from the running stream ({resolution}). For full resolution switch the stream to Main.",
     "snapshot_hint_stream_stopped": "Start the preview first: the picture is taken from the running preview.",
     "info_reconnect": "Reconnect",
     "stream_hint_snapshot_ffmpeg": "Live video needs ffmpeg, which this system does not have yet: the camera makes the pictures itself, so the stream cannot be chosen.",
-    "stream_hint_snapshot_browser": "This browser cannot play live video: the camera makes the pictures itself, so the stream cannot be chosen."
+    "stream_hint_snapshot_browser": "This browser cannot play live video: the camera makes the pictures itself, so the stream cannot be chosen.",
+    "snapshot_saved_api_full": "Picture saved to Media: {resolution}, full picture from the camera.",
+    "snapshot_saved_api_small": "Picture saved to Media: {resolution}, small picture from the camera.",
+    "snapshot_saved_stream_only": "Picture saved to Media: {resolution}, taken from the running stream.",
+    "snapshot_hint_stream_running_main": "The picture is taken from the running stream ({resolution})."
   }
 }

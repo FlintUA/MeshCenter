@@ -176,8 +176,35 @@ jobs:
         with:
           python-version: "3.11"
 
+      # ffmpeg.org's TLS handshake times out now and then; the pinned tarball is cached by its sha256 and downloaded
+      # with retries only on a miss. The Dockerfile verifies the same sha256 again, so a cached copy cannot differ.
+      - name: Read the pinned ffmpeg checksum
+        id: ffmpeg
+        run: |
+          echo "version=$(sed -n 's/^ARG FFMPEG_VERSION=//p' Dockerfile | head -1)" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(sed -n 's/^ARG FFMPEG_SHA256=//p' Dockerfile | head -1)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the ffmpeg source tarball
+        id: ffmpeg-cache
+        uses: actions/cache@v4
+        with:
+          path: ffmpeg-source
+          key: ffmpeg-source-${{ steps.ffmpeg.outputs.sha256 }}
+
+      - name: Download the ffmpeg source tarball (cache miss)
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ffmpeg-source
+          for attempt in 1 2; do
+            curl -fsSL --connect-timeout 30 --max-time 300 -o ffmpeg-source/ffmpeg.tar.xz               "https://ffmpeg.org/releases/ffmpeg-${{ steps.ffmpeg.outputs.version }}.tar.xz" && break
+            echo "download attempt $attempt failed"; sleep 15
+          done
+          echo "${{ steps.ffmpeg.outputs.sha256 }}  ffmpeg-source/ffmpeg.tar.xz" | sha256sum -c -
+
       - name: Build the image
-        run: docker build --platform linux/amd64 --build-arg MESHCENTER_VERSION=ci -t meshcenter:ffmpeg-gate .
+        run: >
+          docker buildx build --load --platform linux/amd64 --build-arg MESHCENTER_VERSION=ci
+          --build-context ffmpeg-source=./ffmpeg-source -t meshcenter:ffmpeg-gate .
 
       - name: ffmpeg gate
         run: python scripts/check_docker_ffmpeg.py meshcenter:ffmpeg-gate

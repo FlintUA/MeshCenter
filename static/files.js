@@ -526,7 +526,8 @@
         if (state.loading[key]) return state.loading[key];
         var epoch = state.epoch;
         var promise = fetcher().then(function (result) {
-            if (epoch === state.epoch && state.active) onDone(result);
+            // The Send dialog can be opened from the Media gallery while the Files workspace was never activated
+            if (epoch === state.epoch && (state.active || isSendDialogOpen())) onDone(result);
         }).catch(function () {
             // a failed read leaves the projection unchanged; the guard is still
             // released below so the next read is not permanently blocked

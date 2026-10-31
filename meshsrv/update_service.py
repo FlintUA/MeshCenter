@@ -15,7 +15,6 @@ whichever radio profile happens to be active.
 from __future__ import annotations
 
 import json
-import os
 import re
 import shlex
 import subprocess
@@ -85,7 +84,7 @@ _vault_data_dir: Optional[str] = None
 
 
 def configure_vault_dir(data_dir: str) -> None:
-    """MCA-VAULT: where `data/mca/<principal>/vault.json` lives, so Roll back can refuse while a vault exists."""
+    """MCA-VAULT: the instance data directory, so Roll back can refuse while a vault exists."""
     global _vault_data_dir
     _vault_data_dir = data_dir
 
@@ -96,15 +95,8 @@ def vault_enabled() -> bool:
     (ADR-0013 Decision 11)."""
     if not _vault_data_dir:
         return False
-    try:
-        base = os.path.join(_vault_data_dir, "mca")
-        for entry in os.listdir(base):
-            workspace = os.path.join(base, entry)
-            if os.path.isfile(os.path.join(workspace, "vault.json")) or os.path.isfile(os.path.join(workspace, "vault-migration.json")):
-                return True
-    except OSError:
-        return False
-    return False
+    from meshsrv.attachments.workspace import vault_present
+    return vault_present(_vault_data_dir)
 
 
 def _load_cache() -> dict[str, Any]:

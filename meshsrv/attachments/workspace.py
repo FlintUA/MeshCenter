@@ -71,6 +71,20 @@ def _validate_principal_id(principal_id: str) -> str:
     return clean
 
 
+def vault_present(data_dir) -> bool:
+    """True when any MCA workspace under `data_dir` holds a vault header or a vault migration journal (file presence
+    only, no MCAttach import). The updater uses it to refuse Roll back (ADR-0013 Decision 11); like every other
+    path under data/mca/ it is built here and nowhere else."""
+    base = Path(data_dir) / "mca"
+    try:
+        for entry in base.iterdir():
+            if (entry / "vault.json").is_file() or (entry / "vault-migration.json").is_file():
+                return True
+    except OSError:
+        return False
+    return False
+
+
 class MCAWorkspaceManager:
     """Create, resolve, and enforce quota/traversal rules for one
     MCA-workspace archive tree rooted at ``data_dir / "mca" / <principal-id>``.

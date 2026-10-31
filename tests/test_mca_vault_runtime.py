@@ -270,3 +270,44 @@ def test_swap_inspection_tells_zram_from_a_disk_swap(tmp_path):
     empty.write_text("Filename\tType\tSize\tUsed\tPriority\n")
     assert swapcheck.inspect_swaps(str(empty)) == {"devices": [], "disk_swap": False, "known": True}
     assert swapcheck.inspect_swaps(str(tmp_path / "missing")) == {"devices": [], "disk_swap": False, "known": False}
+
+
+# ---- the memory check uses MemAvailable, never MemFree --------------------------------------------------------------
+
+def _meminfo(tmp_path, *, free_kb, available_kb):
+    path = tmp_path / "meminfo"
+    path.write_text("MemTotal:        425172 kB\nMemFree:         %d kB\nMemAvailable:    %d kB\nBuffers: 1 kB\n" % (free_kb, available_kb))
+    return str(path)
+
+
+def test_free_ram_reads_memavailable_not_memfree(tmp_path):
+    path = _meminfo(tmp_path, free_kb=5000, available_kb=140000)        # a Pi: little free, plenty reclaimable
+    assert runtime.free_ram_bytes(path) == 140000 * 1024
+    path = _meminfo(tmp_path, free_kb=300000, available_kb=20000)       # the opposite: the check must follow MemAvailable
+    assert runtime.free_ram_bytes(path) == 20000 * 1024
+
+
+def test_the_unlock_check_follows_memavailable_through_the_default_reader(made, tmp_path, monkeypatch):
+    _, path = made
+    monkeypatch.setattr(runtime, "MEMINFO_PATH", _meminfo(tmp_path, free_kb=5000, available_kb=140000))
+    rt = runtime.VaultRuntime(path, clock=Clock(), log=Logs())          # the default reader, no injected free_ram
+    assert rt.unlock(passphrase=PASS)["state"] == "unlocked", "MemFree is tiny but MemAvailable is ample: allowed"
+    rt.lock()
+    monkeypatch.setattr(runtime, "MEMINFO_PATH", _meminfo(tmp_path, free_kb=300000, available_kb=20000))
+    with pytest.raises(VaultError) as info:
+        rt.unlock(passphrase=PASS)
+    assert info.value.code == "insufficient_memory" and "20 MiB free" in info.value.message, "MemFree is ample but MemAvailable is not: refused"
+
+
+def test_the_calibration_ceiling_also_uses_memavailable(tmp_path):
+    path = _meminfo(tmp_path, free_kb=1000, available_kb=1600000)
+    assert kdf.memory_ceiling_bytes(path) == 1600000 * 1024 // 4
+
+
+def test_note_dropped_logs_one_line_with_the_count_and_no_content(made):
+    _, path = made
+    logs = Logs()
+    rt = make_runtime(path, log=logs)
+    rt.note_dropped(7)
+    assert logs.lines == [("WARNING", "MCAttach locked: messages dropped",
+                           "7 incoming control message(s) were dropped because the queue of messages waiting for the unlock is full")]

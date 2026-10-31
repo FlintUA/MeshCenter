@@ -4688,6 +4688,9 @@ class _StubVault:
     def note_postponed(self, what):
         self.postponed.append(what)
 
+    def note_dropped(self, count):
+        self.dropped = getattr(self, "dropped", []) + [count]
+
 
 def _locked_service(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client, vault):
     ether = InMemoryEther()
@@ -4837,3 +4840,22 @@ def test_locked_service_postpones_key_requests_and_says_so_once_per_call(
     assert vault.postponed == ["Key requests", "Key requests"]
     assert conn.execute("SELECT COUNT(*) FROM mca_key_exchange_contact_state WHERE key_request_attempts > 0").fetchone()[0] == 0, \
         "no attempt of any series was used"
+
+
+def test_dropped_waiting_frames_are_reported_once_per_tick_with_the_count(
+    conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client
+):
+    from meshsrv.attachments import service as service_module
+    vault = _StubVault(locked=True)
+    svc = _locked_service(conn, wsm, principal, provider_registry, key_exchange, connectivity_monitor, relay_client, vault)
+    ack = b"x"
+    for i in range(service_module.VAULT_DEFERRED_INBOUND_MAX):            # fill the waiting queue exactly
+        svc._defer_inbound(InboundEvent(text="MCA1:" + str(i), source_address="!756f9960", packet_id=str(i), received_at=0.0))
+    svc.tick()
+    assert getattr(vault, "dropped", []) == [], "nothing was dropped yet: no line"
+    for i in range(7):                                                      # seven more: the oldest seven go
+        svc._defer_inbound(InboundEvent(text="MCA1:late" + str(i), source_address="!756f9960", packet_id="late%d" % i, received_at=0.0))
+    svc.tick()
+    assert vault.dropped == [7], "one report with the count"
+    svc.tick()
+    assert vault.dropped == [7], "reported once, not on every tick"

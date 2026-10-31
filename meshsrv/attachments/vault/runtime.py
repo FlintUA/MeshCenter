@@ -36,10 +36,15 @@ LOCK_WAIT_SECONDS = 5.0
 STATE_DISABLED, STATE_LOCKED, STATE_UNLOCKED, STATE_MIGRATING = "disabled", "locked", "unlocked", "migrating"
 
 
-def free_ram_bytes(meminfo_path: str = "/proc/meminfo") -> Optional[int]:
-    """MemAvailable in bytes, or None when it cannot be read (then no refusal is made on memory grounds)."""
+MEMINFO_PATH = "/proc/meminfo"
+
+
+def free_ram_bytes(meminfo_path: Optional[str] = None) -> Optional[int]:
+    """MemAvailable in bytes (what the kernel estimates can be given to a new allocation without swapping: free pages
+    plus the reclaimable page cache), NOT MemFree, which on a Pi is always small because the kernel uses RAM for cache.
+    None when it cannot be read (then no refusal is made on memory grounds)."""
     try:
-        with open(meminfo_path, encoding="ascii") as handle:
+        with open(meminfo_path or MEMINFO_PATH, encoding="ascii") as handle:
             for line in handle:
                 if line.startswith("MemAvailable:"):
                     return int(line.split()[1]) * 1024
@@ -248,6 +253,11 @@ class VaultRuntime:
         return self.status()
 
     # ---- observability -------------------------------------------------------------------------------------------
+
+    def note_dropped(self, count: int) -> None:
+        """One System Log line when frames that waited for the unlock were dropped (the waiting queue was full)."""
+        self._log("WARNING", "MCAttach locked: messages dropped",
+                  "%d incoming control message(s) were dropped because the queue of messages waiting for the unlock is full" % count)
 
     def note_postponed(self, what: str) -> None:
         """One System Log line per lock period for work that waits for the unlock (key requests ...)."""

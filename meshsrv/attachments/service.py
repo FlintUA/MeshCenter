@@ -396,6 +396,7 @@ class AttachmentsService:
         # MCA-VAULT: the vault runtime (None for a standalone service); see _vault_locked() and the gates below
         self._vault = vault
         self._deferred_inbound = collections.deque(maxlen=VAULT_DEFERRED_INBOUND_MAX)
+        self._deferred_dropped = 0     # frames dropped from the waiting queue since the last System Log line
         self._acks_deferred = False
         # MCA-UX1: told (transfer_id hex, attachment id) once an inbound OFFER has become an attachment row, so the
         # chat bubble of that offer can link to it exactly. Cosmetic: a failure here never affects the transfer.
@@ -819,7 +820,7 @@ class AttachmentsService:
 
     def _defer_inbound(self, event: InboundEvent) -> None:
         if len(self._deferred_inbound) == self._deferred_inbound.maxlen:
-            logger.warning("AttachmentsService: locked, deferred inbound queue full: the oldest frame is dropped")
+            self._deferred_dropped += 1            # the oldest frame is dropped; reported once per tick with the count
         self._deferred_inbound.append(event)
         if self._vault is not None:
             self._vault.note_postponed("Incoming control messages")
@@ -858,6 +859,17 @@ class AttachmentsService:
         locked = self._vault_locked()
         if not locked:
             self._replay_deferred_inbound()
+        try:
+            self._drain_inbound_events_locked_or_not(locked)
+        finally:
+            self._report_dropped_frames()
+
+    def _report_dropped_frames(self) -> None:
+        dropped, self._deferred_dropped = getattr(self, "_deferred_dropped", 0), 0
+        if dropped and getattr(self, "_vault", None) is not None:
+            self._vault.note_dropped(dropped)
+
+    def _drain_inbound_events_locked_or_not(self, locked: bool) -> None:
         for _ in range(MAX_INBOUND_EVENTS_PER_TICK):
             try:
                 event = self._inbound_queue.get_nowait()

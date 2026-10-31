@@ -342,7 +342,13 @@ download, Save to Files, delete, cleanup, and the removal of the experimental fl
   runtime on every call, so enable, disable, lock and unlock need no rewiring.
 - **Locked.** A secret cannot be opened (`vault_locked`) and nothing is written in plain form instead; a display value (the
   file name in the transfer list) is read as `None`, the "locked" placeholder, never the ciphertext. A plain value that
-  merely starts with `v1:` is still plain (it must authenticate for its table, column and row to count as ours).
+  merely starts with `v1:` is NOT plain once the vault is enabled (see the next item).
+- **Fail closed (PR 4a review).** With the vault enabled, an encrypted-looking value that does not authenticate for its
+  table, column and row (a flipped bit, a value copied from another row) raises `vault_corrupt`; a display value reads as
+  `(unreadable)`, never the raw `v1:` string; a plain secret file in `keys/` without its `.mcv` twin raises `vault_corrupt`
+  instead of being served. The System Log gets `table.column of <attachment id>` once per value, never the value. After
+  the migration no plain value can legitimately live in these places, and the migration and its resume read plain data
+  through their own code, not through this codec.
 - **Secret files.** The identity seed and the provider upload tokens in `keys/` are read and written through the codec
   (`<name>.mcv`, the `keys` subkey, associated data `keys/<name>`, atomic temp file and rename, no plain twin left). A
   plain file is still read when no encrypted one exists (an unmigrated or half-migrated workspace).

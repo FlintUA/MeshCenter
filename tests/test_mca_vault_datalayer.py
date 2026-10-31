@@ -63,13 +63,14 @@ def world(tmp_path):
     root = wsm.paths(principal.principal_id).root
     created = header.create(passphrase.normalize(PASS), FLOOR)
     (root / "vault.json").write_text(created.header.to_json(), encoding="utf-8")
-    runtime = VaultRuntime(root, log=lambda *a: None, clock=_Clock(), free_ram=lambda: 4 * 1024 ** 3)
+    logs = []
+    runtime = VaultRuntime(root, log=lambda *a: logs.append(a), clock=_Clock(), free_ram=lambda: 4 * 1024 ** 3)
     conn.codec = wsm.codec = VaultCodec(runtime)
 
     class W:
         pass
     w = W()
-    w.conn, w.wsm, w.principal, w.root, w.vault, w.tmp = conn, wsm, principal, root, runtime, tmp_path
+    w.conn, w.wsm, w.principal, w.root, w.vault, w.tmp, w.logs = conn, wsm, principal, root, runtime, tmp_path, logs
     yield w
     conn.close()
 
@@ -112,7 +113,9 @@ def test_a_sealed_value_is_bound_to_its_table_column_and_row(world):
     c = world.conn.codec
     sealed = c.seal("attachments", "file_name", "r1", NAME)
     for table, column, row in (("attachments", "file_name", "r2"), ("attachments", "draft_comment", "r1"), ("mca_sender_state", "file_name", "r1")):
-        assert c.open(table, column, row, sealed) != NAME, "copied to another place it does not decrypt"
+        with pytest.raises(VaultError) as info:
+            c.open(table, column, row, sealed)
+        assert info.value.code == "vault_corrupt", "copied to another place it must fail, not pass through"
 
 
 def test_locked_a_secret_raises_a_display_value_is_none_and_nothing_is_written(world):
@@ -129,9 +132,56 @@ def test_locked_a_secret_raises_a_display_value_is_none_and_nothing_is_written(w
     assert c.open("attachments", "file_name", "r1", "a plain value") == "a plain value"
 
 
-def test_a_plain_value_that_merely_starts_with_the_prefix_is_returned_as_it_is(world):
+def test_a_tampered_field_raises_instead_of_passing_the_ciphertext_through(world):
     unlock(world)
-    assert world.conn.codec.open("attachments", "file_name", "r1", "v1:not-really-ours") == "v1:not-really-ours"
+    c = world.conn.codec
+    sealed = c.seal("attachments", "file_name", "r1", NAME)
+    head, nonce, ct = sealed.split(":")
+    raw = bytearray(fields._unb64(ct))
+    raw[0] ^= 0x01                                                        # one flipped bit
+    tampered = "v1:%s:%s" % (nonce, fields._b64(bytes(raw)))
+    for bad in (tampered, "v1:not-really-ours", "v1:", sealed[:-4]):
+        with pytest.raises(VaultError) as info:
+            c.open("attachments", "file_name", "r1", bad)
+        assert info.value.code == "vault_corrupt" and "v1:" not in info.value.message
+    assert c.open("attachments", "file_name", "r1", sealed) == NAME, "the untouched value still opens"
+
+
+def test_a_corrupt_display_value_reads_as_unreadable_never_as_the_raw_string(world):
+    unlock(world)
+    c = world.conn.codec
+    sealed = c.seal("attachments", "file_name", "r1", NAME)
+    assert c.open_display("attachments", "file_name", "r2", sealed) == codec_mod.UNREADABLE_NAME
+    assert c.open_display("attachments", "file_name", "r1", "v1:garbage") == codec_mod.UNREADABLE_NAME
+    assert c.open_display("attachments", "file_name", "r1", sealed) == NAME
+
+
+def test_a_corrupt_value_is_logged_once_with_where_and_never_the_value(world):
+    unlock(world)
+    c = world.conn.codec
+    sealed = c.seal("attachments", "file_name", "r1", NAME)
+    for _ in range(5):
+        c.open_display("attachments", "file_name", "r2", sealed)
+    lines = [l for l in world.logs if l[1] == "MCAttach stored value unreadable"]
+    assert len(lines) == 1, "one line per value, not one per read"
+    level, title, details = lines[0]
+    assert level == "ERROR" and details == "attachments.file_name of r2"
+    assert sealed not in repr(world.logs) and NAME not in repr(world.logs)
+
+
+def test_the_snapshot_shows_a_corrupt_name_as_unreadable(world, tmp_path):
+    unlock(world)
+    world.conn.execute(
+        "INSERT INTO attachments (id, workspace_id, transfer_id, direction, principal_id, state, file_name, mime_type, plain_size, "
+        "plain_sha256, saved_path, draft_comment, created_at, hard_expires_at, download_grace_seconds) "
+        "VALUES (?, 'local', ?, 'received', ?, 'AVAILABLE', 'v1:tampered-by-someone', 'text/plain', 1, NULL, NULL, NULL, 1, 2, 3600)",
+        ("c3" * 16, "00" * 16, world.principal.principal_id))
+    world.conn.commit()
+    from meshsrv.attachments import snapshots
+    snap = snapshots.build_attachments_snapshot(world.conn, workspace_id="local", workspace_manager=world.wsm,
+                                                principal_id=world.principal.principal_id, now=2000.0)
+    assert [r.file_name for r in snap.records] == [codec_mod.UNREADABLE_NAME]
+    assert "tampered-by-someone" not in repr(snap.records)
 
 
 def test_the_service_and_the_migration_share_one_encoding(world):
@@ -162,7 +212,6 @@ def test_a_secret_file_cannot_be_read_while_locked_and_a_plain_legacy_file_is_st
     unlock(world)
     keys = world.wsm.paths(world.principal.principal_id).keys
     world.wsm.codec.write_secret_file(keys / "a.secret", b"aaa")
-    (keys / "legacy.secret").write_bytes(b"legacy")
     world.vault.lock()
     with pytest.raises(VaultError) as info:
         world.wsm.codec.read_secret_file(keys / "a.secret")
@@ -170,7 +219,38 @@ def test_a_secret_file_cannot_be_read_while_locked_and_a_plain_legacy_file_is_st
     with pytest.raises(VaultError):
         world.wsm.codec.write_secret_file(keys / "b.secret", b"bbb")
     assert not (keys / "b.secret").exists() and not (keys / "b.secret.mcv").exists(), "nothing is written in plain form either"
-    assert world.wsm.codec.read_secret_file(keys / "legacy.secret") == b"legacy"
+
+
+def test_a_plain_secret_file_without_its_encrypted_twin_is_an_error_when_the_vault_is_enabled(world):
+    keys = world.wsm.paths(world.principal.principal_id).keys
+    (keys / "legacy.secret").write_bytes(b"legacy")
+    unlock(world)                                                        # the vault is enabled (header present)
+    with pytest.raises(VaultError) as info:
+        world.wsm.codec.read_secret_file(keys / "legacy.secret")
+    assert info.value.code == "vault_corrupt" and "legacy" not in info.value.message
+    assert [l for l in world.logs if l[1] == "MCAttach stored value unreadable"][0][2] == "keys/legacy.secret (plain file found)"
+    world.vault.lock()
+    with pytest.raises(VaultError):                                       # locked or not, it is never silently served
+        world.wsm.codec.read_secret_file(keys / "legacy.secret")
+
+
+def test_a_tampered_encrypted_secret_file_is_an_error(world):
+    unlock(world)
+    keys = world.wsm.paths(world.principal.principal_id).keys
+    world.wsm.codec.write_secret_file(keys / "a.secret", b"aaa")
+    target = keys / "a.secret.mcv"
+    data = bytearray(target.read_bytes())
+    data[-1] ^= 0x01
+    target.write_bytes(bytes(data))
+    with pytest.raises(VaultError) as info:
+        world.wsm.codec.read_secret_file(keys / "a.secret")
+    assert info.value.code == "vault_corrupt"
+
+
+def test_without_a_vault_a_plain_secret_file_is_the_normal_case(tmp_path):
+    c = VaultCodec(VaultRuntime(tmp_path, log=lambda *a: None))          # no vault.json: disabled
+    (tmp_path / "x.secret").write_bytes(b"plain")
+    assert c.read_secret_file(tmp_path / "x.secret") == b"plain"
 
 
 def test_the_identity_seed_is_read_through_the_vault(world):

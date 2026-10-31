@@ -16,6 +16,13 @@ runtime on every call (enabled? unlocked?), so enable, disable, lock and unlock 
 
 Locked: a secret cannot be read (``VaultError("vault_locked")``, nothing is written in plain form either); a display value
 (a file name) is read as ``None``, which every caller already treats as "locked" or "no name".
+
+Fail closed: with the vault enabled, a value that looks encrypted but does not authenticate for its table, column and row
+(a flipped bit, a value copied from another row), and a plain secret file with no ``.mcv`` twin, are errors
+(``VaultError("vault_corrupt")``), never "probably plain". After the migration no plain value can legitimately live in
+these places; the migration and its resume read plain data through their own code, not through this codec. A display
+value that is corrupt reads as ``UNREADABLE_NAME``, never the raw ``v1:`` string. The System Log gets the attachment id and
+``table.column`` once per value, never the value.
 """
 import os
 import sqlite3
@@ -27,6 +34,8 @@ from meshsrv.attachments.vault.errors import VaultError
 
 MCV = ".mcv"
 SECRET_FILE_MODE = 0o600
+UNREADABLE_NAME = "(unreadable)"          # what a corrupt display value reads as; the UI of PR 5 gives it a translated look
+_MAX_LOGGED = 256                         # corrupt values already reported (bounded; one line per value, not per read)
 
 
 def to_text(value) -> Optional[str]:
@@ -97,6 +106,7 @@ PLAIN = PlainCodec()
 class VaultCodec(PlainCodec):
     def __init__(self, vault) -> None:
         self._vault = vault
+        self._reported = set()
 
     @property
     def active(self) -> bool:                       # type: ignore[override]
@@ -114,9 +124,10 @@ class VaultCodec(PlainCodec):
         return fields.encrypt_field(self._fields_key(), table, column, str(row_id), to_text(value))
 
     def open(self, table: str, column: str, row_id, value):
-        """A secret: raises ``vault_locked`` while locked. A value that is not ours (plain, or a plain value that merely
-        starts with ``v1:``) is returned as it is."""
-        if value is None or not fields.is_encrypted(value) or not self.active:
+        """A secret: raises ``vault_locked`` while locked and ``vault_corrupt`` for an encrypted-looking value that does not
+        authenticate for this table, column and row. Without the vault a value is returned as it is; a value that does
+        not look encrypted is plain (a database that was never migrated)."""
+        if value is None or not self.active or not fields.is_encrypted(value):
             return value
         key = self._vault.subkey("fields")
         if key is None:
@@ -124,16 +135,28 @@ class VaultCodec(PlainCodec):
         try:
             return from_text(fields.decrypt_field(key, table, column, str(row_id), value))
         except VaultError:
-            return value
+            self._report("%s.%s of %s" % (table, column, row_id))
+            raise VaultError("vault_corrupt", "A stored value could not be verified.")
 
     def open_display(self, table: str, column: str, row_id, value):
-        """A name for display: ``None`` while locked."""
+        """A name for display: ``None`` while locked, ``UNREADABLE_NAME`` when it is corrupt."""
         try:
             return self.open(table, column, row_id, value)
         except VaultError as error:
             if error.code == "vault_locked":
                 return None
+            if error.code == "vault_corrupt":
+                return UNREADABLE_NAME
             raise
+
+    def _report(self, where: str) -> None:
+        """One System Log line per corrupt value: what and where, never the value."""
+        if where in self._reported or len(self._reported) >= _MAX_LOGGED:
+            return
+        self._reported.add(where)
+        log = getattr(self._vault, "_log", None)
+        if log is not None:
+            log("ERROR", "MCAttach stored value unreadable", where)
 
     # ---- small secret files ---------------------------------------------------------------------------------------
 
@@ -154,13 +177,22 @@ class VaultCodec(PlainCodec):
         path.unlink(missing_ok=True)                 # never leave a plain twin next to the encrypted file
 
     def read_secret_file(self, path: Path) -> Optional[bytes]:
+        if not self.active:
+            return PlainCodec.read_secret_file(self, path)
         target = self._enc(path)
-        if self.active and target.exists():
+        if target.exists():
             key = self._vault.subkey("keys")
             if key is None:
                 raise VaultError("vault_locked")
-            return streamcrypt.decrypt_bytes(target.read_bytes(), key, "keys/" + path.name)
-        return path.read_bytes() if path.exists() else None
+            try:
+                return streamcrypt.decrypt_bytes(target.read_bytes(), key, "keys/" + path.name)
+            except VaultError:
+                self._report("keys/%s" % path.name)
+                raise VaultError("vault_corrupt", "A stored secret could not be verified.")
+        if path.exists():                  # a plain secret next to an enabled vault: never a silent fallback
+            self._report("keys/%s (plain file found)" % path.name)
+            raise VaultError("vault_corrupt", "A plain secret file was found while the vault is enabled.")
+        return None
 
     def secret_file_exists(self, path: Path) -> bool:
         return path.exists() or (self.active and self._enc(path).exists())

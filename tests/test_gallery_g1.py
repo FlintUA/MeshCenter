@@ -164,10 +164,10 @@ def test_duplicate_names_in_a_zip_are_kept_apart(tmp_path):
 
 
 def test_media_settings_are_normalized():
-    default = {"sort": "date_desc", "view_desktop": "large", "view_mobile": "large"}
+    default = {"sort": "date_desc", "view_desktop": "large", "view_mobile": "large", "filter_desktop": "", "filter_mobile": ""}
     assert normalize_settings({})["media"] == default
     assert normalize_settings({"media": {"sort": "SIZE", "view_desktop": "list", "view_mobile": "small"}})["media"] == {
-        "sort": "size", "view_desktop": "list", "view_mobile": "small"}
+        "sort": "size", "view_desktop": "list", "view_mobile": "small", "filter_desktop": "", "filter_mobile": ""}
     assert normalize_settings({"media": {"sort": "bogus", "view_desktop": 7, "view_mobile": "nope"}})["media"] == default
     assert normalize_settings({"media": "x"})["media"] == default
 
@@ -183,9 +183,9 @@ def test_choosing_on_one_device_leaves_the_other_and_the_shared_sort_alone():
     from api.api_settings import _deep_merge
     stored = normalize_settings({"media": {"sort": "name", "view_desktop": "list", "view_mobile": "small"}})
     after_phone = normalize_settings(_deep_merge(stored, {"media": {"view_mobile": "large"}}))["media"]
-    assert after_phone == {"sort": "name", "view_desktop": "list", "view_mobile": "large"}
+    assert after_phone == {"sort": "name", "view_desktop": "list", "view_mobile": "large", "filter_desktop": "", "filter_mobile": ""}
     after_sort = normalize_settings(_deep_merge(stored, {"media": {"sort": "size"}}))["media"]
-    assert after_sort == {"sort": "size", "view_desktop": "list", "view_mobile": "small"}
+    assert after_sort == {"sort": "size", "view_desktop": "list", "view_mobile": "small", "filter_desktop": "", "filter_mobile": ""}
 
 
 # ---------------------------------------------------------------- G2: a picture prepared for sending
@@ -258,3 +258,14 @@ def test_send_copy_rejects_bad_sizes_unknown_files_and_the_thumbnail_tree(env):
     broken = env["day"] / "MC_bad.jpg"
     broken.write_bytes(b"not a jpeg")
     assert env["client"].get("/api/camera/screenshot/2026/10/30/MC_bad.jpg?send=original").status_code == 422
+
+
+def test_the_gallery_filter_text_is_remembered_per_device_and_normalized():
+    from api.api_settings import _deep_merge
+    stored = normalize_settings({"media": {"filter_desktop": "  garage   door ", "filter_mobile": "Гараж"}})["media"]
+    assert stored["filter_desktop"] == "garage door", "whitespace collapsed and trimmed"
+    assert stored["filter_mobile"] == "Гараж"
+    assert normalize_settings({"media": {"filter_desktop": 5, "filter_mobile": None}})["media"]["filter_desktop"] == ""
+    assert len(normalize_settings({"media": {"filter_desktop": "x" * 500}})["media"]["filter_desktop"]) == 80
+    after_phone = normalize_settings(_deep_merge(normalize_settings({"media": stored}), {"media": {"filter_mobile": "yard"}}))["media"]
+    assert after_phone["filter_mobile"] == "yard" and after_phone["filter_desktop"] == "garage door", "the other device is untouched"

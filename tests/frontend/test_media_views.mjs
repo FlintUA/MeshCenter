@@ -126,7 +126,8 @@ assert.equal(V.indexAfterDelete(0, 1), null, 'nothing left');
 // ---------------------------------------------------------------- the real files: wiring that must not drift
 const media = read('media.js');
 assert.ok(media.includes("fetch('/api/camera/screenshots/zip'") && media.includes("fetch('/api/camera/screenshots/delete'"), 'bulk calls');
-assert.ok(media.includes('media: { sort: mediaSort, [mediaViews().viewField(mediaIsPhone())]: mediaView }'), 'sort and the per-device view are remembered through the settings');
+assert.ok(media.includes('sort: mediaSort,') && media.includes('[mediaViews().viewField(mediaIsPhone())]: mediaView')
+    && media.includes('[mediaViews().filterField(mediaIsPhone())]: mediaViews().normalizeFilter(mediaFilter)'), 'sort, the per-device view and the per-device filter are remembered through the settings');
 assert.ok(media.includes('loading="lazy"') && media.includes('thumb_url'), 'thumbnails load lazily');
 assert.ok(!/(^|[^A-Za-z])(confirm|alert|prompt)\(/.test(media), 'no native dialogs');
 assert.ok(template.indexOf('media-views.js') < template.indexOf('/static/media.js'), 'media-views.js loads first');
@@ -254,6 +255,214 @@ assert.ok(html.indexOf('id="cameraFullscreenBtn"') > html.indexOf('class="video-
     const chosen = V.sendItems(new Set(['d/3.jpg', 'd/1.jpg']), items);
     assert.deepEqual(chosen.map((c) => c.filename), ['d/1.jpg', 'd/3.jpg'], 'in the order shown');
     assert.deepEqual(Object.keys(chosen[0]).sort(), ['display_name', 'filename', 'size']);
+}
+
+
+// ---------------------------------------------------------------- G4: the filter (file name or camera name)
+{
+    const pictures = [
+        item('MC_Garazh_20261030_101500.jpg', { camera: 'Гараж', modified_ts: 5 }),
+        item('MC_Kamera-dvora_20261030_101600.jpg', { camera: 'Камера двора', modified_ts: 4 }),
+        item('MC_Front-Door_20261030_101700.jpg', { camera: 'Front Door', modified_ts: 3 }),
+        item('MC_20261030_101800.jpg', { camera: '', modified_ts: 2 }),
+        item('IMG_0001.JPG', { camera: '', modified_ts: 1 }),
+    ];
+    const shown = (query) => names(V.filterItems(pictures, query));
+
+    assert.equal(shown('').length, 5, 'empty filter: everything');
+    assert.equal(shown('   ').length, 5, 'only spaces: everything');
+    assert.deepEqual(shown('front'), ['MC_Front-Door_20261030_101700.jpg'], 'case-insensitive, camera name and file name both');
+    assert.deepEqual(shown('FRONT DOOR'), ['MC_Front-Door_20261030_101700.jpg'], 'the camera name with its space');
+    assert.deepEqual(shown('img_00'), ['IMG_0001.JPG'], 'file name substring, any case');
+    assert.deepEqual(shown('20261030_1017'), ['MC_Front-Door_20261030_101700.jpg'], 'a timestamp piece of the file name');
+    assert.equal(shown('20261030').length, 4);
+
+    // Cyrillic: the camera is found by its real name (the file name only has the transliteration)
+    assert.deepEqual(shown('гараж'), ['MC_Garazh_20261030_101500.jpg'], 'lower case finds Гараж');
+    assert.deepEqual(shown('ГАР'), ['MC_Garazh_20261030_101500.jpg'], 'upper case finds Гараж');
+    assert.deepEqual(shown('раж'), ['MC_Garazh_20261030_101500.jpg'], 'a piece from the middle');
+    assert.deepEqual(shown('двора'), ['MC_Kamera-dvora_20261030_101600.jpg']);
+    assert.deepEqual(shown('garazh'), ['MC_Garazh_20261030_101500.jpg'], 'the transliterated file name is found too');
+
+    // nothing matches
+    assert.equal(shown('no such picture').length, 0);
+    assert.equal(V.filterItems([], 'x').length, 0);
+    assert.equal(V.filterItems(null, 'x').length, 0);
+
+    // the caller's order is kept and the input is never changed
+    const before = pictures.map((p) => p.filename).join('|');
+    assert.deepEqual(shown('20261030').map((n) => n.slice(0, 8)), ['MC_Garaz', 'MC_Kamer', 'MC_Front', 'MC_20261']);
+    assert.notEqual(V.filterItems(pictures, ''), pictures, 'a new array even for an empty filter');
+    assert.equal(pictures.map((p) => p.filename).join('|'), before);
+
+    // a picture without a camera name or a display name does not break the matcher
+    assert.equal(V.matchesFilter({ filename: 'd/x.jpg' }, 'x.jpg'), true);
+    assert.equal(V.matchesFilter({}, 'x'), false);
+    assert.equal(V.matchesFilter(null, ''), true);
+
+    // normalizing, remembering per device
+    assert.equal(V.normalizeFilter('  a   b ' + String.fromCharCode(10) + ' c '), 'a b c');
+    assert.equal(V.normalizeFilter(undefined), '');
+    assert.equal(V.normalizeFilter(null), '');
+    assert.equal(V.normalizeFilter('x'.repeat(200)).length, V.FILTER_MAX);
+    assert.equal(V.FILTER_MAX, 80);
+    assert.equal(V.filterField(true), 'filter_mobile');
+    assert.equal(V.filterField(false), 'filter_desktop');
+    assert.equal(V.pickFilter({ filter_mobile: ' yard ', filter_desktop: 'door' }, true), 'yard');
+    assert.equal(V.pickFilter({ filter_mobile: ' yard ', filter_desktop: 'door' }, false), 'door');
+    assert.equal(V.pickFilter(undefined, true), '');
+    assert.equal(V.pickFilter({ filter_mobile: 7 }, true), '7', 'a non-text value is read as text, never throws');
+}
+
+// ---------------------------------------------------------------- G4: selection follows what is visible
+{
+    const pictures = [item('a1.jpg', { size: 100 }), item('a2.jpg', { size: 200 }), item('b1.jpg', { size: 400 }), item('b2.jpg', { size: 800 })];
+    const visible = V.filterItems(pictures, 'a');
+    assert.deepEqual(names(visible), ['a1.jpg', 'a2.jpg']);
+
+    // select all selects only the visible (filtered) pictures
+    let selection = V.toggleAll(new Set(), visible);
+    assert.deepEqual(Array.from(selection).sort(), visible.map((p) => p.filename).sort());
+    assert.equal(V.allSelected(selection, visible), true);
+    assert.equal(V.allSelected(selection, pictures), false, 'against the whole list it is not "all"');
+    assert.equal(V.bulkState(selection, visible).count, 2);
+    assert.equal(V.bulkState(selection, visible).bytes, 300);
+    assert.equal(V.toggleAll(selection, visible).size, 0, 'again: nothing');
+
+    // some hidden pictures were selected before the filter: select all drops them, and so does a filter change
+    const mixed = new Set([pictures[0].filename, pictures[2].filename]);
+    assert.deepEqual(Array.from(V.toggleAll(mixed, visible)).sort(), visible.map((p) => p.filename).sort(), 'only the visible ones');
+    const afterFilter = V.prune(mixed, visible);
+    assert.deepEqual(Array.from(afterFilter), [pictures[0].filename], 'the hidden b1 is dropped when the filter changes');
+    assert.equal(V.bulkState(afterFilter, visible).count, 1);
+    assert.equal(V.prune(mixed, V.filterItems(pictures, '')).size, 2, 'clearing the filter drops nothing');
+    assert.equal(V.prune(mixed, V.filterItems(pictures, 'zzz')).size, 0, 'an empty result drops everything');
+    assert.equal(V.allSelected(new Set(), []), false, 'no visible picture: nothing is "all selected"');
+}
+
+
+// ---------------------------------------------------------------- G4 phone fixes: the two-line summary and the lightbox
+{
+    const media = read('media.js');
+    const css = read('style-part4.css');
+    // the summary of a phone: count on top, size under it, in one place for the list, the filtered list and the selection
+    assert.equal((media.match(/mediaTwoLineSummary\(/g) || []).length, 4, 'defined once, used for all three summaries');
+    assert.ok(!media.includes('media-sum-tiny') && !css.includes('media-sum-tiny'), 'the size is no longer dropped on a narrow phone');
+    assert.ok(/\.media-toolbar\.is-compact \.media-sum-short \{[^}]*flex-direction: column/.test(css), 'two lines');
+    assert.ok(/\.media-sum-sub \{[^}]*font-size: 10\.5px/.test(css), 'the size is the smaller line');
+
+    // the lightbox on a phone: the picture sits at the top under the close button, the action row always fits the width
+    const start = css.indexOf('@media (max-width: 700px) {\n    /* the picture sits at the top');
+    assert.ok(start > 0, 'the phone block of the lightbox exists');
+    const rest = css.slice(start);
+    const phoneBlock = rest.slice(0, rest.indexOf('/* a phone on its side'));
+    assert.ok(/\.media-lb-stage \{[^}]*align-items: flex-start[^}]*padding: 56px 8px 0/.test(phoneBlock), 'picture at the top, not centered');
+    assert.ok(/\.media-lb-stage \{[^}]*flex: 0 1 auto/.test(phoneBlock), 'the caption follows the picture');
+    assert.ok(/\.media-lb-img \{[^}]*max-height: calc\(var\(--lb-h, 100vh\) - 56px - var\(--lb-caption-h, 120px\) - 72px\)/.test(phoneBlock), 'the picture leaves room for the caption and the arrow strip');
+    assert.ok(/\.media-lb-link \{[^}]*flex: 1 1 0;[^}]*min-width: 0/.test(phoneBlock), 'the three actions share the row equally and may shrink');
+    assert.ok(/\.media-lb-link \{[^}]*flex-direction: column/.test(phoneBlock), 'icon over label');
+    assert.ok(/\.media-lb-next \{[^}]*bottom: 12px/.test(phoneBlock), 'the arrows are in their own strip at the bottom edge');
+    assert.ok(/\.media-lb-actions \{[^}]*width: 100%/.test(phoneBlock), 'the row spans the caption');
+    const landscape = css.slice(css.indexOf('/* a phone on its side'), css.indexOf('/* MCA-UX1'));
+    assert.ok(/\.media-lb-link span \{[^}]*clip: rect\(0 0 0 0\)/.test(landscape), 'on its side the actions are icons (the labels stay for screen readers)');
+    assert.ok(/\.media-lb-stage \{[^}]*align-items: center/.test(landscape), 'a phone on its side keeps the picture centered');
+    for (const key of ['send', 'delete']) {
+        assert.ok(new RegExp('data-lb="' + key + '" title=.*aria-label=').test(media), key + ' carries its name as title and aria-label');
+    }
+    assert.ok(/id="mediaLbDownload" download title=.*aria-label=/.test(media), 'download too');
+    assert.ok(media.includes("box.style.setProperty('--lb-h', box.clientHeight + 'px')"), 'the real (visible) height of the lightbox is measured, not 100vh');
+    assert.ok(media.includes('observer.observe(box)') && media.includes("'orientationchange'"), 'and re-measured on resize and rotation');
+}
+
+
+// ---------------------------------------------------------------- G4: the filter field is ONE frame (found on a real iPhone and Android)
+{
+    const css = read('style-part4.css');
+    const media = read('media.js');
+    const rule = (selector) => {
+        const at = css.indexOf(selector + ' {');
+        assert.ok(at >= 0, selector + ' exists');
+        return css.slice(at, css.indexOf('}', at));
+    };
+    // the wrapper is the frame and shows the focus ring (mouse and keyboard)
+    const wrapperFocus = rule('.media-filter:focus-within');
+    assert.ok(/outline: 2px solid/.test(wrapperFocus) && /border-color/.test(wrapperFocus), 'the ring is drawn on the wrapper');
+    // the input has no frame, background or native look of its own; the doubled class beats ui-kit.css (loaded later)
+    const input = rule('.media-filter .media-filter-input.media-filter-input');
+    for (const needle of ['border: 0 !important', 'outline: 0 !important', 'box-shadow: none !important', 'background: transparent !important',
+        '-webkit-appearance: none', 'appearance: none', 'min-height: 0', 'min-width: 0', 'width: auto', 'max-width: 100%', 'box-sizing: border-box', 'flex: 1 1 0']) {
+        assert.ok(input.includes(needle), 'the input has ' + needle);
+    }
+    // 16 px at least: iOS Safari zooms the page on focus below that
+    const size = /font-size: (\d+)px/.exec(input);
+    assert.ok(size && Number(size[1]) >= 16, 'font-size >= 16px');
+    assert.ok(/\.media-filter \.media-filter-input\.media-filter-input:focus-visible/.test(css), 'also while focused');
+    assert.ok(css.includes('::-webkit-search-cancel-button'), 'a search-type input would show no native cancel button');
+    // ui-kit.css loads after style-part4.css, so the global focus ring, the phone min-height and the dark input background
+    // would win at equal specificity: this is why the class is doubled
+    assert.ok(template.indexOf('style-part4.css') < template.indexOf('ui-kit.css'), 'ui-kit.css loads after style-part4.css');
+    assert.ok(/html\[data-theme="dark"\] :is\(input, select, textarea, \.message-input\) \{ background:/.test(read('ui-kit.css').split('\n').join(' ').replace(/\s+/g, ' ')), 'the dark-theme rule this has to beat is still there (if it goes, the doubled class can go too)');
+    // the placeholder is short enough for a 320 px phone
+    for (const loc of ['en', 'de', 'ru', 'uk']) {
+        const catalog = JSON.parse(readFileSync(path.join(__dirname, '..', '..', 'static', 'i18n', loc + '.json'), 'utf8'));
+        assert.ok(catalog.media.filter_placeholder.length <= 20, loc + ' placeholder is short: ' + catalog.media.filter_placeholder);
+    }
+    assert.ok(media.includes('placeholder="${mediaEscapeHtml(mediaT(\'media.filter_placeholder\'))}"'), 'the field uses the placeholder key');
+}
+
+
+// ---------------------------------------------------------------- G4: the live count and "Select found"
+{
+    const pictures = [
+        item('MC_Garazh_1.jpg', { camera: 'Гараж', size: 100 }),
+        item('MC_Front-Door_2.jpg', { camera: 'Front Door', size: 200 }),
+        item('MC_3.jpg', { camera: '', size: 400 }),
+        item('IMG_0001.JPG', { camera: '', size: 800 }),
+    ];
+    // the count: "N of M", also when everything matches (the "MC_" a user typed and saw no change) and when nothing does
+    assert.deepEqual({ ...V.filterCount(pictures, 'MC_') }, { shown: 3, total: 4 });
+    assert.deepEqual({ ...V.filterCount(pictures, 'mc_') }, { shown: 3, total: 4 }, 'case-insensitive');
+    assert.deepEqual({ ...V.filterCount(pictures, 'door') }, { shown: 1, total: 4 });
+    assert.deepEqual({ ...V.filterCount(pictures, 'гараж') }, { shown: 1, total: 4 }, 'Cyrillic camera name');
+    assert.deepEqual({ ...V.filterCount(pictures, 'zzz') }, { shown: 0, total: 4 }, '0 of 4 when nothing matches');
+    assert.deepEqual({ ...V.filterCount(pictures, '') }, { shown: 4, total: 4 });
+    assert.deepEqual({ ...V.filterCount(null, 'x') }, { shown: 0, total: 0 });
+
+    // "Select found": exactly the pictures the filter shows, replacing any earlier selection
+    const found = V.selectFound(pictures, 'MC_');
+    assert.deepEqual(Array.from(found).sort(), pictures.slice(0, 3).map((p) => p.filename).sort());
+    assert.equal(found.has(pictures[3].filename), false, 'a hidden picture is never selected');
+    assert.equal(V.selectFound(pictures, 'zzz').size, 0, 'nothing found: nothing selected (the button is disabled)');
+    assert.equal(V.selectFound(pictures, '').size, 4, 'an empty filter finds everything');
+    assert.equal(V.selectFound(pictures, 'door').size, 1);
+    // it feeds the selection toolbar: the bulk state counts and sizes exactly the found pictures
+    const state = V.bulkState(found, V.filterItems(pictures, 'MC_'));
+    assert.equal(state.count, 3);
+    assert.equal(state.bytes, 700);
+    assert.equal(state.canDownload && state.canDelete && state.canSend, true, 'Download, Delete and Send are available');
+    assert.equal(V.selectionMode(found), true, 'the toolbar switches to the selection state');
+    assert.equal(V.selectionMode(V.selectFound(pictures, 'zzz')), false);
+
+    // the wiring in media.js
+    const media = read('media.js');
+    const css = read('style-part4.css');
+    assert.ok(media.includes("data-media-action=\"select-found\"") && media.includes('aria-label="${label}"') && media.includes('title="${label}"'), 'an icon button with an aria-label and a title');
+    assert.ok(media.includes("what === 'select-found'") && media.includes('function mediaSelectFound()'), 'the click is handled');
+    const select = media.slice(media.indexOf('function mediaSelectFound()'), media.indexOf('function renderMediaGallery'));
+    assert.ok(select.includes('selectFound(mediaItems, mediaFilter)') && select.includes('mediaSearchOpen = false') && select.includes('mediaRenderPictures()'), 'selects, closes the bar and shows the selection toolbar');
+    assert.ok(select.includes('if (!found.size) return;'), 'nothing found: nothing happens');
+    const tools = media.slice(media.indexOf('function mediaUpdateFilterTools()'), media.indexOf('// "Select found": everything'));
+    assert.ok(tools.includes("button.disabled = shown === 0") && tools.includes("count.hidden = !active") && tools.includes("media.summary_filtered_count"), 'count shown while filtering, button disabled at 0');
+    assert.ok(/mediaUpdateSelectionUi\(\);\n    mediaUpdateFilterTools\(\);\n\}/.test(media), 'the count follows every render (every keystroke)');
+    // in the phone bar AND next to the inline field on a desktop toolbar
+    const phoneBar = media.slice(media.indexOf('id="mediaTbSearch"'), media.indexOf('id="mediaTbSelection"'));
+    assert.ok(phoneBar.includes('mediaFilterField(\'mediaFilterInputPhone\')') && phoneBar.includes('${mediaFilterTools()}'), 'the phone bar has the field, the count and the button');
+    assert.ok(media.includes('media-only-desktop media-filter-tools') && media.includes("${mediaFilterField('mediaFilterInput')}"), 'the desktop toolbar too');
+    assert.ok(/\.media-filter-select:disabled \{[^}]*opacity/.test(css) && /\.media-filter-count\.is-empty \{[^}]*color/.test(css), 'a disabled button and a "0 of N" look');
+    for (const loc of ['en', 'de', 'ru', 'uk']) {
+        const catalog = JSON.parse(readFileSync(path.join(__dirname, '..', '..', 'static', 'i18n', loc + '.json'), 'utf8'));
+        assert.ok(catalog.media.select_found && catalog.media.select_found.length <= 24, loc + ' has a short select_found label');
+    }
 }
 
 console.log('test_media_views.mjs: ok');

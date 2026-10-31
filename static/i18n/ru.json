@@ -858,7 +858,25 @@
     "more": "Ещё действия",
     "send": "Отправить",
     "send_too_many": "Не больше {max} снимков за раз: выберите меньше.",
-    "send_unavailable": "Отправка сейчас недоступна. Перезагрузите страницу."
+    "send_unavailable": "Отправка сейчас недоступна. Перезагрузите страницу.",
+    "filter_label": "Фильтр изображений",
+    "filter_placeholder": "Файл или камера",
+    "filter_open": "Поиск изображений",
+    "filter_close": "Закрыть поиск",
+    "filter_clear": "Сбросить фильтр",
+    "filter_empty_title": "Ничего не найдено",
+    "filter_empty_text": "Ни в одном имени файла или камеры нет введённого текста.",
+    "filter_empty_clear": "Сбросить фильтр",
+    "summary_filtered_full": "{pictures} · {used} МБ · свободно {free} ГБ",
+    "filtered_count": {
+      "one": "{shown} из {total} изображения",
+      "few": "{shown} из {total} изображений",
+      "many": "{shown} из {total} изображений",
+      "other": "{shown} из {total} изображения"
+    },
+    "summary_filtered_count": "{shown} из {total}",
+    "size_mb": "{used} МБ",
+    "select_found": "Выбрать найденные"
   },
   "devices": {
     "subtitle": "Периферийные устройства и модули, привязанные к активному профилю радиостанции",

@@ -868,14 +868,14 @@
     "filter_empty_text": "Ім’я жодного файлу чи камери не містить введеного тексту.",
     "filter_empty_clear": "Скинути фільтр",
     "summary_filtered_full": "{pictures} · {used} МБ · вільно {free} ГБ",
-    "summary_filtered_short": "{shown} з {total} · {used} МБ",
     "filtered_count": {
       "one": "{shown} з {total} зображення",
       "few": "{shown} з {total} зображень",
       "many": "{shown} з {total} зображень",
       "other": "{shown} з {total} зображення"
     },
-    "summary_filtered_tiny": "{shown} з {total}"
+    "summary_filtered_count": "{shown} з {total}",
+    "size_mb": "{used} МБ"
   },
   "devices": {
     "subtitle": "Периферійні пристрої та модулі, прив'язані до активного профілю радіостанції",

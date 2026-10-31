@@ -6150,7 +6150,22 @@ html[data-theme="dark"] .media-zip-note {
 }
 
 .media-toolbar.is-compact .media-sum-short {
-    display: inline;
+    display: inline-flex;
+    flex-direction: column;
+    justify-content: center;
+    line-height: 1.2;
+}
+
+.media-toolbar.is-compact .media-tb-summary {
+    flex: 0 1 auto;
+    overflow: hidden;
+    text-overflow: clip;
+}
+
+.media-sum-sub {
+    color: var(--mc-text-secondary, #667085);
+    font-size: 10.5px;
+    font-weight: 500;
 }
 
 .media-toolbar.is-compact .media-tb-check,
@@ -6312,12 +6327,8 @@ html[data-theme="dark"] .media-zip-note {
     width: 44px;
 }
 
-/* a 320 px phone has room for only a few characters of summary next to five buttons: smaller targets (40 px) and the
-   count alone ("14", or "3 of 14" while filtering); the size is on the desktop toolbar and in the More menu elsewhere */
-.media-sum-tiny {
-    display: none;
-}
-
+/* a 320 px phone has room for only a few characters of summary next to five buttons: smaller targets (40 px); the summary
+   stays in two lines (count on top, size under it), so it fits without an ellipsis */
 @media (max-width: 360px) {
     .media-toolbar.is-compact .media-tb {
         gap: 2px;
@@ -6340,13 +6351,12 @@ html[data-theme="dark"] .media-zip-note {
         width: 40px;
     }
 
-    .media-toolbar.is-compact .media-sum-short {
-        display: none;
+    .media-toolbar.is-compact .media-sum-top {
+        font-size: 12px;
     }
 
-    .media-toolbar.is-compact .media-sum-tiny {
-        display: inline;
-        font-size: 12px;
+    .media-toolbar.is-compact .media-sum-sub {
+        font-size: 10px;
     }
 }
 

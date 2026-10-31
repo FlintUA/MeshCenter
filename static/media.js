@@ -232,17 +232,22 @@ function mediaRenderSummary() {
         const shown = mediaShown.length;
         const total = mediaItems.length;
         target.innerHTML = `<span class="media-sum-full">${mediaEscapeHtml(mediaT('media.summary_filtered_full', { pictures: window.I18N.plural('media.filtered_count', total, { shown, total }), used, free }))}</span>`
-            + `<span class="media-sum-short">${mediaEscapeHtml(mediaT('media.summary_filtered_short', { shown, total, used }))}</span>`
-            + `<span class="media-sum-tiny">${mediaEscapeHtml(mediaT('media.summary_filtered_tiny', { shown, total }))}</span>`;
+            + mediaTwoLineSummary(mediaT('media.summary_filtered_count', { shown, total }), mediaT('media.size_mb', { used }));
         const spaceNow = document.getElementById('mediaFreeSpace');
         if (spaceNow) spaceNow.textContent = mediaT('media.free_space', { free });
         return;
     }
     target.innerHTML = `<span class="media-sum-full">${mediaEscapeHtml(mediaT('media.summary_full', { pictures: window.I18N.plural('media.image_count', count, { count }), used, free }))}</span>`
-        + `<span class="media-sum-short">${mediaEscapeHtml(mediaT('media.summary_short', { count, used }))}</span>`
-        + `<span class="media-sum-tiny">${mediaEscapeHtml(String(count))}</span>`;
+        + mediaTwoLineSummary(String(count), mediaT('media.size_mb', { used }));
     const space = document.getElementById('mediaFreeSpace');
     if (space) space.textContent = mediaT('media.free_space', { free });
+}
+
+// The short summary of a phone: the count on top, the size under it in a smaller font. Two lines in the toolbar's own
+// height, so nothing is cut off with an ellipsis and nothing below moves.
+function mediaTwoLineSummary(top, sub) {
+    return `<span class="media-sum-short"><span class="media-sum-top">${mediaEscapeHtml(top)}</span>`
+        + `<span class="media-sum-sub">${mediaEscapeHtml(sub)}</span></span>`;
 }
 
 function mediaWireGallery(content) {
@@ -577,7 +582,7 @@ function mediaUpdateSelectionUi() {
     if (summary) {
         const size = mediaViews().formatBytes(state.bytes);
         summary.innerHTML = `<span class="media-sum-full">${mediaEscapeHtml(window.I18N.plural('media.selected_summary', state.count, { count: state.count, size }))}</span>`
-            + `<span class="media-sum-short">${mediaEscapeHtml(`${state.count} · ${size}`)}</span>`;
+            + mediaTwoLineSummary(String(state.count), size);
     }
     const download = document.getElementById('mediaBulkDownload');
     if (download) download.disabled = !state.canDownload;

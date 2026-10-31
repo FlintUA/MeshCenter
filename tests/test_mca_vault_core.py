@@ -163,6 +163,33 @@ def test_tampered_kdf_parameters_do_not_open_even_when_above_the_floor(vault):
         header.unlock(header.VaultHeader.from_json(other_salt), PASS)
 
 
+def test_the_kdf_parameters_and_salt_are_bound_into_the_wrap_even_when_the_derived_key_is_identical(monkeypatch):
+    """Isolates the associated-data binding: with the KDF replaced by one that always returns the same wrap key, a
+    header whose opslimit, memlimit or salt was edited (and is still above the floor) derives the SAME key, so only the
+    AD can reject it. Without the binding this test would unlock."""
+    fixed = bytearray(b"*" * 32)
+    monkeypatch.setattr(header.kdf, "derive_key", lambda passphrase, salt, params: bytearray(fixed))
+    created = header.create(PASS, FLOOR)
+    assert bytes(header.unlock(created.header, PASS)) == bytes(created.storage_key), "the unedited header opens"
+
+    def edited(mutate):
+        doc = json.loads(created.header.to_json())
+        mutate(doc)
+        return header.VaultHeader.from_json(json.dumps(doc))
+
+    for name, mutate in [
+        ("opslimit", lambda d: d["kdf"].update(opslimit=d["kdf"]["opslimit"] + 1)),
+        ("memlimit", lambda d: d["kdf"].update(memlimit=d["kdf"]["memlimit"] + 1024 * 1024)),
+        ("salt", lambda d: d["kdf"].update(salt=header._b64(os.urandom(16)))),
+    ]:
+        with pytest.raises(VaultError) as info:
+            header.unlock(edited(mutate), PASS)
+        assert info.value.code == "unlock_failed", name
+    # measured_ms is informational and deliberately not bound: editing it must not break an unlock
+    informational = edited(lambda d: d["kdf"].update(measured_ms=1))
+    assert bytes(header.unlock(informational, PASS)) == bytes(created.storage_key)
+
+
 def test_weakened_or_absurd_parameters_are_refused_on_read(vault):
     for mutate, code in [
         (lambda d: d["kdf"].update(memlimit=1024 * 1024), "kdf_params_too_weak"),

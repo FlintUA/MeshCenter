@@ -37,6 +37,8 @@ _PRINCIPAL_ID_PATTERN = re.compile(r"[0-9a-f]{16}")
 _KEYS_DIR_MODE = 0o700  # see ADR-0003: 0600 would remove the dir's execute bit
 
 
+from meshsrv.attachments.vault.codec import PLAIN as _PLAIN_CODEC  # noqa: E402
+
 class WorkspacePathError(ValueError):
     """Raised for an invalid principal_id or a path that would escape its
     parent directory - never silently corrected."""
@@ -91,6 +93,9 @@ class MCAWorkspaceManager:
     """
 
     def __init__(self, data_dir: "str | os.PathLike[str]") -> None:
+        # MCA-VAULT (ADR-0013): how the identity seed and the provider upload tokens in keys/ are written and read. The
+        # runtime replaces this with the vault codec; the default is the plain files this module always handled.
+        self.codec = _PLAIN_CODEC
         self.data_dir = Path(data_dir).expanduser().resolve()
         self.mca_dir = (self.data_dir / "mca").resolve()
         self.data_dir.mkdir(parents=True, exist_ok=True)

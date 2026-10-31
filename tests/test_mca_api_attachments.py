@@ -3896,3 +3896,23 @@ def test_a_refused_enable_for_memory_queues_nothing_and_keeps_no_passphrase(monk
     assert resp.status_code == 503 and resp.get_json()["error_code"] == "insufficient_memory"
     assert "64 MiB needed" in resp.get_json()["error"]
     assert facade.submitted == [] and rt._handoffs == {}
+
+
+def test_resume_of_an_interrupted_migration_is_refused_with_503_when_memory_is_short_and_the_status_says_why(monkeypatch, vault_dir):
+    workspace, _ = vault_dir
+    (workspace / "vault-migration.json").write_text('{"op": "enable"}', encoding="utf-8")
+    free = {"bytes": 4 * 1024 ** 3}
+    rt, _clock = _with_vault(monkeypatch, workspace, free_ram=lambda: free["bytes"])
+    facade = _FakeFacade()
+    c = _client(monkeypatch, facade)
+    assert rt.state() == "migrating"
+    rt.unlock(passphrase=_VAULT_PASS)
+    free["bytes"] = 50 * 1024 * 1024                                  # enough to have unlocked, not to resume an enable (64)
+    status = c.get("/api/mca/vault").get_json()
+    assert status["state"] == "migrating" and status["locked"] is True
+    assert status["migration_pending"] == {"op": "enable", "memory_needed_mib": 64, "memory_free_mib": 50, "memory_ok": False}
+    resp = c.post("/api/mca/vault/resume", json={})
+    assert resp.status_code == 503 and resp.get_json()["error_code"] == "insufficient_memory"
+    assert "64 MiB needed" in resp.get_json()["error"] and facade.submitted == [], "nothing was queued"
+    free["bytes"] = 4 * 1024 ** 3
+    assert c.post("/api/mca/vault/resume", json={}).status_code == 202

@@ -326,6 +326,41 @@ System, strength hint, disabled Roll back button, the "gallery not covered" note
   key, so the status reports `recovery_key_needs_reissue` until a new key is issued.
 - **Memory pre-check for enable, disable and resume (PR 3 review).** Before anything starts, the API and then the worker check MemAvailable against an estimate: 16 MiB working buffers + 16 MiB margin, plus the 32 MiB KDF floor for an enable (64 MiB / 32 MiB). Below it: HTTP 503 `insufficient_memory`, nothing queued, no backup started, no passphrase left waiting. A migration is never started on a node that could run out of memory in the middle of it.
 
+## Amendments made in PR 4a (data layer)
+
+PR 4 is split in three reviewable parts: 4a the data layer (this one), 4b receive and send under the vault, 4c preview,
+download, Save to Files, delete, cleanup, and the removal of the experimental flag.
+
+- **One codec** (`vault/codec.py`). `seal()` before a protected value is written, `open()` after it is read, for
+  `attachments.file_name` and `draft_comment` and the sender's `data_key`, `nonce_prefix`, `upload_token`, `revoke_token`
+  (and the retained `mca_sender_revoke_state.revoke_token`). The encoding is the migration's own (`to_text`/`from_text`
+  with the text/bytes tag), so a value written by the migration and one written by the service are the same thing.
+  `mca_receiver_state` is not written by any code path today; its columns stay in the migration's list.
+- **Where it hangs.** The MCA database connection is a `VaultConnection` (a `sqlite3.Connection` subclass that carries a
+  `codec`), and `MCAWorkspaceManager.codec` is the same object. A plain connection or workspace manager (every existing
+  test) gets `PLAIN`, a pass-through, so nothing changes where the vault is not involved. `VaultCodec` asks the vault
+  runtime on every call, so enable, disable, lock and unlock need no rewiring.
+- **Locked.** A secret cannot be opened (`vault_locked`) and nothing is written in plain form instead; a display value (the
+  file name in the transfer list) is read as `None`, the "locked" placeholder, never the ciphertext. A plain value that
+  merely starts with `v1:` is NOT plain once the vault is enabled (see the next item).
+- **Fail closed (PR 4a review).** With the vault enabled, an encrypted-looking value that does not authenticate for its
+  table, column and row (a flipped bit, a value copied from another row) raises `vault_corrupt`; a display value reads as
+  `(unreadable)`, never the raw `v1:` string; a plain secret file in `keys/` without its `.mcv` twin raises `vault_corrupt`
+  instead of being served. The System Log gets `table.column of <attachment id>` once per value, never the value. After
+  the migration no plain value can legitimately live in these places, and the migration and its resume read plain data
+  through their own code, not through this codec.
+- **Secret files.** The identity seed and the provider upload tokens in `keys/` are read and written through the codec
+  (`<name>.mcv`, the `keys` subkey, associated data `keys/<name>`, atomic temp file and rename, no plain twin left). A
+  plain file is still read when no encrypted one exists (an unmigrated or half-migrated workspace).
+- **Guard.** `test_only_the_known_modules_touch_the_encrypted_columns_and_each_uses_the_codec` fails when a new module
+  starts touching these tables, so "is this sealed?" is a review question. The leak test drives a real send through the
+  sender and searches the raw database file for the name, the comment, the keys and the tokens (mutation-checked).
+- **An interrupted migration with too little memory** stays locked with `migration_pending {op, memory_needed_mib,
+  memory_free_mib, memory_ok}` in the status; unlock and resume are refused with 503 `insufficient_memory`, nothing is
+  retried (only the user's resume request submits `vault_resume`), nothing is touched.
+- Not yet covered (4b and 4c): the content files themselves on receive and send, preview, download, Save to Files,
+  delete and cleanup of `.mcv` files. The experimental flag stays until 4c.
+
 ## Notes for later PRs (from the owner's PR 1 review)
 
 - **PR 2 (done here):** unlock is serialized with MCAttach work and refused with a clear message when free memory is

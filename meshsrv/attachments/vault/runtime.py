@@ -476,6 +476,16 @@ class VaultRuntime:
             self._postponed_logged = True
         self._log("INFO", "MCAttach locked", "%s postponed until the vault is unlocked" % what)
 
+    def _migration_pending(self) -> Dict[str, object]:
+        """An interrupted enable or disable: nothing resumes by itself (no retry loop, no partial access). The user unlocks
+        and then asks for the resume; this says which job is waiting and whether the memory for it is there right now."""
+        op = self._journal_op()
+        needed = self.migration_memory_needed(op)
+        available = self._free_ram()
+        return {"op": op, "memory_needed_mib": needed // (1024 * 1024),
+                "memory_free_mib": None if available is None else available // (1024 * 1024),
+                "memory_ok": available is None or available >= needed}
+
     def status(self) -> Dict[str, object]:
         state = self.state()
         out: Dict[str, object] = {"state": state, "enabled": state != STATE_DISABLED, "locked": state in (STATE_LOCKED, STATE_MIGRATING)}
@@ -496,6 +506,8 @@ class VaultRuntime:
             out["min_free_ram_mib"] = (params.memlimit + RAM_MARGIN_BYTES) // (1024 * 1024)
         except VaultError:
             out["kdf"] = None
+        if state == STATE_MIGRATING:
+            out["migration_pending"] = self._migration_pending()
         swap = self._swap_inspector()
         out["swap"] = {"disk_swap": bool(swap.get("disk_swap")), "known": bool(swap.get("known"))}
         with self._guard:

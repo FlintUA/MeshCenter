@@ -402,3 +402,77 @@ def test_the_worker_refuses_a_migration_for_memory_before_touching_anything(tmp_
         assert state.vault.take_handoff("tokm") is None, "the secret was consumed, not left waiting"
     finally:
         mca_runtime.reset_state_for_tests()
+
+
+def _tree(root):
+    import hashlib
+    return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(Path(root).rglob("*")) if p.is_file()}
+
+
+def test_an_interrupted_migration_that_cannot_resume_for_memory_stays_locked_with_a_clear_status(tmp_path, monkeypatch):
+    """After a restart in the middle of an enable on a node with too little free memory: locked, a status that says
+    "migration pending, not enough memory", no automatic retry, no partial access, nothing touched."""
+    monkeypatch.setenv("MESHCENTER_MCA_VAULT_EXPERIMENTAL", "1")
+    try:
+        state, paths = plain_state(tmp_path, "lowresume")
+        vault = state.vault
+        vault._free_ram = lambda: 4 * 1024 ** 3
+        env = state.service._vault_env()
+        counter = {"n": 0}
+
+        def boom(step):
+            counter["n"] += 1
+            if counter["n"] == 3:
+                raise RuntimeError("power cut")
+        env.after_step = boom
+        with pytest.raises(RuntimeError):
+            migration.enable(env, passphrase.normalize(PASS), params=kdf.KdfParams(kdf.MIN_OPSLIMIT, kdf.MIN_MEMLIMIT), make_backup_copy=False)
+        before = _tree(paths.root)
+
+        # the node restarted and is short of memory: 20 MiB free, an unlock needs 48 and an enable resume 64
+        vault._free_ram = lambda: 20 * 1024 * 1024
+        status = vault.status()
+        assert status["state"] == "migrating" and status["locked"] is True
+        assert status["migration_pending"] == {"op": "enable", "memory_needed_mib": 64, "memory_free_mib": 20, "memory_ok": False}
+        assert "PASS" not in repr(status) and PASS not in repr(status)
+
+        with pytest.raises(VaultError) as info:
+            vault.unlock(passphrase=PASS)
+        assert info.value.code == "insufficient_memory" and vault.state() == "migrating" and vault.is_locked()
+        assert state.service._vault_locked() is True, "no partial access: the service stays locked"
+
+        # enough for the unlock, not for the resume: the resume itself is refused before it starts
+        vault._free_ram = lambda: 50 * 1024 * 1024
+        vault.unlock(passphrase=PASS)
+        assert vault.status()["migration_pending"]["memory_ok"] is False
+        result = run_command(state, "vault_resume", {})
+        assert result.status == "failed" and result.error_code == "insufficient_memory"
+        assert vault.state() == "migrating" and (Path(paths.root) / "vault-migration.json").exists()
+        assert _tree(paths.root) == before, "the refused resume touched nothing"
+
+        # no retry loop: ticking the service does not queue or run a resume by itself
+        for _ in range(3):
+            state.service.tick()
+        assert vault.state() == "migrating" and _tree(paths.root) == before
+
+        # memory comes back: the user asks again and it finishes
+        vault._free_ram = lambda: 4 * 1024 ** 3
+        result = run_command(state, "vault_resume", {})
+        assert result.status == "succeeded" and vault.state() == "unlocked"
+        assert "migration_pending" not in vault.status()
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_only_the_users_resume_request_ever_starts_a_resume():
+    """The resume is a worker command; the one place that submits it is the API route a user triggers."""
+    root = Path(__file__).resolve().parent.parent
+    submitters = []
+    for base in ("meshsrv", "api"):
+        for path in (root / base).rglob("*.py"):
+            text = path.read_text(encoding="utf-8")
+            if '"vault_resume"' in text:
+                submitters.append(path.relative_to(root).as_posix())
+    assert sorted(submitters) == ["api/api_attachments.py", "meshsrv/attachments/commands.py", "meshsrv/attachments/service.py"]
+    service = (root / "api/api_attachments.py").read_text(encoding="utf-8")
+    assert service.count('_vault_job_response("vault_resume"') == 1

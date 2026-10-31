@@ -31,6 +31,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from meshsrv.attachments.vault import fields, header as header_mod, kdf, streamcrypt, swapcheck
 from meshsrv.attachments.vault.errors import VaultError
+from meshsrv.attachments.vault import codec as codec_mod
 from meshsrv.attachments.vault.keys import subkey
 
 JOURNAL_FILE = "vault-migration.json"
@@ -160,19 +161,8 @@ def _write_journal(env: Env, doc: dict) -> None:
     _atomic_write(journal_path(env), json.dumps(doc, indent=2, sort_keys=True))
 
 
-def _to_text(value) -> Optional[str]:
-    """A column value as the text that is encrypted: a one-character tag keeps text and bytes apart."""
-    if value is None:
-        return None
-    if isinstance(value, (bytes, bytearray, memoryview)):
-        return "b" + base64.b64encode(bytes(value)).decode("ascii")
-    return "s" + str(value)
-
-
-def _from_text(text: str):
-    if text.startswith("b"):
-        return base64.b64decode(text[1:])
-    return text[1:]
+_to_text = codec_mod.to_text        # the service (codec.py) and the migration share one encoding
+_from_text = codec_mod.from_text
 
 
 def _step(env: Env, name: str) -> None:

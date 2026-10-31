@@ -191,16 +191,9 @@ def create_principal(
     # non-theoretical bug, reproduced locally on ~1-in-9 random seeds. A
     # no-op on POSIX (this project's only real target), so unconditionally
     # OR-ing it in is always safe.
-    fd = os.open(
-        key_path,
-        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0),
-        _KEY_FILE_MODE,
-    )
-    try:
-        os.write(fd, bytes(signing_key))
-    finally:
-        os.close(fd)
-    os.chmod(key_path, _KEY_FILE_MODE)
+    # The codec writes the plain file this has always been (O_EXCL, O_BINARY, mode) or, with the vault enabled,
+    # `<name>.mcv` (MCA-VAULT PR 4a).
+    workspace_manager.codec.write_secret_file(key_path, bytes(signing_key), mode=_KEY_FILE_MODE, exclusive=True)
 
     conn.execute(
         """
@@ -262,9 +255,9 @@ def load_signing_key(workspace_manager: MCAWorkspaceManager, principal: MCAPrinc
     rather than silently signing with the wrong key."""
     paths = workspace_manager.paths(principal.principal_id)
     key_path = paths.keys / principal.private_key_file
-    if not key_path.exists():
+    seed = workspace_manager.codec.read_secret_file(key_path)
+    if seed is None:
         raise IdentityError(f"private key file missing for principal {principal.principal_id}: {key_path}")
-    seed = key_path.read_bytes()
     if len(seed) != 32:
         raise IdentityError(f"private key file {key_path} is not a 32-byte seed (got {len(seed)} bytes)")
     signing_key = SigningKey(seed)

@@ -6636,15 +6636,24 @@ body.media-lightbox-open {
 }
 
 @media (max-width: 700px) {
+    /* the picture sits at the top, just under the close button (no empty band above it), and its caption follows it
+       directly. The picture is capped to what is left once the caption and the arrow strip are reserved: both heights
+       are measured by media.js (--lb-caption-h, --lb-h), 56 px is the close button row, 72 px the arrow strip. */
     .media-lb-stage {
-        padding: 56px 8px 8px;
+        flex: 0 1 auto;
+        align-items: flex-start;
+        padding: 56px 8px 0;
     }
 
-    /* the arrows sit in the dark strip just above the caption (its height is measured by media.js), never on the picture or the file name */
+    .media-lb-img {
+        max-height: calc(var(--lb-h, 100vh) - 56px - var(--lb-caption-h, 120px) - 72px);
+    }
+
+    /* the arrows live in their own strip at the bottom edge: never on the picture, the file name or the action row */
     .media-lb-prev,
     .media-lb-next {
         top: auto;
-        bottom: calc(var(--lb-caption-h, 120px) + 8px);
+        bottom: 12px;
         width: 48px;
         height: 48px;
         transform: none;
@@ -6657,6 +6666,50 @@ body.media-lightbox-open {
     .media-lb-next {
         right: 12px;
     }
+
+    /* the file name over the action row; the three actions share the row equally (icon over label), so the row always
+       fits the width whatever the language and however long the name */
+    .media-lb-caption {
+        flex-direction: column;
+        flex-wrap: nowrap;
+        align-items: stretch;
+        gap: 8px;
+        padding: 8px 12px 0;
+    }
+
+    .media-lb-text strong {
+        overflow-wrap: anywhere;
+    }
+
+    .media-lb-actions {
+        width: 100%;
+        gap: 6px;
+    }
+
+    .media-lb-link {
+        flex: 1 1 0;
+        min-width: 0;
+        min-height: 52px;
+        padding: 6px 4px;
+        flex-direction: column;
+        justify-content: center;
+        gap: 2px;
+        font-size: 12px;
+        line-height: 1.15;
+        text-align: center;
+    }
+
+    .media-lb-link .media-ico {
+        width: 20px;
+        height: 20px;
+        margin: 0;
+    }
+
+    .media-lb-link span {
+        max-width: 100%;
+        overflow-wrap: anywhere;
+        hyphens: auto;
+    }
 }
 
 /* a phone on its side: the picture takes the whole screen, the caption lies over its bottom edge */
@@ -6664,6 +6717,8 @@ body.media-lightbox-open {
     .media-lb-stage {
         position: absolute;
         inset: 0;
+        flex: 1 1 auto;
+        align-items: center;
         padding: 0;
     }
 
@@ -6678,8 +6733,32 @@ body.media-lightbox-open {
         font-size: 12px;
     }
 
+    .media-lb-caption {
+        flex-direction: row;
+        align-items: center;
+        gap: 8px 12px;
+    }
+
+    .media-lb-actions {
+        width: auto;
+        flex: 0 0 auto;
+    }
+
+    /* on its side there is no room for labels: three icon buttons (the name stays as title and aria-label) */
     .media-lb-link {
+        flex: 0 0 auto;
+        width: 44px;
         min-height: 36px;
+        padding: 0;
+        flex-direction: row;
+    }
+
+    .media-lb-link span {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
     }
 
     .media-lb-prev,
@@ -6690,6 +6769,10 @@ body.media-lightbox-open {
         height: 44px;
         transform: translateY(-50%);
         background: rgba(0, 0, 0, 0.45);
+    }
+
+    .media-lb-img {
+        max-height: 100%;
     }
 
     .media-lb-close {

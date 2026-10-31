@@ -340,4 +340,38 @@ assert.ok(html.indexOf('id="cameraFullscreenBtn"') > html.indexOf('class="video-
     assert.equal(V.allSelected(new Set(), []), false, 'no visible picture: nothing is "all selected"');
 }
 
+
+// ---------------------------------------------------------------- G4 phone fixes: the two-line summary and the lightbox
+{
+    const media = read('media.js');
+    const css = read('style-part4.css');
+    // the summary of a phone: count on top, size under it, in one place for the list, the filtered list and the selection
+    assert.equal((media.match(/mediaTwoLineSummary\(/g) || []).length, 4, 'defined once, used for all three summaries');
+    assert.ok(!media.includes('media-sum-tiny') && !css.includes('media-sum-tiny'), 'the size is no longer dropped on a narrow phone');
+    assert.ok(/\.media-toolbar\.is-compact \.media-sum-short \{[^}]*flex-direction: column/.test(css), 'two lines');
+    assert.ok(/\.media-sum-sub \{[^}]*font-size: 10\.5px/.test(css), 'the size is the smaller line');
+
+    // the lightbox on a phone: the picture sits at the top under the close button, the action row always fits the width
+    const start = css.indexOf('@media (max-width: 700px) {\n    /* the picture sits at the top');
+    assert.ok(start > 0, 'the phone block of the lightbox exists');
+    const rest = css.slice(start);
+    const phoneBlock = rest.slice(0, rest.indexOf('/* a phone on its side'));
+    assert.ok(/\.media-lb-stage \{[^}]*align-items: flex-start[^}]*padding: 56px 8px 0/.test(phoneBlock), 'picture at the top, not centered');
+    assert.ok(/\.media-lb-stage \{[^}]*flex: 0 1 auto/.test(phoneBlock), 'the caption follows the picture');
+    assert.ok(/\.media-lb-img \{[^}]*max-height: calc\(var\(--lb-h, 100vh\) - 56px - var\(--lb-caption-h, 120px\) - 72px\)/.test(phoneBlock), 'the picture leaves room for the caption and the arrow strip');
+    assert.ok(/\.media-lb-link \{[^}]*flex: 1 1 0;[^}]*min-width: 0/.test(phoneBlock), 'the three actions share the row equally and may shrink');
+    assert.ok(/\.media-lb-link \{[^}]*flex-direction: column/.test(phoneBlock), 'icon over label');
+    assert.ok(/\.media-lb-next \{[^}]*bottom: 12px/.test(phoneBlock), 'the arrows are in their own strip at the bottom edge');
+    assert.ok(/\.media-lb-actions \{[^}]*width: 100%/.test(phoneBlock), 'the row spans the caption');
+    const landscape = css.slice(css.indexOf('/* a phone on its side'), css.indexOf('/* MCA-UX1'));
+    assert.ok(/\.media-lb-link span \{[^}]*clip: rect\(0 0 0 0\)/.test(landscape), 'on its side the actions are icons (the labels stay for screen readers)');
+    assert.ok(/\.media-lb-stage \{[^}]*align-items: center/.test(landscape), 'a phone on its side keeps the picture centered');
+    for (const key of ['send', 'delete']) {
+        assert.ok(new RegExp('data-lb="' + key + '" title=.*aria-label=').test(media), key + ' carries its name as title and aria-label');
+    }
+    assert.ok(/id="mediaLbDownload" download title=.*aria-label=/.test(media), 'download too');
+    assert.ok(media.includes("box.style.setProperty('--lb-h', box.clientHeight + 'px')"), 'the real (visible) height of the lightbox is measured, not 100vh');
+    assert.ok(media.includes('observer.observe(box)') && media.includes("'orientationchange'"), 'and re-measured on resize and rotation');
+}
+
 console.log('test_media_views.mjs: ok');

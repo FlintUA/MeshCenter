@@ -708,9 +708,9 @@ function mediaEnsureLightbox() {
         <div class="media-lb-caption">
             <div class="media-lb-text"><strong id="mediaLbName"></strong><span id="mediaLbMeta"></span><span id="mediaLbFacts"></span></div>
             <div class="media-lb-actions">
-                <button type="button" class="media-lb-link" data-lb="send">${mediaIcon('send')}<span>${mediaEscapeHtml(mediaT('media.send'))}</span></button>
-                <a class="media-lb-link" id="mediaLbDownload" download>${mediaIcon('download')}<span>${mediaEscapeHtml(mediaT('media.download'))}</span></a>
-                <button type="button" class="media-lb-link media-lb-danger" data-lb="delete">${mediaIcon('trash')}<span>${mediaEscapeHtml(mediaT('common.delete'))}</span></button>
+                <button type="button" class="media-lb-link" data-lb="send" title="${mediaEscapeHtml(mediaT('media.send'))}" aria-label="${mediaEscapeHtml(mediaT('media.send'))}">${mediaIcon('send')}<span>${mediaEscapeHtml(mediaT('media.send'))}</span></button>
+                <a class="media-lb-link" id="mediaLbDownload" download title="${mediaEscapeHtml(mediaT('media.download'))}" aria-label="${mediaEscapeHtml(mediaT('media.download'))}">${mediaIcon('download')}<span>${mediaEscapeHtml(mediaT('media.download'))}</span></a>
+                <button type="button" class="media-lb-link media-lb-danger" data-lb="delete" title="${mediaEscapeHtml(mediaT('common.delete'))}" aria-label="${mediaEscapeHtml(mediaT('common.delete'))}">${mediaIcon('trash')}<span>${mediaEscapeHtml(mediaT('common.delete'))}</span></button>
             </div>
         </div>`;
     box.addEventListener('click', (event) => {
@@ -740,11 +740,20 @@ function mediaEnsureLightbox() {
         else if (event.key === 'ArrowLeft') mediaStepLightbox(-1);
         else if (event.key === 'ArrowRight') mediaStepLightbox(1);
     });
-    // the arrows sit above the caption: its height (it wraps) goes to the CSS
+    // On a phone the picture is capped to what is left above its caption and the arrow strip: the caption's height (the
+    // file name wraps) and the lightbox's own height (the VISIBLE viewport on iOS, unlike 100vh) go to the CSS
     const caption = box.querySelector('.media-lb-caption');
-    const syncCaptionHeight = () => box.style.setProperty('--lb-caption-h', caption.offsetHeight + 'px');
-    if (typeof ResizeObserver === 'function') new ResizeObserver(syncCaptionHeight).observe(caption);
+    const syncCaptionHeight = () => {
+        box.style.setProperty('--lb-caption-h', caption.offsetHeight + 'px');
+        box.style.setProperty('--lb-h', box.clientHeight + 'px');
+    };
+    if (typeof ResizeObserver === 'function') {
+        const observer = new ResizeObserver(syncCaptionHeight);
+        observer.observe(caption);
+        observer.observe(box);
+    }
     window.addEventListener('resize', syncCaptionHeight);
+    window.addEventListener('orientationchange', syncCaptionHeight);
     document.body.appendChild(box);
     return box;
 }

@@ -6476,22 +6476,22 @@ body.media-lightbox-open {
         padding: 56px 8px 8px;
     }
 
-    /* the arrows sit on the picture, at its sides (they used to sit above the caption and covered the file name) */
+    /* the arrows sit in the dark strip just above the caption (its height is measured by media.js), never on the picture or the file name */
     .media-lb-prev,
     .media-lb-next {
-        top: 50%;
-        width: 44px;
-        height: 44px;
-        transform: translateY(-50%);
-        background: rgba(0, 0, 0, 0.45);
+        top: auto;
+        bottom: calc(var(--lb-caption-h, 120px) + 8px);
+        width: 48px;
+        height: 48px;
+        transform: none;
     }
 
     .media-lb-prev {
-        left: 6px;
+        left: 12px;
     }
 
     .media-lb-next {
-        right: 6px;
+        right: 12px;
     }
 }
 
@@ -6516,6 +6516,16 @@ body.media-lightbox-open {
 
     .media-lb-link {
         min-height: 36px;
+    }
+
+    .media-lb-prev,
+    .media-lb-next {
+        top: 50%;
+        bottom: auto;
+        width: 44px;
+        height: 44px;
+        transform: translateY(-50%);
+        background: rgba(0, 0, 0, 0.45);
     }
 
     .media-lb-close {

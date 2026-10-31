@@ -584,6 +584,11 @@ function mediaEnsureLightbox() {
         else if (event.key === 'ArrowLeft') mediaStepLightbox(-1);
         else if (event.key === 'ArrowRight') mediaStepLightbox(1);
     });
+    // the arrows sit above the caption: its height (it wraps) goes to the CSS
+    const caption = box.querySelector('.media-lb-caption');
+    const syncCaptionHeight = () => box.style.setProperty('--lb-caption-h', caption.offsetHeight + 'px');
+    if (typeof ResizeObserver === 'function') new ResizeObserver(syncCaptionHeight).observe(caption);
+    window.addEventListener('resize', syncCaptionHeight);
     document.body.appendChild(box);
     return box;
 }

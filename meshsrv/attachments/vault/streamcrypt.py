@@ -133,12 +133,23 @@ def encrypt_bytes(data: bytes, key: bytes, attachment_id: str) -> bytes:
     return out.getvalue()
 
 
-def encrypt_file(src_path: str, dst_path: str, key: bytes, attachment_id: str) -> int:
+def _create(path: str, mode: int):
+    """A new binary file opened for writing with an explicit mode (a leftover file with another mode is fixed too)."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), mode)
+    try:
+        os.chmod(path, mode)
+    except OSError:
+        pass
+    return os.fdopen(fd, "wb")
+
+
+def encrypt_file(src_path: str, dst_path: str, key: bytes, attachment_id: str, mode: int = 0o600) -> int:
     """Encrypt ``src_path`` to ``dst_path`` atomically: written to ``dst_path + '.part'``, fsynced, renamed. The
-    plain source is NOT removed here (the migration verifies first, then deletes). Returns the plaintext size."""
+    plain source is NOT removed here (the migration verifies first, then deletes). The file is created with ``mode``
+    (0600 unless the caller keeps the source's own mode), never with the umask's 0644. Returns the plaintext size."""
     part = dst_path + ".part"
     try:
-        with open(src_path, "rb") as src, open(part, "wb") as dst:
+        with open(src_path, "rb") as src, _create(part, mode) as dst:
             total = encrypt_stream(src, dst, key, attachment_id)
             dst.flush()
             os.fsync(dst.fileno())

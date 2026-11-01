@@ -585,6 +585,21 @@ def reset_state_for_tests() -> None:
         _test_connectivity_session_override = None
 
 
+def stop_for_shutdown(timeout: float = 5.0) -> bool:
+    """The process is exiting (gunicorn's worker_exit hook): tell the MCAttach worker to stop, so a tick that is about to start a
+    relay probe does not, and wait a bounded time for the tick in flight. Unlike reset_state_for_tests() this closes nothing and
+    clears nothing. Returns True when the worker stopped (or there was none). Never raises."""
+    try:
+        with _lock:
+            service = _state.service if _state is not None else None
+        if service is None:
+            return True
+        return bool(service.stop(timeout=timeout))
+    except Exception:  # noqa: BLE001 - a shutdown hook must never raise
+        logger.exception("stop_for_shutdown failed")
+        return False
+
+
 def handle_incoming_meshtastic_text(
     text: str,
     source_address: str,

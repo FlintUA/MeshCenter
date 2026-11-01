@@ -7243,3 +7243,153 @@ body.media-lightbox-open {
 .files-back-btn {
     display: none;
 }
+
+/* ===== MCAttach vault UI (static/vault-ui.js): dock chip, banners, the unlock dialog / bottom sheet, the System card ===== */
+.dock-vault-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 28px;
+    padding: 2px 10px;
+    border: 1px solid var(--mc-border, #c9d6e5);
+    border-radius: 999px;
+    background: var(--mc-surface, #fff);
+    color: var(--mc-text, #1f2f45);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.dock-vault-chip[hidden] { display: none; }
+.dock-vault-chip.is-locked, .dock-vault-chip.is-migrating {
+    border-color: var(--mc-warn, #e0a83a);
+    background: var(--mc-warn-soft, #fff7e6);
+    color: var(--mc-warn-text, #7a5a12);
+}
+.dock-vault-chip.is-unlocked { border-color: var(--mc-success, #1a7f37); }
+
+.files-vault-banner { padding: 0 10px; }
+.files-vault-banner:not([hidden]) { padding-top: 8px; }
+.vault-banner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    margin: 0 0 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--mc-warn, #e0a83a);
+    border-radius: 8px;
+    background: var(--mc-warn-soft, #fff7e6);
+    color: var(--mc-warn-text, #7a5a12);
+    font-size: 12px;
+    line-height: 1.4;
+    box-sizing: border-box;
+}
+.vault-banner.is-danger {
+    border-color: var(--mc-danger, #d64545);
+    background: var(--mc-danger-soft, #fdecec);
+    color: var(--mc-danger-text, #8a1f1f);
+}
+.vault-banner-text { flex: 1 1 220px; min-width: 0; overflow-wrap: anywhere; }
+.vault-banner-btn {
+    flex: 0 0 auto;
+    min-height: 32px;
+    padding: 4px 12px;
+    border: 1px solid currentColor;
+    border-radius: 8px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}
+.files-vault-notice { margin: 0 0 8px; }
+.files-vault-notice[hidden] { display: none; }
+
+.vault-card-state, .vault-progress { margin: 0 0 8px; font-size: 13px; }
+.vault-card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.vault-note.is-warn { color: var(--mc-warn-text, #7a5a12); }
+
+.mc-vault-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100002;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    background: rgba(10, 18, 30, 0.55);
+}
+.mc-vault-sheet {
+    width: min(480px, 100%);
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    box-sizing: border-box;
+    padding: 16px 18px 18px;
+    border: 1px solid var(--mc-border, #d8e1ec);
+    border-radius: 14px;
+    background: var(--mc-card-bg, #fff);
+    color: var(--mc-text, #1f2f45);
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+}
+.mc-vault-sheet.is-danger { border-top: 3px solid var(--mc-danger, #d64545); }
+.mc-vault-sheet-grip { display: none; }
+.mc-vault-sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.mc-vault-sheet-head h3 { margin: 0; font-size: 16px; }
+.mc-vault-x { min-width: 36px; min-height: 36px; border: 0; background: transparent; color: inherit; font-size: 22px; cursor: pointer; }
+.mc-vault-text { margin: 0 0 10px; font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
+.mc-vault-list { margin: 0 0 12px; padding-left: 18px; font-size: 12px; line-height: 1.45; }
+.mc-vault-list li { margin: 0 0 6px; }
+.mc-vault-list li.is-warn { color: var(--mc-warn-text, #7a5a12); }
+.mc-vault-field { display: block; margin: 0 0 10px; }
+.mc-vault-field span { display: block; margin: 0 0 4px; font-size: 12px; font-weight: 600; color: var(--mc-muted, #5c7290); }
+.mc-vault-field input {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 40px;
+    padding: 8px 10px;
+    border: 1px solid var(--mc-border, #c9d6e5);
+    border-radius: 8px;
+    background: var(--mc-surface, #fff);
+    color: var(--mc-text, #1f2f45);
+    font: inherit;
+    font-size: 16px;
+}
+.mc-vault-check { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 10px; font-size: 12px; line-height: 1.4; }
+.mc-vault-check input { margin-top: 2px; flex: 0 0 auto; }
+.mc-vault-strength { min-height: 18px; margin: -4px 0 10px; font-size: 12px; color: var(--mc-muted, #5c7290); }
+.mc-vault-strength.is-bad, .mc-vault-strength.is-weak { color: var(--mc-danger, #d64545); }
+.mc-vault-strength.is-fair { color: var(--mc-warn-text, #7a5a12); }
+.mc-vault-strength.is-good { color: var(--mc-success, #1a7f37); }
+.mc-vault-error { margin: 0 0 10px; padding: 8px 10px; border-radius: 8px; background: var(--mc-danger-soft, #fdecec); color: var(--mc-danger-text, #8a1f1f); font-size: 12px; }
+.mc-vault-error[hidden] { display: none; }
+.mc-vault-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.mc-vault-spacer { flex: 1 1 auto; }
+.mc-vault-link { border: 0; background: transparent; color: var(--mc-accent, #2f7bb5); font: inherit; font-size: 12px; text-decoration: underline; cursor: pointer; padding: 8px 0; }
+.mc-vault-key { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin: 0 0 10px; font-family: ui-monospace, Consolas, monospace; font-size: 14px; letter-spacing: 1px; }
+.mc-vault-key span { padding: 4px 6px; border: 1px solid var(--mc-border, #c9d6e5); border-radius: 6px; text-align: center; user-select: all; }
+.mc-vault-bar { height: 8px; margin: 6px 0 10px; border-radius: 4px; background: var(--mc-border, #d8e1ec); overflow: hidden; }
+.mc-vault-bar-fill { width: 4%; height: 100%; background: var(--mc-accent, #2f7bb5); transition: width 0.4s; }
+
+html[data-theme="dark"] .mc-vault-sheet { background: var(--mc-card-bg, #1b2736); color: var(--mc-text, #e6edf6); border-color: var(--mc-border, #33445a); }
+html[data-theme="dark"] .mc-vault-field input { background: var(--mc-surface, #121c29); color: var(--mc-text, #e6edf6); border-color: var(--mc-border, #33445a); }
+html[data-theme="dark"] .vault-banner { background: rgba(224, 168, 58, 0.14); color: #f0d48a; }
+html[data-theme="dark"] .vault-banner.is-danger, html[data-theme="dark"] .mc-vault-error { background: rgba(214, 69, 69, 0.16); color: #f4b4b4; }
+html[data-theme="dark"] .dock-vault-chip { background: var(--mc-surface, #1b2736); color: var(--mc-text, #e6edf6); }
+html[data-theme="dark"] .dock-vault-chip.is-locked, html[data-theme="dark"] .dock-vault-chip.is-migrating { background: rgba(224, 168, 58, 0.14); color: #f0d48a; }
+
+/* a phone: the dialog is a bottom sheet (thumb reach, no centred box over the keyboard), the chip is just the icon */
+@media (max-width: 768px) {
+    .mc-vault-overlay { align-items: flex-end; padding: 0; }
+    .mc-vault-sheet {
+        width: 100%;
+        max-height: 92vh;
+        border-radius: 16px 16px 0 0;
+        padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+    }
+    .mc-vault-sheet-grip { display: block; width: 40px; height: 4px; margin: 0 auto 10px; border-radius: 2px; background: var(--mc-border, #c9d6e5); }
+    .mc-vault-actions .btn, .vault-banner-btn { min-height: 44px; }
+    .mc-vault-key { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .dock-vault-chip { min-width: 36px; min-height: 36px; padding: 2px 8px; justify-content: center; }
+    .dock-vault-label { display: none; }
+}

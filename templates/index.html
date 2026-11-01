@@ -7,14 +7,14 @@
     <meta name="csrf-token" content="{{ csrf_token }}">
     <meta name="runtime-capabilities" content="{{ runtime_capabilities }}">
     <!-- csrf.js must stay the FIRST script, in <head>, without defer/async: it wraps window.fetch, so no API request can run before the wrapper exists (tests/test_csrf_script_order.py) -->
-    <script src="{{ url_for('static', filename='csrf.js') }}?v=20261101-ux5c"></script>
+    <script src="{{ url_for('static', filename='csrf.js') }}?v=20261101-vault6"></script>
     <title>MeshCenter</title>
     <!-- MeshCenter build: stage2c7-4-unified-popovers-20260725 -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part1.css') }}?v=20261101-ux5c">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part2.css') }}?v=20261101-ux5c">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part3.css') }}?v=20261101-ux5c">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part4.css') }}?v=20261101-ux5c">
-    <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=20261101-ux5c">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part1.css') }}?v=20261101-vault6">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part2.css') }}?v=20261101-vault6">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part3.css') }}?v=20261101-vault6">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part4.css') }}?v=20261101-vault6">
+    <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=20261101-vault6">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 </head>
@@ -749,6 +749,7 @@
                     <div class="files-layout" id="filesLayout" data-view="list">
                         <section class="files-archive" id="filesArchivePane" aria-label="Files transfers">
                             <div class="files-pane-title">🗂️ <span data-i18n="files.archive_title">Transfers</span></div>
+                            <div class="files-vault-banner" id="filesVaultBanner" data-vault-banner hidden></div>
                             <div class="files-filter-row">
                                 <label class="files-filter-label" for="filesFilterSelect">
                                     <span data-i18n="files.filter_label">Filter</span>
@@ -1003,6 +1004,7 @@
                                 <div id="updatesRollbackSection" class="updates-rollback-section" style="display:none;">
                                     <div class="updates-rollback-heading" data-i18n="system.updates_rollback_heading">Rollback</div>
                                     <button type="button" class="btn btn-xs btn-danger updates-rollback-btn" id="updatesRollbackBtn" onclick="rollbackUpdate(this)" style="display:none;" data-i18n="system.updates_rollback">Roll back</button>
+                                    <div class="settings-card-note" id="updatesRollbackVaultNote" style="display:none;" data-i18n="system.updates_rollback_vault_blocked">Disable the vault first</div>
                                     <details id="updatesRollbackRow" class="updates-rollback-details" style="display:none;">
                                         <summary data-i18n="system.updates_manual_command">Manual command</summary>
                                         <div class="updates-rollback-row">
@@ -1295,6 +1297,10 @@
                     </div>
 
                     <div class="settings-grid">
+                        <div class="settings-card settings-card--vault" id="vaultCard">
+                            <div class="settings-card-title">🔐 <span data-i18n="vault.card_title">MCAttach vault</span></div>
+                            <div id="vaultCardBody"></div>
+                        </div>
                         <div class="settings-card settings-card--general">
                             <div class="settings-card-title">🌍 <span data-i18n="settings.general">General</span></div>
                             <div class="settings-option settings-option--select">
@@ -2088,6 +2094,7 @@
                 <span class="dock-workspace-chevron" aria-hidden="true">▴</span>
             </button>
             <span class="dock-workspace-label" id="dockWorkspaceLabel">Chats</span>
+            <button type="button" class="dock-vault-chip" id="dockVaultChip" hidden></button>
 
             <div class="workspace-popover" id="workspacePopover" role="menu" aria-label="Workspace settings" hidden>
                 <div class="workspace-popover-header">
@@ -2501,9 +2508,9 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="/static/chart.umd.min.js"></script>
-<script src="/static/i18n.js?v=20261101-ux5c"></script>
-<script src="/static/format-size.js?v=20261101-ux5c"></script>
-<script src="/static/runtime-caps.js?v=20261101-ux5c"></script>
+<script src="/static/i18n.js?v=20261101-vault6"></script>
+<script src="/static/format-size.js?v=20261101-vault6"></script>
+<script src="/static/runtime-caps.js?v=20261101-vault6"></script>
 <script>
     // Server already resolved "auto" (stored ui.language, or an
     // Accept-Language guess) to a concrete locale for <html lang> above -
@@ -2513,25 +2520,26 @@
     // weather.js is untouched until those call I18N.t()/plural() directly.
     window.I18N.init("{{ ui_language }}").then(() => window.I18N.applyStaticDom());
 </script>
-<script src="{{ url_for('static', filename='app-dialog.js') }}?v=20261101-ux5c"></script>
+<script src="{{ url_for('static', filename='app-dialog.js') }}?v=20261101-vault6"></script>
 <script src="{{ url_for('static', filename='chat-emoji.js') }}?v=20260821-domain-split"></script>
 <script src="{{ url_for('static', filename='chat-photo.js') }}?v=20260821-domain-split"></script>
-<script src="{{ url_for('static', filename='chat-telemetry.js') }}?v=20261101-ux5c"></script>
-<script src="{{ url_for('static', filename='chat-camera.js') }}?v=20261101-ux5c"></script>
-<script src="{{ url_for('static', filename='camera-ip.js') }}?v=20261101-ux5c"></script>
-<script src="{{ url_for('static', filename='camera-ip-controls.js') }}?v=20261101-ux5c"></script>
-<script src="{{ url_for('static', filename='camera-sources.js') }}?v=20261101-ux5c"></script>
-<script src="{{ url_for('static', filename='camera-diag.js') }}?v=20261101-ux5c"></script>
-<script src="{{ url_for('static', filename='chat-map.js') }}?v=20261101-ux5c"></script>
-<script src="{{ url_for('static', filename='chat-updates-security.js') }}?v=20261101-ux5c"></script>
-<script src="{{ url_for('static', filename='targets.js') }}?v=20261101-ux5c"></script>
-<script src="/static/recipient-picker.js?v=20261101-ux5c"></script>
-<script src="/static/files.js?v=20261101-ux5c"></script>
-<script src="{{ url_for('static', filename='chat-views.js') }}?v=20261101-ux5c"></script>
-<script src="/static/chat.js?v=20261101-ux5c"></script>
-<script src="/static/mobile-layout.js?v=20261101-ux5c"></script>
-<script src="/static/media-views.js?v=20261101-ux5c"></script>
-<script src="/static/media.js?v=20261101-ux5c"></script>
+<script src="{{ url_for('static', filename='chat-telemetry.js') }}?v=20261101-vault6"></script>
+<script src="{{ url_for('static', filename='chat-camera.js') }}?v=20261101-vault6"></script>
+<script src="{{ url_for('static', filename='camera-ip.js') }}?v=20261101-vault6"></script>
+<script src="{{ url_for('static', filename='camera-ip-controls.js') }}?v=20261101-vault6"></script>
+<script src="{{ url_for('static', filename='camera-sources.js') }}?v=20261101-vault6"></script>
+<script src="{{ url_for('static', filename='camera-diag.js') }}?v=20261101-vault6"></script>
+<script src="{{ url_for('static', filename='chat-map.js') }}?v=20261101-vault6"></script>
+<script src="{{ url_for('static', filename='chat-updates-security.js') }}?v=20261101-vault6"></script>
+<script src="{{ url_for('static', filename='targets.js') }}?v=20261101-vault6"></script>
+<script src="/static/recipient-picker.js?v=20261101-vault6"></script>
+<script src="/static/files.js?v=20261101-vault6"></script>
+<script src="/static/vault-ui.js?v=20261101-vault6"></script>
+<script src="{{ url_for('static', filename='chat-views.js') }}?v=20261101-vault6"></script>
+<script src="/static/chat.js?v=20261101-vault6"></script>
+<script src="/static/mobile-layout.js?v=20261101-vault6"></script>
+<script src="/static/media-views.js?v=20261101-vault6"></script>
+<script src="/static/media.js?v=20261101-vault6"></script>
 <script src="/static/weather.js?v=20260815-weather-provider"></script>
 
 <div class="modal-overlay" id="wifiConnectModal" style="display:none;" onclick="closeWifiConnectModal()">

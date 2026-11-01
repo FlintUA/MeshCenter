@@ -4859,3 +4859,93 @@ def test_dropped_waiting_frames_are_reported_once_per_tick_with_the_count(
     assert vault.dropped == [7], "one report with the count"
     svc.tick()
     assert vault.dropped == [7], "reported once, not on every tick"
+
+
+# ---- shutdown: the tick stops cleanly (found in the MCA-VAULT round on .104) -------------------------------------------------
+
+def test_the_worker_starts_no_relay_probe_once_it_was_asked_to_stop(service, connectivity_monitor, monkeypatch):
+    import threading
+    probes = []
+    monkeypatch.setattr(connectivity_monitor, "refresh", lambda *a, **k: probes.append(1))
+    service._stop_event.set()
+    service._thread = threading.current_thread()          # as if this were the worker thread
+    assert service.tick() == 0 and probes == [], "no probe, but the tick itself still completes (it publishes the snapshot)"
+    service._thread = None
+
+
+def test_a_hand_driven_tick_after_stop_still_runs(service, connectivity_monitor, monkeypatch):
+    """Tests (and the startup pass) stop the worker and then call tick() themselves: that is not the worker stopping."""
+    probes = []
+    monkeypatch.setattr(connectivity_monitor, "refresh", lambda *a, **k: probes.append(1))
+    assert service.stop() is True
+    service.tick()
+    assert probes == [1]
+
+
+@pytest.mark.parametrize("initial", [True, False])
+def test_the_interpreter_shutdown_race_ends_the_worker_without_an_error_line(service, caplog, initial):
+    """SIGTERM during a tick: concurrent.futures raises 'cannot schedule new futures after interpreter shutdown' from the relay
+    probe pool. That is the end of the worker, not a failed tick: one INFO line at most, no ERROR, the thread ends."""
+    import logging
+    calls = []
+
+    def tick():
+        calls.append(1)
+        if initial or len(calls) > 1:
+            raise RuntimeError("cannot schedule new futures after interpreter shutdown")
+        return 0
+
+    service.tick = tick
+    service._tick_seconds = 0.01
+    with caplog.at_level(logging.DEBUG, logger="meshsrv.attachments.service"):
+        service.start()
+        service._thread.join(5)
+    assert not service._thread.is_alive(), "the worker ended by itself"
+    assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
+
+
+def test_a_real_tick_failure_is_still_logged_as_an_error(service, caplog):
+    import logging
+    calls = []
+
+    def tick():
+        calls.append(1)
+        if len(calls) == 2:
+            service._stop_event.set()           # end the loop after the failing tick
+        raise ValueError("a genuine bug")
+
+    service.tick = tick
+    service._tick_seconds = 0.01
+    with caplog.at_level(logging.ERROR, logger="meshsrv.attachments.service"):
+        service.start()
+        service._thread.join(5)
+    assert any("tick failed" in r.getMessage() or "initial tick failed" in r.getMessage() for r in caplog.records)
+
+
+def test_gunicorn_stops_the_mca_worker_before_the_interpreter_exits():
+    from pathlib import Path
+    conf = (Path(__file__).resolve().parent.parent / "gunicorn.conf.py").read_text(encoding="utf-8")
+    assert "def worker_exit(server, worker):" in conf and "mca_runtime.stop_for_shutdown()" in conf
+
+
+def test_stop_for_shutdown_stops_the_service_and_never_raises(monkeypatch):
+    from meshsrv.attachments import mca_runtime
+    monkeypatch.setattr(mca_runtime, "_state", None)
+    assert mca_runtime.stop_for_shutdown() is True, "nothing running"
+
+    class _Service:
+        stopped = None
+
+        def stop(self, *, timeout=None):
+            _Service.stopped = timeout
+            return True
+
+    monkeypatch.setattr(mca_runtime, "_state", type("S", (), {"service": _Service(), "conn": None})())
+    assert mca_runtime.stop_for_shutdown(timeout=2.0) is True and _Service.stopped == 2.0
+
+    class _Bad:
+        def stop(self, **k):
+            raise RuntimeError("x")
+
+    monkeypatch.setattr(mca_runtime, "_state", type("S", (), {"service": _Bad(), "conn": None})())
+    assert mca_runtime.stop_for_shutdown() is False

@@ -956,7 +956,7 @@ def register_attachments_routes(app, handle_errors):
             backups = vault_migration.list_backups(data_dir)
             # the plain backup is a liability: this is derived from the folder, so a restart cannot lose the warning
             body["plain_backups"] = backups
-            body["plain_backup_warning"] = bool(backups)
+            body["plain_backup_warning"] = any(not b.get("encrypted") for b in backups)
         if body.get("state") == "disabled":
             body["notices"] = ["flash_remanence", "gallery_not_covered", "downgrade_refused"]
         body["ok"] = True
@@ -2422,15 +2422,25 @@ def register_attachments_routes(app, handle_errors):
         involved, because the caller is the server's own scheduler."""
         import io
 
+        from werkzeug.datastructures import FileStorage
+        from werkzeug.test import stream_encode_multipart
+
         metadata = {
             "client_request_id": "sched-" + uuid.uuid4().hex,
             "recipient": {"source_address": contact_id},
         }
+        # The multipart body is built in memory. The test builder's own default spools a body over 500 KB to a temporary
+        # file, which would put the picture on disk in plaintext even with the vault on (MCA-VAULT PR 5).
+        body, length, boundary = stream_encode_multipart(
+            {"metadata": json.dumps(metadata), "file": FileStorage(stream=io.BytesIO(data), filename=file_name, content_type="image/jpeg")},
+            use_tempfile=False,
+        )
         with app.test_request_context(
             "/api/attachments",
             method="POST",
-            data={"metadata": json.dumps(metadata), "file": (io.BytesIO(data), file_name, "image/jpeg")},
-            content_type="multipart/form-data",
+            input_stream=body,
+            content_length=length,
+            content_type="multipart/form-data; boundary=" + boundary,
         ):
             response = app.make_response(create_attachment())
         if response.status_code == 202:

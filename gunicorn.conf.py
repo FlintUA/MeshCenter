@@ -73,3 +73,13 @@ timeout = 120
 # `logging` module (used by e.g. meshsrv/attachments/service.py, unlike
 # server.py's print() calls) is configured separately in wsgi.py, since
 # that module is what gunicorn actually imports before running anything.
+
+
+def worker_exit(server, worker):
+    """The worker process is leaving (SIGTERM from systemd or Docker): stop the MCAttach worker first, so a tick in flight does not
+    start a relay probe on a thread pool that the exiting interpreter refuses (it logged an ERROR and held the stop for ~10 s)."""
+    try:
+        from meshsrv.attachments import mca_runtime
+        mca_runtime.stop_for_shutdown()
+    except Exception:
+        pass

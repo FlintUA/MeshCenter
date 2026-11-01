@@ -313,7 +313,10 @@ def list_backups(data_dir) -> List[dict]:
         return out
     for entry in entries:
         if entry.is_dir() and entry.name.startswith(BACKUP_PREFIX):
-            out.append({"name": entry.name, "bytes": _tree_bytes(entry), "created_at": entry.stat().st_mtime})
+            # the backup a disable makes holds the ENCRYPTED workspace (it carries vault.json): it needs the passphrase, so it
+            # is not the readable liability a plain backup is
+            encrypted = (entry / "workspace" / HEADER_FILE).is_file()
+            out.append({"name": entry.name, "bytes": _tree_bytes(entry), "created_at": entry.stat().st_mtime, "encrypted": encrypted})
     return out
 
 
@@ -339,6 +342,15 @@ class EnableResult:
     summary: dict
 
 
+def _mode_of(path) -> int:
+    """The permission bits a converted file keeps (a secret stays 0600, a spool file stays 0600): the umask's 0644
+    would loosen them. Falls back to 0600 when the source cannot be read."""
+    try:
+        return os.stat(str(path)).st_mode & 0o777
+    except OSError:
+        return 0o600
+
+
 def _encrypt_item(env: Env, item: Item, files_key: bytes, keys_key: bytes) -> None:
     key = keys_key if item.category == "keys" else files_key
     if item.dest.exists():
@@ -349,7 +361,7 @@ def _encrypt_item(env: Env, item: Item, files_key: bytes, keys_key: bytes) -> No
             return
         os.remove(str(item.dest))
     digest, size = _sha256_file(item.src)
-    streamcrypt.encrypt_file(str(item.src), str(item.dest), key, item.ad_id)
+    streamcrypt.encrypt_file(str(item.src), str(item.dest), key, item.ad_id, mode=_mode_of(item.src))
     _step(env, "encrypted")
     if not streamcrypt.verify_file(str(item.dest), key, item.ad_id, digest, size):
         os.remove(str(item.dest))
@@ -363,7 +375,7 @@ def _write_index(env: Env, files_key: bytes, index: Dict[str, Dict[str, str]]) -
     path = Path(env.paths.files) / ORPHAN_INDEX
     blob = json.dumps(index, sort_keys=True).encode("utf-8")
     part = str(path) + PART
-    with open(part, "wb") as handle:
+    with streamcrypt._create(part, 0o600) as handle:
         handle.write(streamcrypt.encrypt_bytes(blob, files_key, ORPHAN_INDEX_AD))
         handle.flush()
         os.fsync(handle.fileno())
@@ -587,7 +599,7 @@ def _decrypt_item(env: Env, src: Path, dest: Path, key: bytes, ad_id: str, expec
     part = str(dest) + PART
     digest, size = hashlib.sha256(), 0
     try:
-        with open(str(src), "rb") as handle, open(part, "wb") as out:
+        with open(str(src), "rb") as handle, streamcrypt._create(part, _mode_of(src)) as out:
             for chunk in streamcrypt.decrypt_iter(handle, key, ad_id):
                 out.write(chunk)
                 digest.update(chunk)

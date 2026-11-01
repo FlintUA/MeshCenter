@@ -361,6 +361,12 @@ class _CommittedHandoff:
     canonical_hash: str
 
 
+def _interpreter_is_shutting_down(error: BaseException) -> bool:
+    """concurrent.futures refuses new work once the interpreter is exiting: 'cannot schedule new futures after interpreter
+    shutdown' (or '... after shutdown' for a pool that was shut down)."""
+    return isinstance(error, RuntimeError) and "cannot schedule new futures" in str(error)
+
+
 class AttachmentsService:
     """See module docstring. Construct once per workspace with its
     already-constructed collaborators (this module builds none of them
@@ -631,7 +637,9 @@ class AttachmentsService:
         # (5s) had already elapsed.
         try:
             self.tick()
-        except Exception:  # noqa: BLE001 - the worker thread must never die from one bad tick
+        except Exception as error:  # noqa: BLE001 - the worker thread must never die from one bad tick
+            if self._stop_event.is_set() or _interpreter_is_shutting_down(error):
+                return
             logger.exception("AttachmentsService initial tick failed")
         while not self._stop_event.is_set():
             self._wake_event.wait(timeout=self._tick_seconds)
@@ -640,10 +648,20 @@ class AttachmentsService:
                 break
             try:
                 self.tick()
-            except Exception:  # noqa: BLE001 - the worker thread must never die from one bad tick
+            except Exception as error:  # noqa: BLE001 - the worker thread must never die from one bad tick
+                if self._stop_event.is_set() or _interpreter_is_shutting_down(error):
+                    # The process is going away (SIGTERM mid-tick): the thread pool of a relay probe refuses new work.
+                    # That is the end of the worker, not a failed tick.
+                    logger.info("AttachmentsService worker stopping: the process is shutting down")
+                    break
                 logger.exception("AttachmentsService tick failed")
 
     # ---- one tick ---------------------------------------------------------
+
+    def _worker_is_stopping(self) -> bool:
+        """True only on the worker thread, once it was asked to stop. A synchronous tick() from a test or from startup (any other
+        thread) is never cut short: tests stop the worker and then drive ticks by hand."""
+        return self._stop_event.is_set() and threading.current_thread() is self._thread
 
     def tick(self) -> int:
         """One reconciliation pass: drain queued inbound events, then up
@@ -704,7 +722,10 @@ class AttachmentsService:
         # inbound-event dispatch above - everything after this is either
         # a cheap DB scan or a run_step() call, which does its own I/O
         # only when a row is actually due.
-        self._connectivity.refresh()
+        # the relay probes run on a thread pool: never start one once the worker was asked to stop (the rest of the tick,
+        # including the snapshot publish that a just-started service owes its readiness, still runs)
+        if not self._worker_is_stopping():
+            self._connectivity.refresh()
 
         processed = 0
         # locked: no row is advanced (download, upload, expiry frames all need the seed or the storage key)
@@ -3052,6 +3073,12 @@ class AttachmentsService:
         tick advanced. Never raises: the publisher's own `refresh()` retains
         the last-known-good snapshot on any build failure, so a failed
         publish cannot kill the worker tick."""
+        # MCA-VAULT: a snapshot built (or changed) while the vault was locked has no names. Rebuild once after the unlock.
+        if self._vault_locked():
+            self._snapshot_names_withheld = True
+        elif getattr(self, "_snapshot_names_withheld", False):
+            self._snapshot_publisher.request_rebuild()
+            self._snapshot_names_withheld = False
         self._snapshot_publisher.refresh(
             self._conn,
             workspace_id=self._principal.workspace_id,

@@ -395,3 +395,73 @@ def test_only_the_known_modules_touch_the_encrypted_columns_and_each_uses_the_co
             using_codec.append(relative)
     assert set(touching) <= {"receiver.py", "sender.py", "service.py", "snapshots.py"}, touching
     assert {"receiver.py", "sender.py", "service.py", "snapshots.py"} <= set(using_codec)
+
+
+# ---- MCA-VAULT PR 5 (the real round on .104): the list shows the names again after an unlock ---------------------------------
+
+def _insert_named_attachment(world, attachment_id="d4" * 16):
+    sealed = world.conn.codec.seal("attachments", "file_name", attachment_id, NAME)
+    world.conn.execute(
+        "INSERT INTO attachments (id, workspace_id, transfer_id, direction, principal_id, state, file_name, mime_type, plain_size, "
+        "plain_sha256, saved_path, draft_comment, created_at, hard_expires_at, download_grace_seconds) "
+        "VALUES (?, 'local', ?, 'received', ?, 'AVAILABLE', ?, 'text/plain', 1, NULL, NULL, NULL, 1, 2, 3600)",
+        (attachment_id, "00" * 16, world.principal.principal_id, sealed))
+    world.conn.commit()
+    return attachment_id
+
+
+def _publish(world, publisher):
+    snap = publisher.refresh(world.conn, workspace_id="local", workspace_manager=world.wsm, principal_id=world.principal.principal_id)
+    return [r.file_name for r in snap.records]
+
+
+def test_a_snapshot_built_while_locked_gets_its_names_back_only_through_a_rebuild(world):
+    """The incremental refresh only touches rows that changed, so after a restart (snapshot built locked) and an unlock the
+    list kept the placeholders until each row changed. request_rebuild() is what the service asks for after the unlock."""
+    from meshsrv.attachments.snapshots import AttachmentsSnapshotPublisher
+    unlock(world)
+    _insert_named_attachment(world)
+    world.vault.lock()
+    publisher = AttachmentsSnapshotPublisher()
+    assert _publish(world, publisher) == [None]
+    unlock(world)
+    assert _publish(world, publisher) == [None], "nothing is dirty: the incremental refresh keeps the withheld name"
+    publisher.request_rebuild()
+    assert _publish(world, publisher) == [NAME]
+
+
+def test_the_service_rebuilds_the_snapshot_once_after_an_unlock():
+    from meshsrv.attachments import service as service_mod
+
+    class _Vault:
+        locked = True
+
+        def is_locked(self):
+            return self.locked
+
+    class _Publisher:
+        def __init__(self):
+            self.calls = []
+
+        def request_rebuild(self):
+            self.calls.append("rebuild")
+
+        def refresh(self, *a, **k):
+            self.calls.append("refresh")
+
+    svc = object.__new__(service_mod.AttachmentsService)
+    svc._vault, svc._snapshot_publisher = _Vault(), _Publisher()
+    svc._conn = svc._workspace_manager = None
+    svc._principal = type("P", (), {"workspace_id": "w", "principal_id": "p"})()
+    svc._refresh_snapshot()
+    svc._refresh_snapshot()
+    assert svc._snapshot_publisher.calls == ["refresh", "refresh"], "locked: nothing to rebuild yet"
+    svc._vault.locked = False
+    svc._refresh_snapshot()
+    svc._refresh_snapshot()
+    assert svc._snapshot_publisher.calls == ["refresh", "refresh", "rebuild", "refresh", "refresh"], "one rebuild, then back to the incremental refresh"
+    svc._vault.locked = True
+    svc._refresh_snapshot()
+    svc._vault.locked = False
+    svc._refresh_snapshot()
+    assert svc._snapshot_publisher.calls[-3:] == ["refresh", "rebuild", "refresh"], "and again after the next lock and unlock"

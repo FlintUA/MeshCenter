@@ -2862,6 +2862,74 @@ async function test_fx1b_a_held_offer_says_why_and_the_files_settings_are_saved(
     console.log('PASS: test_fx1b_a_held_offer_says_why_and_the_files_settings_are_saved');
 }
 
+async function test_fx1b_the_list_sorts_newest_first_by_default_and_by_choice() {
+    const now = Math.floor(Date.now() / 1000);
+    const day = 86400;
+    const list = [
+        attachment('mid', 'received', 'AVAILABLE', { file_name: 'beta.pdf', plain_size: 500, created_at: now - 60 }),
+        attachment('new', 'sent', 'SENT', { file_name: 'Zulu.txt', plain_size: 100, created_at: now - 30 }),
+        attachment('old', 'received', 'AVAILABLE', { file_name: 'alpha.pdf', plain_size: 9000, created_at: now - 3 * day }),
+        attachment('mid2', 'sent', 'DOWNLOADED', { file_name: 'beta.pdf', plain_size: 500, created_at: now - day - 60 }),
+    ];
+    const posts = [];
+    const sandbox = sandboxWithViews(listRoutes(list, async (url) => (url === '/api/settings' ? json(200, { ok: true, settings: { files: {} } }) : undefined)));
+    activate(sandbox);
+    await waitFor(() => listHtml(sandbox).includes('filesCard-old'));
+    const order = () => [...listHtml(sandbox).matchAll(/id="filesCard-([a-z0-9]+)"/g)].map((m) => m[1]);
+    const days = () => (listHtml(sandbox).match(/<div class="files-day">([^<]*)<\/div>/g) || []).map((x) => x.replace(/<[^>]+>/g, ''));
+    const postsOf = () => sandbox._fetchLog.filter((e) => e.url === '/api/settings' && e.options && e.options.method === 'POST').map((e) => JSON.parse(e.options.body));
+    const choose = (sort) => dispatch(sandbox, { 'data-files-action': 'sort', 'data-sort': sort });
+
+    assert.deepEqual(order(), ['new', 'mid', 'mid2', 'old'], 'newest first by default');
+    assert.equal(days()[0], 'Today', 'with date groups');
+
+    choose('oldest');
+    assert.deepEqual(order(), ['old', 'mid2', 'mid', 'new'], 'oldest first');
+    assert.equal(days().length > 0 && days()[days().length - 1], 'Today', 'the date groups follow the order (today is last)');
+
+    choose('name');
+    assert.deepEqual(order(), ['old', 'mid', 'mid2', 'new'], 'by name, case-insensitive, ties newest first');
+    assert.equal(days().length, 0, 'no date groups when sorting by name');
+
+    choose('size');
+    assert.deepEqual(order(), ['old', 'mid', 'mid2', 'new'], 'by size, largest first, ties newest first');
+    assert.equal(days().length, 0, 'no date groups when sorting by size');
+
+    // remembered per kind of device (the sandbox is a desktop)
+    await waitFor(() => postsOf().length === 3);
+    assert.deepEqual(postsOf().map((b) => b.files), [{ sort_desktop: 'oldest' }, { sort_desktop: 'name' }, { sort_desktop: 'size' }],
+        'each choice is saved, for a desktop under its own key only');
+    choose('bogus');
+    assert.equal(postsOf().length, 3, 'an unknown sort is ignored and not saved');
+    assert.deepEqual(order(), ['old', 'mid', 'mid2', 'new']);
+
+    // the menu marks the active choice
+    assert.equal(sandbox.window.MeshCenterFiles.currentSort(), 'size');
+    console.log('PASS: test_fx1b_the_list_sorts_newest_first_by_default_and_by_choice');
+}
+
+async function test_fx1b_a_conversation_is_newest_first_too_and_the_saved_sort_is_restored() {
+    const now = Math.floor(Date.now() / 1000);
+    const list = [
+        attachment('c1', 'received', 'AVAILABLE', { created_at: now - 7200, counterparty_contact_id: '!22222222' }),
+        attachment('c2', 'sent', 'SENT', { created_at: now - 60, counterparty_contact_id: '!22222222' }),
+    ];
+    const sandbox = sandboxWithViews(listRoutes(list));
+    sandbox.appSettings = { files: { sort_desktop: 'oldest', sort_phone: 'name' } };
+    sandbox.window.MeshCenterTargets = null;
+    activate(sandbox);
+    await waitFor(() => listHtml(sandbox).includes('filesCard-c2'));
+    assert.equal(sandbox.window.MeshCenterFiles.currentSort(), 'oldest', 'the saved desktop sort is restored');
+
+    const fresh = sandboxWithViews(listRoutes(list));
+    activate(fresh);
+    await waitFor(() => listHtml(fresh).includes('filesCard-c2'));
+    assert.equal(fresh.window.MeshCenterFiles.currentSort(), 'newest', 'newest first when nothing was saved');
+    const html = listHtml(fresh);
+    assert.ok(html.indexOf('filesCard-c2') < html.indexOf('filesCard-c1'), 'a conversation lists the newest first as well');
+    console.log('PASS: test_fx1b_a_conversation_is_newest_first_too_and_the_saved_sort_is_restored');
+}
+
 // ---- MCA-UX2: Accept needs no second confirmation, Reject asks once -----------------------------------------------
 
 function consentRoutes() {
@@ -2990,10 +3058,12 @@ async function main() {
     await test_fx1_waiting_card_says_how_long_the_link_stays_valid();
     await test_fx1_phone_toolbar_search_more_menu_and_card_expansion();
     await test_fx1b_a_held_offer_says_why_and_the_files_settings_are_saved();
+    await test_fx1b_the_list_sorts_newest_first_by_default_and_by_choice();
+    await test_fx1b_a_conversation_is_newest_first_too_and_the_saved_sort_is_restored();
     // MCA-UX2
     await test_accept_and_download_sends_at_once_without_a_confirm_dialog();
     await test_reject_asks_once_with_a_danger_dialog_and_cancel_sends_nothing();
-    console.log('All files UI behavior tests passed (70 scenarios).');
+    console.log('All files UI behavior tests passed (72 scenarios).');
 }
 
 main()

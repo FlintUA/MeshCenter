@@ -696,7 +696,12 @@
     },
     "cleanup_confirm": "Einschalten",
     "settings_save_failed": "Die Einstellung konnte nicht gespeichert werden",
-    "err_empty_file": "Diese Datei ist leer"
+    "err_empty_file": "Diese Datei ist leer",
+    "sort_label": "Sortieren nach",
+    "sort_newest": "Neueste zuerst",
+    "sort_oldest": "Älteste zuerst",
+    "sort_name": "Name",
+    "sort_size": "Größe, größte zuerst"
   },
   "about": {
     "tab_overview": "Übersicht",

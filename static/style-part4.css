@@ -7244,6 +7244,14 @@ html[data-theme="dark"] .dock-vault-chip.is-locked, html[data-theme="dark"] .doc
     font-size: 13px;
     cursor: pointer;
 }
+.files-sort { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--mc-muted, #5c7290); margin-left: auto; }
+.files-sort select { min-height: 36px; padding: 4px 8px; border: 1px solid var(--mc-border, #c9d6e5); border-radius: 8px; background: var(--mc-surface, #fff); color: var(--mc-text, #1f2f45); font: inherit; font-size: 13px; }
+.files-sort + .files-select-btn { margin-left: 0; }
+.files-more-heading { padding: 8px 12px 2px; margin-top: 4px; border-top: 1px solid var(--mc-border, #d8e1ec); font-size: 12px; color: var(--mc-muted, #5c7290); }
+.files-sort-item { display: flex; align-items: center; gap: 8px; }
+.files-sort-tick { display: inline-block; width: 1em; text-align: center; color: var(--mc-accent, #1769d2); }
+.files-sort-item[aria-checked="true"] .files-sort-tick::before { content: "\2713"; }
+.files-sort-item[aria-checked="true"] { font-weight: 700; }
 .files-select-btn[aria-pressed="true"] { background: var(--mc-primary-soft, #e3efff); border-color: var(--mc-accent, #1769d2); color: var(--mc-accent, #1769d2); }
 
 .files-bulkbar {

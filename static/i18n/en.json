@@ -696,7 +696,12 @@
     },
     "cleanup_confirm": "Turn on",
     "settings_save_failed": "Could not save the setting",
-    "err_empty_file": "This file is empty"
+    "err_empty_file": "This file is empty",
+    "sort_label": "Sort by",
+    "sort_newest": "Newest first",
+    "sort_oldest": "Oldest first",
+    "sort_name": "Name",
+    "sort_size": "Size, largest first"
   },
   "about": {
     "tab_overview": "Overview",

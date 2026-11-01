@@ -696,7 +696,12 @@
     },
     "cleanup_confirm": "Включить",
     "settings_save_failed": "Не удалось сохранить настройку",
-    "err_empty_file": "Этот файл пустой"
+    "err_empty_file": "Этот файл пустой",
+    "sort_label": "Сортировка",
+    "sort_newest": "Сначала новые",
+    "sort_oldest": "Сначала старые",
+    "sort_name": "По имени",
+    "sort_size": "По размеру, большие сначала"
   },
   "about": {
     "tab_overview": "Обзор",

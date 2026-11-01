@@ -696,7 +696,12 @@
     },
     "cleanup_confirm": "Увімкнути",
     "settings_save_failed": "Не вдалося зберегти налаштування",
-    "err_empty_file": "Цей файл порожній"
+    "err_empty_file": "Цей файл порожній",
+    "sort_label": "Сортування",
+    "sort_newest": "Спочатку нові",
+    "sort_oldest": "Спочатку старі",
+    "sort_name": "За назвою",
+    "sort_size": "За розміром, великі спочатку"
   },
   "about": {
     "tab_overview": "Огляд",

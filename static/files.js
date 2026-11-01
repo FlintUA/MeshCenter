@@ -223,6 +223,7 @@
         openMore: {},             // id -> true: the "More details" of this card is open (survives a poll re-render)
         openComment: {},          // id -> true: the full comment is shown
         openCard: {},             // id -> true: the phone card is expanded (actions and details shown)
+        sorts: { desktop: 'newest', phone: 'newest' },   // FX1: the remembered sort, per kind of device (settings.files.sort_*)
         searchOpen: false,        // phone: the search field replaces the toolbar
         moreOpen: false,          // phone: the more menu is open
         moreExtra: {},            // id -> timeline / deliveries html fetched when "More details" was first opened
@@ -906,7 +907,70 @@
         try { return new Date(epochSeconds * 1000).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; }
     }
 
-    // newest first, or oldest first like a messenger when one contact is selected
+    // ---- sorting (FX1 Phase B): newest first by default, everywhere (also with one contact selected) -----------------------
+    var SORTS = ['newest', 'oldest', 'name', 'size'];
+
+    function sortKey() { return isPhone() ? 'phone' : 'desktop'; }
+    function currentSort() { var s = state.sorts[sortKey()]; return SORTS.indexOf(s) !== -1 ? s : 'newest'; }
+
+    function nameOf(a) { return a.locked ? '' : String(a.file_name || '').toLowerCase(); }
+
+    function sortAttachments(list, sort) {
+        var copy = list.slice();
+        var byTime = function (a, b) { return (b.created_at || 0) - (a.created_at || 0); };
+        copy.sort(function (a, b) {
+            if (sort === 'oldest') return (a.created_at || 0) - (b.created_at || 0);
+            if (sort === 'name') {
+                var an = nameOf(a), bn = nameOf(b);
+                if (an !== bn) return an < bn ? -1 : 1;
+                return byTime(a, b);
+            }
+            if (sort === 'size') {
+                var diff = (b.plain_size || 0) - (a.plain_size || 0);
+                return diff !== 0 ? diff : byTime(a, b);
+            }
+            return byTime(a, b);
+        });
+        return copy;
+    }
+
+    // date groups follow the order for newest / oldest; for name and size there are none (one list, no headers)
+    function groupItems(list, sort) {
+        if (sort === 'name' || sort === 'size') return [{ key: 0, label: '', items: sortAttachments(list, sort) }];
+        return groupByDay(list, sort === 'oldest');
+    }
+
+    function readSortFromSettings() {
+        var f = (typeof appSettings !== 'undefined' && appSettings && appSettings.files) ? appSettings.files : {};
+        ['desktop', 'phone'].forEach(function (kind) {
+            var v = f['sort_' + kind];
+            if (SORTS.indexOf(v) !== -1) state.sorts[kind] = v;
+        });
+    }
+
+    function renderSortControls() {
+        var sort = currentSort();
+        var select = getEl('filesSortSelect');
+        if (select && select.value !== sort) select.value = sort;
+        var items = document.querySelectorAll ? document.querySelectorAll('.files-sort-item') : [];
+        for (var i = 0; i < items.length; i++) {
+            items[i].setAttribute('aria-checked', items[i].getAttribute('data-sort') === sort ? 'true' : 'false');
+        }
+    }
+
+    function setSort(sort) {
+        if (SORTS.indexOf(sort) === -1) return;
+        var kind = sortKey();
+        state.sorts[kind] = sort;
+        renderTransfers();
+        var body = { files: {} };
+        body.files['sort_' + kind] = sort;
+        api('/api/settings', { method: 'POST', body: JSON.stringify(body) }).then(function (r) {
+            if (r.status === 200 && r.data && r.data.ok && typeof appSettings !== 'undefined') appSettings = r.data.settings;
+        }).catch(function () { /* the choice stays for this session; the next change saves again */ });
+    }
+
+    // the list is already in the order the sort asks for (`ascending` only picks the direction of the day groups)
     function groupByDay(list, ascending) {
         var sorted = list.slice().sort(function (a, b) { return ascending ? a.created_at - b.created_at : b.created_at - a.created_at; });
         var groups = [];
@@ -1116,21 +1180,20 @@
             renderBulkBar();
             return;
         }
-        var html = groupByDay(items, chat).map(function (g) {
-            return '<div class="files-day">' + esc(g.label) + '</div>' + g.items.map(cardHtml).join('');
+        var html = groupItems(items, currentSort()).map(function (g) {
+            return (g.label ? '<div class="files-day">' + esc(g.label) + '</div>' : '') + g.items.map(cardHtml).join('');
         }).join('');
         // a poll must not throw away the scroll position the user is looking at
         var top = list.scrollTop;
         list.innerHTML = html;
-        if (chat && state.chatScrolledFor !== state.counterparty) {
+        // newest first everywhere now (the messenger layout too), so a conversation opens at the top, not the bottom
+        if (state.chatScrolledFor !== state.counterparty) {
             state.chatScrolledFor = state.counterparty;
-            list.scrollTop = list.scrollHeight;
-        } else if (!chat) {
-            state.chatScrolledFor = '';
-            list.scrollTop = top;
+            list.scrollTop = 0;
         } else {
             list.scrollTop = top;
         }
+        renderSortControls();
         renderBulkBar();
         if (state.focusId) { var f = state.focusId; state.focusId = ''; focusCard(f); }
     }
@@ -1964,6 +2027,7 @@
         if (action === 'relay-wizard') { openRelayWizard(); return; }
         if (action === 'refresh') { state.moreOpen = false; renderToolbar(); refresh(); return; }
         if (action === 'segment') { setSegment(modal.getAttribute('data-segment')); return; }
+        if (action === 'sort') { state.moreOpen = false; renderToolbar(); setSort(modal.getAttribute('data-sort')); return; }
         if (action === 'select-mode') { state.moreOpen = false; setSelectMode(!state.selectMode); return; }
         if (action === 'search-open') { state.moreOpen = false; setSearchOpen(true); return; }
         if (action === 'search-close') { setSearchOpen(false); return; }
@@ -2071,6 +2135,7 @@
     function onDocumentChange(e) {
         var target = e.target;
         if (target && target.getAttribute && target.getAttribute('data-files-setting')) { onFilesSettingChange(target); return; }
+        if (target && target.id === 'filesSortSelect') { setSort(target.value); return; }
         if (target && target.getAttribute && target.getAttribute('data-files-check')) { toggleChecked(target.getAttribute('data-files-check'), Boolean(target.checked)); return; }
         if (!target || !target.id) return;
         if (target.id === 'filesSendExpiry') { renderSendCustomTtl(); renderSendSubmit(); refreshSendReadiness(); return; }
@@ -2131,6 +2196,7 @@
         state.epoch++;
         state.active = true;
         state.segment = readSegment();
+        readSortFromSettings();
         state.visible = !(typeof document !== 'undefined' && document.hidden);
         // PR 4 Finding 1: subscribe to the shared target store once, so the
         // counterparty filter always mirrors the store's selection (node clicks
@@ -4073,6 +4139,7 @@
         isExecutableName: isExecutableName,
         setSegment: setSegment,
         syncSettings: syncFilesSettings,
+        currentSort: currentSort,
         activate: activate,
         deactivate: deactivate,
         refresh: refresh,

@@ -361,6 +361,8 @@
                 return { status: 0, data: { ok: false, error: String((err && err.message) || err), error_code: 'network_error' } };
             }
         ).then(function (data) {
+            // the vault locked while the page was open (or the page is older than the lock): let the chip and banners catch up
+            if (resp && resp.status === 423 && data && data.error_code === 'vault_locked' && typeof window !== 'undefined' && window.MCVault) window.MCVault.noteLocked();
             return { status: resp ? resp.status : 0, data: data || { ok: false, error: 'HTTP error', error_code: 'http_error' } };
         });
     }
@@ -893,7 +895,7 @@
                     '<span class="files-transfer-icon">' + mimeIcon(a.mime_type) + '</span>' +
                     '<span class="files-transfer-dir" title="' + esc(dirLabel) + '">' + dir + '</span>' +
                     '<span class="files-transfer-main">' +
-                        '<span class="files-transfer-name">' + esc(a.file_name || t('files.encrypted_file', 'Encrypted file')) + '</span>' +
+                        '<span class="files-transfer-name">' + (a.locked ? '🔒 ' + esc(t('vault.locked_name', 'Locked')) : esc(a.file_name || t('files.encrypted_file', 'Encrypted file'))) + '</span>' +
                         '<span class="files-transfer-sub">' + contactLabel + '</span>' +
                     '</span>' +
                     '<span class="files-transfer-meta">' +
@@ -1359,6 +1361,19 @@
     // rendered in the always-visible Normal block, through the SAME
     // plain-language reason mapping (filesErrorCode()) used for every other
     // error surface in this module (toasts, the archive "errors" filter).
+    // The vault is locked: the name and comment are not available, nothing can be opened or accepted. Only the facts that are
+    // not secret (direction, size) and the way out.
+    function lockedDetailMarkup(a) {
+        return '<div class="files-detail-head"><div class="files-detail-name">🔒 ' + esc(t('vault.locked_name', 'Locked')) + '</div></div>' +
+            '<div class="files-detail-info" role="status">' + esc(t('vault.locked_detail', 'MCAttach is locked. Unlock it to see the name and open this file.')) + '</div>' +
+            '<div class="files-detail-actions"><button type="button" class="btn btn-sm" data-vault-action="unlock">' + esc(t('vault.unlock', 'Unlock')) + '</button></div>' +
+            '<div class="files-detail-table">' +
+            '<div class="files-detail-row"><span class="files-detail-label">' + esc(t('files.detail_direction', 'Direction')) + '</span><span class="files-detail-value">' +
+                esc(a.direction === 'sent' ? t('files.sent', 'Sent') : t('files.received', 'Received')) + '</span></div>' +
+            '<div class="files-detail-row"><span class="files-detail-label">' + esc(t('files.detail_size', 'Size')) + '</span><span class="files-detail-value">' + esc(fmtBytes(a.plain_size)) + '</span></div>' +
+            '</div>';
+    }
+
     function detailMarkup(a, timeline) {
         var contact = contactForAttachment(a);
         var recipientLabel = contact ? (contact.name || contact.contact_id) : (a.counterparty_contact_id || '-');
@@ -1366,6 +1381,7 @@
         var providerLabel = provider ? (provider.display_name || provider.origin || a.provider_id) : (a.provider_id || '-');
         var route = t('files.detail_direct', 'Direct');
         var deliveries = (Array.isArray(a.deliveries) && a.deliveries.length) ? a.deliveries : [];
+        if (a.locked) return lockedDetailMarkup(a);
         var actions = detailActions(a);
 
         var basicRows = [
@@ -2222,6 +2238,7 @@
                         '<button type="button" class="files-modal-close" data-files-action="modal-close" aria-label="' + esc(t('files.dialog_close', 'Close dialog')) + '">×</button>' +
                     '</div>' +
                     '<div class="files-modal-body">' +
+                        '<div class="files-vault-notice" id="filesSendVaultNotice" data-vault-notice hidden></div>' +
                         '<div class="files-send-status" id="filesSendStatus" aria-live="polite"></div>' +
                         '<div class="files-field">' +
                             '<span class="files-field-label">' + esc(t('files.send_recipient', 'Recipient')) + '</span>' +
@@ -3877,7 +3894,11 @@
             document.addEventListener('input', onDocumentInput);
             document.addEventListener('change', onDocumentChange);
             document.addEventListener('visibilitychange', onVisibilityChange);
-            if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('popstate', onPopState);
+            if (typeof window !== 'undefined' && window.addEventListener) {
+                window.addEventListener('popstate', onPopState);
+                // the vault was unlocked or locked: the list shows names again / a placeholder
+                window.addEventListener('mcvault:change', function () { if (state.active) refresh(); });
+            }
             // 'toggle' does not bubble, so only the capture phase reaches a
             // delegated listener for the dynamically-rendered <details> below.
             document.addEventListener('toggle', onDetailToggle, true);

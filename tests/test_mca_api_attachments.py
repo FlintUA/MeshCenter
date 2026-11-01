@@ -4193,3 +4193,89 @@ def test_a_download_abort_is_visible_on_a_real_connection(monkeypatch, vault_dir
     finally:
         server.shutdown()
         thread.join(5)
+
+
+# ---- MCA-VAULT PR 5: the G3 scheduled picture send under the vault ---------------------------------------------------------
+
+def _g3_deps(client, rt, now):
+    """The real in-process create hook of the schedule engine, a fake camera and radio. The picture of the gallery itself is
+    plaintext by design (the gallery is not covered); what matters here is that the transfer made from it is not."""
+    from _vault_spy import MARKER
+    from meshsrv import schedule_picture
+    hooks = client.application.extensions["mc_attachment_scheduler"]
+    taken, logs, notes = [], [], []
+
+    def create(contact_id, file_name, data):
+        ok, code = hooks["create"](contact_id, file_name, data)
+        if not ok:
+            raise schedule_picture.PictureError(code or "send_failed")
+
+    deps = schedule_picture.PictureDeps(
+        clock=lambda: now[0],
+        radio_available=lambda: True,
+        vault_locked=lambda: rt.is_locked(),
+        source_exists=lambda sid: True,
+        contact_trusted=hooks["contact_trusted"],
+        take_picture=lambda sid: taken.append(sid) or {"filename": "2026/11/01/MC_cam1.jpg", "display_name": "MC_cam1.jpg"},
+        prepare_copy=lambda filename, size_key: _JPEG + MARKER * 25000,
+        create_transfer=create,
+        log=lambda *a: logs.append(a),
+        notify=lambda *a: notes.append(a),
+    )
+    return deps, taken, logs, notes
+
+
+_G3_RULE = {"id": "r1", "label": "Garden", "enabled": True, "trigger": {"mode": "interval", "interval_minutes": 15}}
+
+
+def _g3_action():
+    return {"type": "send_camera_picture", "params": {"source_id": "cam1", "contact_id": "!aaaaaaaa"}}
+
+
+def test_g3_scheduled_send_with_the_vault_enabled_leaves_no_plaintext(monkeypatch, vault_dir, tmp_path):
+    from _vault_spy import MARKER, no_plaintext_writes
+    from meshsrv import schedule_picture
+    rt, facade, codec_obj = _vault_facade(monkeypatch, vault_dir, tmp_path)
+    facade.recipient_snapshot = lambda: _trusted_recipient_snapshot("!aaaaaaaa")
+    facade._providers = {PROVIDER_ID: _provider(max_ttl_seconds=30 * 86400)}     # the schedule uses the default 3 day TTL
+    c = _client(monkeypatch, facade)
+    deps, taken, logs, notes = _g3_deps(c, rt, [1_000_000.0])
+    with no_plaintext_writes():
+        result = schedule_picture.run(_g3_action(), dict(_G3_RULE), deps)
+    assert result == "sent", (logs, notes)
+    assert taken == ["cam1"] and notes == []
+    spool = tmp_path / "spool"
+    names = sorted(p.name for p in spool.iterdir())
+    attachment_id = facade.submitted[0].payload["attachment_id"]
+    assert names == [attachment_id + ".mcv"], names
+    assert MARKER not in (spool / names[0]).read_bytes()
+    with codec_obj.open_content(spool / names[0], attachment_id) as handle:
+        assert MARKER in handle.read(), "the content is in the vault, readable with the key"
+    # no file name in the log line of a scheduled send
+    assert all("MC_cam1" not in str(entry) for entry in logs)
+
+
+def test_g3_scheduled_send_with_a_locked_vault_skips_with_a_log_line_and_does_not_disable_the_schedule(monkeypatch, vault_dir, tmp_path):
+    from meshsrv import schedule_picture
+    rt, facade, codec_obj = _vault_facade(monkeypatch, vault_dir, tmp_path)
+    facade.recipient_snapshot = lambda: _trusted_recipient_snapshot("!aaaaaaaa")
+    facade._providers = {PROVIDER_ID: _provider(max_ttl_seconds=30 * 86400)}     # the schedule uses the default 3 day TTL
+    c = _client(monkeypatch, facade)
+    now = [1_000_000.0]
+    deps, taken, logs, notes = _g3_deps(c, rt, now)
+    rule, action = dict(_G3_RULE), _g3_action()
+    rt.lock()
+    assert schedule_picture.run(action, rule, deps) == "vault_locked"
+    assert taken == [], "no picture is taken for a send that cannot happen"
+    assert facade.submitted == [] and not (tmp_path / "spool").exists() or list((tmp_path / "spool").iterdir()) == []
+    assert len(logs) == 1 and logs[0][0] == "WARNING" and "vault_locked" in logs[0][2]
+    assert len(notes) == 1 and notes[0][0] == "warning" and "vault_locked" in notes[0][2]
+    assert rule["enabled"] is True, "the schedule is skipped for this run, never disabled"
+    # it counts as a refused attempt for the 15 minute rule ...
+    now[0] += 60
+    assert schedule_picture.run(action, rule, deps) == "too_soon"
+    # ... and the next run after unlocking works again, with nothing queued in between
+    rt.unlock(passphrase=_VAULT_PASS)
+    now[0] += schedule_picture.MIN_INTERVAL_S
+    assert schedule_picture.run(action, rule, deps) == "sent"
+    assert len(facade.submitted) == 1

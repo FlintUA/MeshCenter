@@ -410,8 +410,35 @@ download, Save to Files, delete, cleanup, and the removal of the experimental fl
   reads the display name with `open_display`, which is `None` while locked, instead of failing on a name it never uses).
 - **The experimental flag is removed** (`MESHCENTER_MCA_VAULT_EXPERIMENTAL`, `enable_allowed`, `vault_not_ready`): with 4a, 4b
   and this part, every consumer of the encrypted layout exists. The status no longer carries `enable_allowed`.
-- Still to come: the UI (PR 5), Docker and documentation (PR 6), and the live round on the real workspace (with the owner's go and
+- Still to come: Docker and documentation (PR 6), and the live round on the real workspace (with the owner's go and
   the full backup and exact restore rule).
+
+## Amendments made in PR 5 (the UI)
+
+- **One module, `static/vault-ui.js` (`window.MCVault`).** The lock chip in the dock (hidden while there is no vault; locked,
+  unlocked or "vault job"), the banner above the Files transfer list (`data-vault-banner`), the unlock dialog (a centred dialog on a
+  desktop, a bottom sheet at 768 px and below), the vault card in System (enable wizard, Lock now, change passphrase, new recovery
+  key, disable) and the "locked" notice inside the Send dialog (`data-vault-notice`). The status comes from `GET /api/mca/vault`
+  (polled every 20 s, every 1.5 s while a job runs; a 423 `vault_locked` from any Files request re-reads it at once).
+- **Secrets stay in the field and the one request.** A passphrase or recovery key is never kept in a variable that outlives the
+  handler, never written to browser storage, a URL or a toast, and the input is cleared as soon as the request is sent. The
+  dialogs are not the UI1 `MCDialog` (it has no password field); the destructive confirmations that need no secret (Lock now,
+  delete the plain backup) are `appConfirm` dialogs.
+- **Enable wizard:** notices (flash storage, gallery not covered, downgrade refused, forgetting is permanent, disk swap when the
+  status says so) with the strength hint and the "I understand the flash notice" box, then the job with its progress, then the
+  recovery key shown once with two random groups typed back, then the unlock test (the wizard locks the vault and asks for the
+  passphrase again), then the offer to delete the plain backup now. A recovery key that was not confirmed (the page was closed)
+  stays available from the card ("Show the recovery key") because the status carries `recovery_key_pending`.
+- **The plain backup warning cannot be dismissed.** It is drawn from `plain_backups` on every status read, in Files and on the
+  vault card, with its folder, size and age and a Delete button (a danger `appConfirm`).
+- **While locked** the Files list shows "Locked" instead of a name and the detail shows the facts that are not secret (direction,
+  size) with an Unlock button. Roll back in the Updates card is shown disabled with "Disable the vault first" while
+  `rollback_blocked_reason` is `vault_enabled`.
+- **A leak found and closed (G3):** the in-process create the schedule engine uses (`_scheduled_create`) built its multipart body
+  with the Werkzeug test builder, which spools a body over 500 KB to a temporary file. With the vault on, a scheduled picture over
+  that size (the "original" resize) therefore reached the disk in plaintext. The body is now encoded in memory
+  (`stream_encode_multipart(use_tempfile=False)`). `tests/test_mca_api_attachments.py` pins it (a 750 KB picture, the plaintext-write spy) and the locked case
+  (one log line, one notification, nothing taken or queued, the rule stays enabled and the run counts for the 15 minute rule).
 
 ## Notes for later PRs (from the owner's PR 1 review)
 

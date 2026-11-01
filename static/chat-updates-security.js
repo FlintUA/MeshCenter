@@ -92,10 +92,18 @@ function renderUpdatesLastUpdate(status) {
         }
     }
 
-    const command = status.rollback_available ? updatesRollbackCommand(status) : '';
-    if (rollbackBtn) rollbackBtn.style.display = status.rollback_available ? 'inline-block' : 'none';
+    const command = status.rollback_available && status.rollback_blocked_reason !== 'vault_enabled' ? updatesRollbackCommand(status) : '';
+    // MCA-VAULT: while a vault exists older code can not read it, so Roll back is shown disabled with the reason
+    const vaultBlocked = status.rollback_blocked_reason === 'vault_enabled';
+    if (rollbackBtn) {
+        rollbackBtn.style.display = (status.rollback_available || vaultBlocked) ? 'inline-block' : 'none';
+        rollbackBtn.disabled = vaultBlocked;
+        rollbackBtn.title = vaultBlocked ? window.I18N.t('system.updates_rollback_vault_blocked') : '';
+    }
+    const vaultNote = document.getElementById('updatesRollbackVaultNote');
+    if (vaultNote) vaultNote.style.display = vaultBlocked ? 'block' : 'none';
     // UX1: Roll back and its manual command live in their own section, the command collapsed in a <details>
-    if (rollbackSection) rollbackSection.style.display = status.rollback_available ? 'block' : 'none';
+    if (rollbackSection) rollbackSection.style.display = (status.rollback_available || vaultBlocked) ? 'block' : 'none';
     if (rollbackRow) rollbackRow.style.display = command ? 'block' : 'none';
     if (commandEl) commandEl.textContent = command;
 }

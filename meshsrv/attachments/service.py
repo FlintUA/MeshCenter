@@ -2924,6 +2924,7 @@ class AttachmentsService:
                 base_url=probe.origin,
                 service_public_key=probe.service_public_key,
                 max_ciphertext_bytes=max_ciphertext_bytes,
+                relay_max_ciphertext_bytes=probe.max_ciphertext_bytes,    # a lower policy value is the user's own limit
                 upload_allowed=upload_allowed,
                 download_allowed=download_allowed,
                 kind=kind,

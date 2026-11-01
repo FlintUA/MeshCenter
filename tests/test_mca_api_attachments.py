@@ -389,6 +389,12 @@ def _provider(**overrides):
         last_check_result="ok",
         last_latency_ms=42,
         last_error_code=None,
+        relay_max_ciphertext_bytes=5 * 1024 * 1024 + 1024,
+        relay_min_ttl_seconds=60,
+        relay_max_ttl_seconds=86400,
+        user_max_ciphertext_bytes=None,
+        user_min_ttl_seconds=None,
+        user_max_ttl_seconds=None,
     )
     base.update(overrides)
     return SimpleNamespace(**base)

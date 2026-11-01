@@ -425,8 +425,9 @@ def test_update_profile_clear_sentinel_explicitly_nulls_a_ttl(registry):
     cleared = registry.update_profile(
         profile.provider_id, min_ttl_seconds=CLEAR, max_ttl_seconds=CLEAR, protocol_version=CLEAR
     )
-    assert cleared.min_ttl_seconds is None
-    assert cleared.max_ttl_seconds is None
+    # FX1 Phase B: CLEAR removes the USER limit; the relay's own published limit still applies
+    assert cleared.user_min_ttl_seconds is None and cleared.user_max_ttl_seconds is None
+    assert (cleared.min_ttl_seconds, cleared.max_ttl_seconds) == (60, 3600)
     assert cleared.protocol_version is None
 
 
@@ -605,3 +606,82 @@ def test_clear_upload_token_rejects_symlink_escape(registry, wsm):
     with pytest.raises(ProviderRegistryError):
         registry.clear_upload_token(profile.provider_id, wsm, "a1b2c3d4e5f60718")
     assert outside.exists()  # the escape target was never touched
+
+
+# ---- FX1 Phase B: the relay limits and the user's own limits are kept apart; the stricter one applies ---------------------
+
+
+def _bounded(registry, **overrides):
+    kwargs = dict(
+        display_name="Split", base_url="https://split.example.net", service_public_key=SERVICE_KEY,
+        max_ciphertext_bytes=6 * 1024 * 1024, min_ttl_seconds=3600, max_ttl_seconds=259200,
+    )
+    kwargs.update(overrides)
+    return registry.register(**kwargs)
+
+
+def test_effective_limits_is_the_stricter_of_the_two_sources():
+    from meshsrv.attachments.provider_registry import effective_limits
+
+    assert effective_limits(relay_max_bytes=10, relay_min_ttl=60, relay_max_ttl=1000,
+                            user_max_bytes=5, user_min_ttl=120, user_max_ttl=500) == (5, 120, 500)
+    assert effective_limits(relay_max_bytes=10, relay_min_ttl=None, relay_max_ttl=1000,
+                            user_max_bytes=None, user_min_ttl=None, user_max_ttl=None) == (10, None, 1000)
+    # a user limit above the relay limit never raises it
+    assert effective_limits(relay_max_bytes=10, relay_min_ttl=None, relay_max_ttl=1000,
+                            user_max_bytes=99, user_min_ttl=None, user_max_ttl=5000)[0::2] == (10, 1000)
+
+
+def test_a_relay_refresh_never_overwrites_a_limit_the_user_lowered(registry):
+    profile = _bounded(registry)
+    # the user lowers the maximum TTL to 1 day (own limit), then the relay raises its own to 30 days
+    registry.update_profile(profile.provider_id, max_ttl_seconds=86400)
+    assert registry.resolve(profile.provider_id).max_ttl_seconds == 86400
+    registry.refresh_limits(profile.provider_id, max_ciphertext_bytes=6 * 1024 * 1024, min_ttl_seconds=None,
+                            max_ttl_seconds=2592000)
+    fresh = registry.resolve(profile.provider_id)
+    assert fresh.relay_max_ttl_seconds == 2592000, "the relay value follows the relay"
+    assert fresh.user_max_ttl_seconds == 86400, "the user limit is untouched"
+    assert fresh.max_ttl_seconds == 86400, "and the stricter one applies"
+
+
+def test_a_relay_refresh_that_lowers_its_limit_wins_over_a_looser_user_limit(registry):
+    profile = _bounded(registry)
+    registry.update_profile(profile.provider_id, max_ttl_seconds=200000)     # the user limit, below the relay's 259200
+    registry.refresh_limits(profile.provider_id, max_ciphertext_bytes=1000, min_ttl_seconds=None, max_ttl_seconds=100000)
+    fresh = registry.resolve(profile.provider_id)
+    assert fresh.max_ttl_seconds == 100000 and fresh.max_ciphertext_bytes == 1000
+    assert fresh.user_max_ttl_seconds == 200000
+
+
+def test_a_registration_below_the_relay_size_is_the_user_size_limit(registry):
+    profile = registry.register(
+        display_name="Small", base_url="https://small.example.net", service_public_key=SERVICE_KEY,
+        max_ciphertext_bytes=1000, relay_max_ciphertext_bytes=6 * 1024 * 1024,
+    )
+    assert (profile.max_ciphertext_bytes, profile.user_max_ciphertext_bytes, profile.relay_max_ciphertext_bytes) == (1000, 1000, 6 * 1024 * 1024)
+    registry.refresh_limits(profile.provider_id, max_ciphertext_bytes=8 * 1024 * 1024, min_ttl_seconds=None, max_ttl_seconds=None)
+    assert registry.resolve(profile.provider_id).max_ciphertext_bytes == 1000, "the refresh never raises a user-lowered size limit"
+    registry.refresh_limits(profile.provider_id, max_ciphertext_bytes=500, min_ttl_seconds=None, max_ttl_seconds=None)
+    assert registry.resolve(profile.provider_id).max_ciphertext_bytes == 500, "a relay that shrinks still wins"
+
+
+def test_migration_19_keeps_stored_values_as_the_relay_values_and_gives_the_user_none(tmp_path):
+    import sqlite3
+    from meshsrv.attachments.db import migrations
+
+    conn = sqlite3.connect(str(tmp_path / "attachments.db"))
+    conn.execute("PRAGMA foreign_keys = ON")
+    migrations.migrate(conn, 18)
+    conn.execute(
+        "INSERT INTO mca_provider_profiles (provider_id, workspace_id, origin, service_public_key_b64url, max_ciphertext_bytes, "
+        "hard_expiry_default_seconds, is_default, added_at, display_name, min_ttl_seconds, max_ttl_seconds) "
+        "VALUES ('p1', 'w1', 'https://x.example', 'k', 5000, 259200, 0, 1.0, 'X', 60, 259200)"
+    )
+    conn.commit()
+    migrations.migrate(conn)
+    row = conn.execute("SELECT relay_max_ciphertext_bytes, relay_min_ttl_seconds, relay_max_ttl_seconds, user_max_ciphertext_bytes, "
+                       "user_min_ttl_seconds, user_max_ttl_seconds, max_ttl_seconds FROM mca_provider_profiles").fetchone()
+    assert tuple(row) == (5000, 60, 259200, None, None, None, 259200)
+    migrations.migrate(conn, 18)     # and it goes back
+    assert "relay_max_ttl_seconds" not in [c[1] for c in conn.execute("PRAGMA table_info(mca_provider_profiles)")]

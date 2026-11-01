@@ -3288,12 +3288,24 @@
 
     // ---- provider editing (R5) ----------------------------------------------
 
+    // The user's own TTL limit (null = none). An older server that does not send the split falls back to the single value.
+    function ownTtl(p, which) {
+        var own = p['user_' + which + '_ttl_seconds'];
+        var value = own !== undefined ? own : p[which + '_ttl_seconds'];
+        return (value === null || value === undefined) ? null : value;
+    }
+
     function providerEditFields(id) {
         var p = providerById(id);
         if (!p) return '';
-        var minTtl = (p.min_ttl_seconds === null || p.min_ttl_seconds === undefined) ? '' : String(p.min_ttl_seconds);
-        var maxTtl = (p.max_ttl_seconds === null || p.max_ttl_seconds === undefined) ? '' : String(p.max_ttl_seconds);
+        // FX1 Phase B: the fields hold the user's OWN limits; the relay's published limit is the placeholder (the stricter applies)
+        var ownMin = ownTtl(p, 'min');
+        var ownMax = ownTtl(p, 'max');
+        var minTtl = ownMin === null ? '' : String(ownMin);
+        var maxTtl = ownMax === null ? '' : String(ownMax);
         var ttlPlaceholder = t('files.provider_ttl_unset', 'Unset');
+        var relayMin = (p.relay_min_ttl_seconds === null || p.relay_min_ttl_seconds === undefined) ? '' : String(p.relay_min_ttl_seconds);
+        var relayMax = (p.relay_max_ttl_seconds === null || p.relay_max_ttl_seconds === undefined) ? '' : String(p.relay_max_ttl_seconds);
         return (
             '<div class="files-edit-field">' +
                 '<label for="filesEditName-' + esc(id) + '">' + esc(t('files.provider_display_name', 'Display name')) + '</label>' +
@@ -3313,11 +3325,11 @@
             '</div>' +
             '<div class="files-edit-field">' +
                 '<label for="filesEditMinTtl-' + esc(id) + '">' + esc(t('files.provider_ttl_min', 'Min TTL (seconds)')) + '</label>' +
-                '<input type="number" id="filesEditMinTtl-' + esc(id) + '" min="1" step="1" value="' + esc(minTtl) + '" placeholder="' + esc(ttlPlaceholder) + '" autocomplete="off" />' +
+                '<input type="number" id="filesEditMinTtl-' + esc(id) + '" min="1" step="1" value="' + esc(minTtl) + '" placeholder="' + esc(relayMin ? relayMin : ttlPlaceholder) + '" autocomplete="off" />' +
             '</div>' +
             '<div class="files-edit-field">' +
                 '<label for="filesEditMaxTtl-' + esc(id) + '">' + esc(t('files.provider_ttl_max', 'Max TTL (seconds)')) + '</label>' +
-                '<input type="number" id="filesEditMaxTtl-' + esc(id) + '" min="1" step="1" value="' + esc(maxTtl) + '" placeholder="' + esc(ttlPlaceholder) + '" autocomplete="off" />' +
+                '<input type="number" id="filesEditMaxTtl-' + esc(id) + '" min="1" step="1" value="' + esc(maxTtl) + '" placeholder="' + esc(relayMax ? relayMax : ttlPlaceholder) + '" autocomplete="off" />' +
             '</div>'
         );
     }
@@ -3405,8 +3417,8 @@
         if (uploadEl && !!uploadEl.checked !== !!p.upload_allowed) body.upload_allowed = !!uploadEl.checked;
         if (downloadEl && !!downloadEl.checked !== !!p.download_allowed) body.download_allowed = !!downloadEl.checked;
 
-        var oldMin = (p.min_ttl_seconds === null || p.min_ttl_seconds === undefined) ? null : p.min_ttl_seconds;
-        var oldMax = (p.max_ttl_seconds === null || p.max_ttl_seconds === undefined) ? null : p.max_ttl_seconds;
+        var oldMin = ownTtl(p, 'min');
+        var oldMax = ownTtl(p, 'max');
         if (minPresent) {
             if (minVal !== oldMin) body.min_ttl_seconds = minVal;
         } else if (oldMin !== null) {

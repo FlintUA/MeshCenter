@@ -1003,6 +1003,39 @@ ALTER TABLE mca_key_exchange_contact_state DROP COLUMN key_request_attempts;
 """
 
 
+# Migration 19 (FX1 Phase B): a provider's limits come from two places - the relay (`/v1/info`, refreshed on every check) and
+# the user (a deliberately lower limit). They were one column each, so a refresh could not tell them apart. The `relay_*`
+# columns hold what the relay published, the `user_*` columns what the user chose (NULL = no limit of their own); the old
+# `max_ciphertext_bytes` / `min_ttl_seconds` / `max_ttl_seconds` columns stay as the EFFECTIVE values every consumer reads
+# (the stricter of the two). Existing rows: the stored values become the relay values and the user has none, because
+# before this migration the two could not be told apart and a stale registration-time value must not become a permanent
+# user limit.
+_MIGRATION_0019_UP = """
+ALTER TABLE mca_provider_profiles ADD COLUMN relay_max_ciphertext_bytes INTEGER;
+ALTER TABLE mca_provider_profiles ADD COLUMN relay_min_ttl_seconds INTEGER;
+ALTER TABLE mca_provider_profiles ADD COLUMN relay_max_ttl_seconds INTEGER;
+ALTER TABLE mca_provider_profiles ADD COLUMN user_max_ciphertext_bytes INTEGER;
+ALTER TABLE mca_provider_profiles ADD COLUMN user_min_ttl_seconds INTEGER;
+ALTER TABLE mca_provider_profiles ADD COLUMN user_max_ttl_seconds INTEGER;
+"""
+
+_MIGRATION_0019_DOWN = """
+ALTER TABLE mca_provider_profiles DROP COLUMN user_max_ttl_seconds;
+ALTER TABLE mca_provider_profiles DROP COLUMN user_min_ttl_seconds;
+ALTER TABLE mca_provider_profiles DROP COLUMN user_max_ciphertext_bytes;
+ALTER TABLE mca_provider_profiles DROP COLUMN relay_max_ttl_seconds;
+ALTER TABLE mca_provider_profiles DROP COLUMN relay_min_ttl_seconds;
+ALTER TABLE mca_provider_profiles DROP COLUMN relay_max_ciphertext_bytes;
+"""
+
+
+def _migration_0019_fixup_split_limits(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "UPDATE mca_provider_profiles SET relay_max_ciphertext_bytes = max_ciphertext_bytes, "
+        "relay_min_ttl_seconds = min_ttl_seconds, relay_max_ttl_seconds = max_ttl_seconds"
+    )
+
+
 MIGRATIONS: Sequence[Migration] = (
     Migration(1, "create_core_tables", _MIGRATION_0001_UP, _MIGRATION_0001_DOWN),
     Migration(2, "extend_provider_profiles", _MIGRATION_0002_UP, _MIGRATION_0002_DOWN),
@@ -1035,6 +1068,10 @@ MIGRATIONS: Sequence[Migration] = (
         data_fixup=_migration_0017_fixup_backfill_outbox_routes,
     ),
     Migration(18, "key_request_retry_series", _MIGRATION_0018_UP, _MIGRATION_0018_DOWN),
+    Migration(
+        19, "provider_limits_relay_and_user", _MIGRATION_0019_UP, _MIGRATION_0019_DOWN,
+        data_fixup=_migration_0019_fixup_split_limits,
+    ),
 )
 
 LATEST_VERSION: int = MIGRATIONS[-1].version if MIGRATIONS else 0

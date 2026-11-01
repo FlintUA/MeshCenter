@@ -653,6 +653,13 @@ def _serialize_provider(profile, relay_status, *, include_latency_error=False):
         "enabled": profile.enabled,
         "min_ttl_seconds": profile.min_ttl_seconds,
         "max_ttl_seconds": profile.max_ttl_seconds,
+        # FX1 Phase B: where the effective limits above come from (the stricter of the two applies)
+        "relay_max_ciphertext_bytes": profile.relay_max_ciphertext_bytes,
+        "relay_min_ttl_seconds": profile.relay_min_ttl_seconds,
+        "relay_max_ttl_seconds": profile.relay_max_ttl_seconds,
+        "user_max_ciphertext_bytes": profile.user_max_ciphertext_bytes,
+        "user_min_ttl_seconds": profile.user_min_ttl_seconds,
+        "user_max_ttl_seconds": profile.user_max_ttl_seconds,
         "protocol_version": profile.protocol_version,
         "upload_token_configured": profile.upload_token_configured,
         "last_checked_at": profile.last_checked_at,

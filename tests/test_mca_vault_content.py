@@ -240,12 +240,15 @@ def test_an_incoming_file_goes_straight_into_an_mcv_and_no_plaintext_is_ever_wri
         final = _step(rws, registry, exchange, attachment_id, relay_client)
     assert final.state == receiver.AVAILABLE
     row = rws.conn.execute("SELECT file_name, saved_path, plain_size, plain_sha256 FROM attachments WHERE id = ?", (attachment_id,)).fetchone()
-    cache = rws.wsm.paths(rws.principal.principal_id).cache_incoming
-    assert row[1] == str(cache / (attachment_id + ".mcv")) and row[0].startswith("v1:") and row[2] == len(content)
+    paths = rws.wsm.paths(rws.principal.principal_id)
+    cache, files = paths.cache_incoming, paths.files
+    # FX1 Phase B: one store - straight into files/, not the cache folder
+    assert row[1] == str(files / (attachment_id + ".mcv")) and row[0].startswith("v1:") and row[2] == len(content)
     assert rws.wsm.codec.open("attachments", "file_name", attachment_id, row[0]) == "incoming.txt"
     with rws.wsm.codec.open_content(Path(row[1]), attachment_id) as handle:
         assert handle.read() == content
-    assert sorted(p.name for p in cache.iterdir()) == [attachment_id + ".mcv"], "only the encrypted file: no plain file, no .part"
+    assert sorted(p.name for p in files.iterdir()) == [attachment_id + ".mcv"], "only the encrypted file: no plain file, no .part"
+    assert list(cache.iterdir()) == [], "nothing is left in the cache folder"
     for name, data in rws.every_file().items():                     # nothing anywhere on the receiver's disk holds the plaintext
         assert MARKER not in data and b"incoming.txt" not in data, name
 

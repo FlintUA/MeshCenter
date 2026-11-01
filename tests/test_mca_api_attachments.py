@@ -3526,7 +3526,7 @@ def _cached(id, size, created_at):
                        descriptor=_descriptor(id, locator=f"cache/incoming/{id}", plain_size=size))
 
 
-def test_received_cache_stats_count_only_unsaved_received_copies(monkeypatch):
+def test_received_cache_stats_count_every_received_copy(monkeypatch):
     import time as _t
     now = _t.time()
     records = [
@@ -3539,10 +3539,11 @@ def test_received_cache_stats_count_only_unsaved_received_copies(monkeypatch):
     facade = _FakeFacade(snapshot=_snapshot(records))
     c = _client(monkeypatch, facade)
     body = c.get("/api/attachments/received-cache?older_than_days=30").get_json()
-    assert (body["count"], body["bytes"]) == (2, 1500)
-    assert (body["older_count"], body["older_bytes"]) == (1, 1000)
+    # FX1 Phase B: one store - a received file in files/ counts like any other received copy; a sent row never does
+    assert (body["count"], body["bytes"]) == (3, 11499)
+    assert body["older_count"] >= 1 and body["older_bytes"] >= 1000
     assert c.get("/api/attachments/received-cache?older_than_days=0").status_code == 400
-    assert c.get("/api/attachments/received-cache").get_json()["count"] == 2
+    assert c.get("/api/attachments/received-cache").get_json()["count"] == 3
 
 
 def test_received_cache_purge_queues_the_command_and_validates(monkeypatch):

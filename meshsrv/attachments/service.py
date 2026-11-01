@@ -658,6 +658,11 @@ class AttachmentsService:
 
     # ---- one tick ---------------------------------------------------------
 
+    def _worker_is_stopping(self) -> bool:
+        """True only on the worker thread, once it was asked to stop. A synchronous tick() from a test or from startup (any other
+        thread) is never cut short: tests stop the worker and then drive ticks by hand."""
+        return self._stop_event.is_set() and threading.current_thread() is self._thread
+
     def tick(self) -> int:
         """One reconciliation pass: drain queued inbound events, then up
         to `max_per_tick` non-terminal attachments, one run_step() call
@@ -675,8 +680,6 @@ class AttachmentsService:
         # on this worker thread, holding this connection - never on the
         # radio listener thread, which only ever built the InboundEvent
         # and enqueued it (enqueue_inbound() above).
-        if self._stop_event.is_set():
-            return 0                                   # asked to stop: start nothing new (no probe, no step)
         self._drain_inbound_events()
         self._catch_up_after_unlock()
 
@@ -719,9 +722,10 @@ class AttachmentsService:
         # inbound-event dispatch above - everything after this is either
         # a cheap DB scan or a run_step() call, which does its own I/O
         # only when a row is actually due.
-        if self._stop_event.is_set():
-            return 0                                   # the relay probes use a thread pool: never start one while stopping
-        self._connectivity.refresh()
+        # the relay probes run on a thread pool: never start one once the worker was asked to stop (the rest of the tick,
+        # including the snapshot publish that a just-started service owes its readiness, still runs)
+        if not self._worker_is_stopping():
+            self._connectivity.refresh()
 
         processed = 0
         # locked: no row is advanced (download, upload, expiry frames all need the seed or the storage key)

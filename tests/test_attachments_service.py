@@ -4863,12 +4863,23 @@ def test_dropped_waiting_frames_are_reported_once_per_tick_with_the_count(
 
 # ---- shutdown: the tick stops cleanly (found in the MCA-VAULT round on .104) -------------------------------------------------
 
-def test_a_tick_after_stop_starts_nothing_and_never_probes_a_relay(service, connectivity_monitor, monkeypatch):
-    def boom(*a, **k):
-        raise AssertionError("a relay probe was started while the service was stopping")
-    monkeypatch.setattr(connectivity_monitor, "refresh", boom)
+def test_the_worker_starts_no_relay_probe_once_it_was_asked_to_stop(service, connectivity_monitor, monkeypatch):
+    import threading
+    probes = []
+    monkeypatch.setattr(connectivity_monitor, "refresh", lambda *a, **k: probes.append(1))
+    service._stop_event.set()
+    service._thread = threading.current_thread()          # as if this were the worker thread
+    assert service.tick() == 0 and probes == [], "no probe, but the tick itself still completes (it publishes the snapshot)"
+    service._thread = None
+
+
+def test_a_hand_driven_tick_after_stop_still_runs(service, connectivity_monitor, monkeypatch):
+    """Tests (and the startup pass) stop the worker and then call tick() themselves: that is not the worker stopping."""
+    probes = []
+    monkeypatch.setattr(connectivity_monitor, "refresh", lambda *a, **k: probes.append(1))
     assert service.stop() is True
-    assert service.tick() == 0
+    service.tick()
+    assert probes == [1]
 
 
 @pytest.mark.parametrize("initial", [True, False])

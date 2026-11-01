@@ -224,6 +224,7 @@ class _RelayProbeResult:
     status: RelayStatus
     new_consecutive_failures: int
     info_check_completed: bool
+    limits: Optional[dict] = None      # FX1: the limits the relay published in a verified /v1/info
 
 
 def evaluate_upload_readiness(profile: ProviderProfile) -> UploadReadiness:
@@ -624,6 +625,12 @@ class ConnectivityMonitor:
             self._consecutive_failures[profile.provider_id] = probe_result.new_consecutive_failures
             if probe_result.info_check_completed:
                 self._last_info_check[profile.provider_id] = now
+            if probe_result.limits:
+                try:
+                    if self._provider_registry.refresh_limits(profile.provider_id, **probe_result.limits):
+                        self._refresh_profile_snapshot()
+                except Exception:  # noqa: BLE001 - a failed limit refresh never breaks the health check
+                    pass
             self._provider_registry.record_check_result(
                 profile.provider_id, result=probe_result.status.state.value, latency_ms=probe_result.status.latency_ms,
                 error_code=probe_result.status.error_code, now=now,
@@ -806,7 +813,8 @@ class ConnectivityMonitor:
 
         info_due = force_info or (now - (last_info_check_at or 0)) >= RELAY_INFO_MIN_INTERVAL_SECONDS
         if info_due:
-            result = self._check_identity(profile, session)
+            limits_out: dict = {}
+            result = self._check_identity(profile, session, limits_out)
             if result is _INFO_CHECK_INCONCLUSIVE:
                 # PR #231 review, section 6: a transient /v1/info failure
                 # must not be treated as a completed check - the caller
@@ -838,7 +846,7 @@ class ConnectivityMonitor:
                     upload_readiness=evaluate_upload_readiness(profile), checked_at=now, latency_ms=latency_ms,
                     error_code=None,
                 ),
-                new_consecutive_failures=0, info_check_completed=True,
+                new_consecutive_failures=0, info_check_completed=True, limits=limits_out or None,
             )
 
         return _RelayProbeResult(
@@ -849,7 +857,7 @@ class ConnectivityMonitor:
             new_consecutive_failures=0, info_check_completed=False,
         )
 
-    def _check_identity(self, profile: ProviderProfile, session: Any):
+    def _check_identity(self, profile: ProviderProfile, session: Any, limits_out: Optional[dict] = None):
         """Returns `None` if `/v1/info` agrees with the pinned profile
         and speaks a protocol version this client supports; a
         `(RelayState, error_code)` pair for a genuine, confirmed problem
@@ -907,6 +915,15 @@ class ConnectivityMonitor:
             # (IDENTITY_MISMATCH): the Relay is who it claims to be, this
             # client just cannot talk to it.
             return (RelayState.INCOMPATIBLE, f"unsupported_protocol_version:{reported_protocol_version}")
+        if limits_out is not None:
+            # FX1: the identity is confirmed, so the limits in this same answer are the relay's own
+            published = payload.get("limits")
+            if isinstance(published, dict):
+                limits_out.update({
+                    "max_ciphertext_bytes": published.get("max_ciphertext_bytes"),
+                    "min_ttl_seconds": published.get("min_hard_ttl_seconds"),
+                    "max_ttl_seconds": published.get("max_hard_ttl_seconds"),
+                })
         return None
 
     def _check_fallback_internet(self, now: float) -> InternetStatus:

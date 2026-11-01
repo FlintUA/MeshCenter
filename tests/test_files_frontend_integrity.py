@@ -104,7 +104,8 @@ def _files_js_static_keys() -> set:
     # the literal half of a string concatenation ('files.state.' + state), never
     # a complete lookup key, and their suffixes are validated separately by the
     # label-table test.
-    return {k for k in keys if not k.endswith(".")}
+    # FX1: also the open prefix 'files.ttl_preset_' + seconds (checked by its own test).
+    return {k for k in keys if not k.endswith((".", "_"))}
 
 
 def _files_js_label_keys() -> dict:
@@ -137,15 +138,15 @@ def test_index_html_wires_files_nav_and_panel():
     assert 'data-i18n="nav.files"' in html, "nav.files data-i18n attribute missing from index.html"
 
     # Header buttons are dispatched by delegated data-files-action attributes
-    # (no inline handler with a raw id), and the transfer filter is a native
-    # <select id="filesFilterSelect"> carrying all six supported values.
+    # (no inline handler with a raw id). FX1: the list is filtered by the
+    # Incoming/Sent/All segments; Relay providers lives in Settings.
     assert 'data-files-action="send"' in html, "Send header button missing data-files-action"
-    assert 'data-files-action="providers"' in html, "Providers header button missing data-files-action"
     assert 'data-files-action="refresh"' in html, "Refresh header button missing data-files-action"
-    assert 'id="filesFilterSelect"' in html, "filesFilterSelect (native filter <select>) missing"
-    for value in ("all", "received", "sent", "pending", "saved", "errors"):
-        assert f'value="{value}"' in html, f"filter option value={value!r} missing"
-    assert 'id="filesFilterTabs"' not in html, "legacy role=tablist filter buttons must be gone"
+    assert 'data-files-action="providers"' not in html, "Relay providers moved to Settings"
+    assert "window.openFilesRelayProviders()" in html, "Settings Relay providers button missing"
+    for seg in ("incoming", "sent", "all"):
+        assert f'id="filesSeg_{seg}"' in html, f"segment {seg!r} missing"
+    assert 'id="filesFilterSelect"' not in html, "old filter select must be gone"
 
     # files.js must be loaded (with a cache-busting ?v=), and BEFORE chat.js
     # so chat.js's switchMainTab('files') branch can call it.
@@ -265,3 +266,9 @@ def test_add_provider_form_width_styles():
     assert re.search(r"\.files-provider-probe\s+input\s*\{[^}]*width\s*:\s*100%", css), (
         "the provider-name input must be full width (width:100%)"
     )
+
+
+def test_ttl_preset_keys_exist_in_all_locales():
+    for locale, flat in CATALOGS.items():
+        for seconds in (3600, 21600, 86400, 259200, 604800, 1209600, 2592000):
+            assert "files.ttl_preset_%d" % seconds in flat, (locale, seconds)

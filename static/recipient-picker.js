@@ -309,9 +309,9 @@
             + 'placeholder="' + escapeHtml(t('recipient.search_placeholder', null, 'Name or ID')) + '" aria-label="' + label + '">'
             + '<button type="button" class="rp-clear" data-rp-clear aria-label="' + escapeHtml(t('recipient.clear', null, 'Clear search'))
             + '" title="' + escapeHtml(t('recipient.clear', null, 'Clear search')) + '" hidden>' + icon(ICON_CLOSE) + '</button></div>'
+            + '<button type="button" class="rp-favtoggle" data-rp-favs aria-pressed="false" aria-label="' + escapeHtml(t('recipient.favorites_only', null, 'Favorites only'))
+            + '" title="' + escapeHtml(t('recipient.favorites_only', null, 'Favorites only')) + '">☆</button>'
             + '<span class="rp-count" role="status" aria-live="polite"></span></div>'
-            + '<label class="rp-favs"><input type="checkbox" class="rp-favs-box" data-rp-favs> <span>'
-            + escapeHtml(t('recipient.favorites_only', null, 'Favorites only')) + '</span></label>'
             + '<div class="rp-list" role="listbox" aria-label="' + escapeHtml(t('recipient.list_label', null, 'Contacts')) + '"></div>'
             + '<div class="rp-selected" aria-live="polite"></div>';
     }
@@ -360,7 +360,8 @@
             count.textContent = active ? ctx.t('recipient.count', { shown: view.found, total: view.total }, view.found + ' of ' + view.total) : '';
             count.className = 'rp-count' + (active && view.found === 0 ? ' is-empty' : '');
             clear.hidden = !model.query;
-            favs.checked = model.favoritesOnly;
+            favs.setAttribute('aria-pressed', model.favoritesOnly ? 'true' : 'false');
+            favs.textContent = model.favoritesOnly ? '★' : '☆';
             var chosen = model.selectedContact();
             var name = chosen ? (chosen.name || chosen.short_name || chosen.id) : '';
             selectedEl.textContent = chosen ? ctx.t('recipient.selected', { name: name }, 'Selected: ' + name) : '';
@@ -378,8 +379,8 @@
             var row = target.closest('[data-rp-id]');
             if (row && model.select(row.getAttribute('data-rp-id'))) { paint(); changed(); }
         });
-        favs.addEventListener('change', function () {
-            model.setFavoritesOnly(favs.checked);
+        favs.addEventListener('click', function () {
+            model.setFavoritesOnly(!model.favoritesOnly);
             touchedPrefs = true;
             var patch = {};
             patch[favoritesField(isPhone())] = model.favoritesOnly;

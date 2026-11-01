@@ -378,6 +378,7 @@ function prepareSendForm(sandbox, {
     size = 4096,
     expiry = 'default',
     customTtl = '',
+    customUnit = 'minutes',
     comment = '',
 } = {}) {
     sandbox._document.getElementById('filesSendRecipient').value = recipient;
@@ -385,7 +386,8 @@ function prepareSendForm(sandbox, {
     const file = sandbox._document.getElementById('filesSendFile');
     file.files = [{ name: fileName, size, type: mime }];
     sandbox._document.getElementById('filesSendExpiry').value = expiry;
-    sandbox._document.getElementById('filesSendCustomTtlSeconds').value = customTtl;
+    sandbox._document.getElementById('filesSendTtlValue').value = customTtl;
+    sandbox._document.getElementById('filesSendTtlUnit').value = customUnit;
     sandbox._document.getElementById('filesSendComment').value = comment;
     sandbox._document.getElementById('filesSendSubmit').disabled = false;
 }
@@ -560,9 +562,8 @@ async function test_command_404_unknown_never_replays() {
 }
 
 async function test_action_matrix_never_offers_retry_for_terminal_failed() {
-    // V7: Retry must not be offered for a terminal FAILED_* sender; it must be
-    // offered (with Cancel) for an in-flight sender, and Accept+Reject for a
-    // WAITING_CONSENT receiver.
+    // V7 (FX1: on the cards): no Retry for a terminal FAILED_* sender; Retry+Cancel
+    // for an in-flight sender; Download+Decline for a WAITING_CONSENT receiver.
     const sandbox = buildSandbox({
         fetchImpl: defaultRoutes(async (url) => {
             if (url.startsWith('/api/attachments?')) {
@@ -576,39 +577,25 @@ async function test_action_matrix_never_offers_retry_for_terminal_failed() {
                     total: 3,
                 });
             }
-            const detailMatch = url.match(/^\/api\/attachments\/(fail|sending|incoming)$/);
-            if (detailMatch) {
-                const states = { fail: 'FAILED_UPLOAD', sending: 'QUEUED_UPLOAD', incoming: 'WAITING_CONSENT' };
-                const dirs = { fail: 'sent', sending: 'sent', incoming: 'received' };
-                const id = detailMatch[1];
-                return json(200, { ok: true, attachment: attachment(id, dirs[id], states[id]), timeline: [] });
-            }
             return undefined;
         }),
     });
-
     activate(sandbox);
-
-    const detailBody = () => sandbox._document.elements.get('filesDetailBody').innerHTML;
-
-    // FAILED_UPLOAD sender -> no Retry.
-    dispatch(sandbox, { 'data-files-action': 'select', 'data-attachment': 'fail' });
-    await waitFor(() => detailBody().includes('fail') || detailBody().includes('report.pdf'));
-    assert.doesNotMatch(detailBody(), /attach-retry/, 'terminal FAILED_UPLOAD sender must not offer Retry');
-    assert.doesNotMatch(detailBody(), /attach-cancel/, 'terminal FAILED_UPLOAD sender must not offer Cancel');
-
-    // QUEUED_UPLOAD sender -> Retry + Cancel.
-    dispatch(sandbox, { 'data-files-action': 'select', 'data-attachment': 'sending' });
-    await waitFor(() => detailBody().includes('attach-retry'));
-    assert.match(detailBody(), /attach-retry/, 'in-flight sender must offer Retry');
-    assert.match(detailBody(), /attach-cancel/, 'in-flight sender must offer Cancel');
-
-    // WAITING_CONSENT receiver -> Accept + Reject.
-    dispatch(sandbox, { 'data-files-action': 'select', 'data-attachment': 'incoming' });
-    await waitFor(() => detailBody().includes('attach-reject'));
-    assert.match(detailBody(), /attach-download/, 'WAITING_CONSENT receiver must offer Accept');
-    assert.match(detailBody(), /attach-reject/, 'WAITING_CONSENT receiver must offer Reject');
-
+    const list = () => sandbox._document.elements.get('filesArchiveList').innerHTML;
+    await waitFor(() => list().includes('filesCard-incoming'));
+    const card = (id) => {
+        const html = list();
+        const start = html.indexOf('id="filesCard-' + id + '"');
+        assert.ok(start >= 0, 'card ' + id + ' is rendered');
+        const next = html.indexOf('id="filesCard-', start + 10);
+        return html.slice(start, next < 0 ? undefined : next);
+    };
+    assert.doesNotMatch(card('fail'), /attach-retry/, 'terminal FAILED_UPLOAD sender must not offer Retry');
+    assert.doesNotMatch(card('fail'), /attach-cancel/, 'terminal FAILED_UPLOAD sender must not offer Cancel');
+    assert.match(card('sending'), /attach-retry/, 'in-flight sender must offer Retry');
+    assert.match(card('sending'), /attach-cancel/, 'in-flight sender must offer Cancel');
+    assert.match(card('incoming'), /attach-download/, 'WAITING_CONSENT receiver must offer Download');
+    assert.match(card('incoming'), /attach-reject/, 'WAITING_CONSENT receiver must offer Decline');
     console.log('PASS: test_action_matrix_never_offers_retry_for_terminal_failed');
 }
 
@@ -849,85 +836,6 @@ async function test_send_unknown_retains_request_id() {
 
 // ---- R4: selected-detail in-flight guard + coalescing
 
-async function test_detail_terminal_not_refetched_every_poll() {
-    let detailCalls = 0;
-    let listCalls = 0;
-    const sandbox = buildSandbox({
-        fetchImpl: defaultRoutes(async (url) => {
-            if (url.startsWith('/api/attachments?')) {
-                listCalls += 1;
-                return json(200, { ok: true, attachments: [attachment('a1', 'sent', 'DOWNLOADED')], total: 1 });
-            }
-            if (url === '/api/attachments/a1') {
-                detailCalls += 1;
-                return json(200, { ok: true, attachment: attachment('a1', 'sent', 'DOWNLOADED'), timeline: [] });
-            }
-            return undefined;
-        }),
-    });
-
-    activate(sandbox);
-    await waitFor(() => (sandbox._document.elements.get('filesDetailBody')?.innerHTML || '').includes('report.pdf'));
-    assert.equal(detailCalls, 1, 'initial auto-select fetches the selected detail once');
-
-    // A refresh re-runs the list projection; a terminal, unchanged attachment
-    // must NOT trigger a second detail fetch (R4).
-    dispatch(sandbox, { 'data-files-action': 'refresh' });
-    await waitFor(() => listCalls >= 2);
-    await new Promise((r) => setTimeout(r, 50));
-    assert.equal(detailCalls, 1, 'an unchanged terminal attachment must not be re-fetched every poll');
-
-    console.log('PASS: test_detail_terminal_not_refetched_every_poll');
-}
-
-async function test_detail_inflight_coalesces() {
-    let a1Resolve;
-    const a1Gate = new Promise((r) => { a1Resolve = r; });
-    let a1Calls = 0;
-    let a2Calls = 0;
-    const sandbox = buildSandbox({
-        fetchImpl: defaultRoutes(async (url) => {
-            if (url.startsWith('/api/attachments?')) {
-                return json(200, { ok: true, attachments: [
-                    attachment('a1', 'sent', 'SENT', { file_name: 'one.pdf' }),
-                    attachment('a2', 'sent', 'SENT', { file_name: 'two.pdf' }),
-                ], total: 2 });
-            }
-            if (url === '/api/attachments/a1') {
-                a1Calls += 1;
-                await a1Gate;
-                return json(200, { ok: true, attachment: attachment('a1', 'sent', 'SENT', { file_name: 'one.pdf' }), timeline: [] });
-            }
-            if (url === '/api/attachments/a2') {
-                a2Calls += 1;
-                return json(200, { ok: true, attachment: attachment('a2', 'sent', 'SENT', { file_name: 'two.pdf' }), timeline: [] });
-            }
-            return undefined;
-        }),
-    });
-
-    activate(sandbox);
-    await waitFor(() => a1Calls === 1);   // a1 detail request is now in flight (gated)
-
-    // While a1 is in flight, selecting a2 must coalesce: no second concurrent
-    // detail request is issued.
-    dispatch(sandbox, { 'data-files-action': 'select', 'data-attachment': 'a2' });
-    assert.equal(a2Calls, 0, 'a second detail request must not be issued while one is in flight');
-
-    a1Resolve();                            // release the gated a1 request
-    await waitFor(() => a2Calls === 1);     // the coalesced a2 request fires once a1 settles
-    await waitFor(() => (sandbox._document.elements.get('filesDetailBody')?.innerHTML || '').includes('two.pdf'));
-
-    assert.equal(a1Calls, 1, 'a1 detail fetched exactly once');
-    assert.equal(a2Calls, 1, 'a2 detail fetched exactly once');
-    assert.ok(
-        !sandbox._document.elements.get('filesDetailBody').innerHTML.includes('one.pdf'),
-        'the stale a1 render must not overwrite the selected a2 detail',
-    );
-
-    console.log('PASS: test_detail_inflight_coalesces');
-}
-
 // ---- R5: provider-edit PATCH only changed fields, local validation, null clears
 
 async function test_provider_edit_patches_only_changed_fields() {
@@ -1104,85 +1012,6 @@ async function test_filter_select_all_six_values_issue_correct_api_request() {
     console.log('PASS: test_filter_select_all_six_values_issue_correct_api_request');
 }
 
-async function test_transfer_row_aria_pressed() {
-    const sandbox = buildSandbox({
-        fetchImpl: defaultRoutes(async (url) => {
-            if (url.startsWith('/api/attachments?')) {
-                return json(200, { ok: true, attachments: [
-                    attachment('a1', 'sent', 'SENT'),
-                    attachment('a2', 'received', 'AVAILABLE'),
-                ], total: 2 });
-            }
-            if (url === '/api/attachments/a1') {
-                return json(200, { ok: true, attachment: attachment('a1', 'sent', 'SENT'), timeline: [] });
-            }
-            if (url === '/api/attachments/a2') {
-                return json(200, { ok: true, attachment: attachment('a2', 'received', 'AVAILABLE'), timeline: [] });
-            }
-            return undefined;
-        }),
-    });
-
-    activate(sandbox);
-    await waitFor(() => (sandbox._document.elements.get('filesArchiveList')?.innerHTML || '').includes('report.pdf'));
-
-    // Selecting a row marks exactly that row aria-pressed="true".
-    dispatch(sandbox, { 'data-files-action': 'select', 'data-attachment': 'a2' });
-    await waitFor(() => (sandbox._document.elements.get('filesArchiveList')?.innerHTML || '').includes('aria-pressed="true"'));
-
-    const html = sandbox._document.elements.get('filesArchiveList').innerHTML;
-    const pressedCount = (html.match(/aria-pressed="true"/g) || []).length;
-    assert.equal(pressedCount, 1, 'exactly one transfer row must be aria-pressed=true (the selected row)');
-    assert.match(html, /aria-pressed="false"/, 'unselected transfer rows must be aria-pressed=false');
-
-    console.log('PASS: test_transfer_row_aria_pressed');
-}
-
-// ---- phone: master/detail (one pane at a time) ------------------------------------------------------------------------
-async function test_phone_files_is_master_detail() {
-    const build = (phone) => {
-        const sandbox = buildSandbox({
-            fetchImpl: defaultRoutes(async (url) => {
-                if (url.startsWith('/api/attachments?')) {
-                    return json(200, { ok: true, attachments: [attachment('a1', 'sent', 'SENT'), attachment('a2', 'received', 'AVAILABLE')], total: 2 });
-                }
-                if (url === '/api/attachments/a1') return json(200, { ok: true, attachment: attachment('a1', 'sent', 'SENT'), timeline: [] });
-                if (url === '/api/attachments/a2') return json(200, { ok: true, attachment: attachment('a2', 'received', 'AVAILABLE'), timeline: [] });
-                return undefined;
-            }),
-        });
-        sandbox.window.MCMobileLayout = { isMobile: () => phone };
-        return sandbox;
-    };
-    // the markup carries data-view="list"; the fake DOM has no markup, so no attribute reads as the list
-    const view = (sandbox) => sandbox._document.getElementById('filesLayout').getAttribute('data-view') || 'list';
-    const listed = (sandbox) => waitFor(() => (sandbox._document.elements.get('filesArchiveList')?.innerHTML || '').includes('report.pdf'));
-
-    const phone = build(true);
-    activate(phone);
-    await listed(phone);
-    await new Promise((r) => setTimeout(r, 50));
-    assert.equal(view(phone), 'list', 'opening Files shows the list; the automatic first selection never opens Details');
-
-    dispatch(phone, { 'data-files-action': 'select', 'data-attachment': 'a2' });
-    assert.equal(view(phone), 'detail', 'tapping a transfer shows Details in place of the list');
-    dispatch(phone, { 'data-files-action': 'back' });
-    assert.equal(view(phone), 'list', 'the back button returns to the list');
-
-    phone.window.MeshCenterFiles.selectTransfer('a1');
-    assert.equal(view(phone), 'detail', 'a chat notification opens Details directly');
-    phone.window.MeshCenterFiles.deactivate();
-    assert.equal(view(phone), 'list', 'leaving the Files tab resets to the list');
-
-    const wide = build(false);
-    activate(wide);
-    await listed(wide);
-    dispatch(wide, { 'data-files-action': 'select', 'data-attachment': 'a2' });
-    assert.notEqual(view(wide), 'detail', 'tablet and desktop keep both panes side by side: no view switch');
-
-    console.log('PASS: test_phone_files_is_master_detail');
-}
-
 // ---- R7: custom TTL, MIME feedback, list-all-providers, provider freshness
 
 async function test_send_dialog_renders_custom_ttl_input() {
@@ -1190,10 +1019,11 @@ async function test_send_dialog_renders_custom_ttl_input() {
     dispatch(sandbox, { 'data-files-action': 'send' });
     const dialog = sandbox._document.body._children.find((c) => (c.className || '').includes('files-dialog-root'));
     assert.ok(dialog, 'send must open a dialog');
-    assert.match(dialog.innerHTML, /id="filesSendCustomTtlSeconds"/, 'the custom TTL input must have the canonical id');
-    assert.match(dialog.innerHTML, /type="number"/, 'the custom TTL input must be a number input');
-    assert.match(dialog.innerHTML, /min="1"/, 'the custom TTL input must enforce a minimum of 1 second');
-    assert.match(dialog.innerHTML, /step="1"/, 'the custom TTL input must step in whole seconds');
+    assert.match(dialog.innerHTML, /id="filesSendTtlValue"/, 'the custom TTL amount must have the canonical id');
+    assert.match(dialog.innerHTML, /id="filesSendTtlUnit"/, 'the custom TTL unit select must have the canonical id');
+    assert.match(dialog.innerHTML, /type="number"/, 'the custom TTL amount must be a number input');
+    assert.match(dialog.innerHTML, /min="1"/, 'the custom TTL amount must enforce a minimum of 1');
+    assert.match(dialog.innerHTML, /value="minutes"[^>]*>[^<]*<\/option><option value="hours"[^>]*>[^<]*<\/option><option value="days"/, 'minutes, hours, days');
 
     console.log('PASS: test_send_dialog_renders_custom_ttl_input');
 }
@@ -1330,7 +1160,7 @@ async function test_send_custom_ttl_validation() {
     prepareSendForm(sandbox, { expiry: 'custom', customTtl: '120' });
     dispatch(sandbox, { 'data-files-action': 'send-submit' });
     await waitFor(() => createCalls === 1);
-    assert.equal(lastTtl, 120, 'the custom TTL must be used as the requested TTL');
+    assert.equal(lastTtl, 7200, 'the custom TTL (120 minutes) must be used as the requested TTL, in seconds');
 
     console.log('PASS: test_send_custom_ttl_validation');
 }
@@ -1357,12 +1187,12 @@ async function test_deactivate_clears_open_dialog() {
 
 async function test_send_proactive_readiness_exact_ttl() {
     // F2: opening the Send dialog triggers a proactive, authoritative readiness
-    // request for the EXACT requested TTL (the default 3-day TTL here).
+    // request for the EXACT requested TTL (the default 14-day TTL).
     const ttlSeen = [];
     const sandbox = buildSandbox({
         fetchImpl: defaultRoutes(async (url) => {
             if (url === '/api/mca/providers') {
-                return json(200, { ok: true, providers: [provider('prov1', { is_default: true })] });
+                return json(200, { ok: true, providers: [provider('prov1', { is_default: true, min_ttl_seconds: 3600, max_ttl_seconds: 2592000 })] });
             }
             if (url.includes('upload-readiness')) {
                 const m = url.match(/requested_ttl_seconds=(\d+)/);
@@ -1377,7 +1207,7 @@ async function test_send_proactive_readiness_exact_ttl() {
     dispatch(sandbox, { 'data-files-action': 'send' });
     await waitFor(() => ttlSeen.length >= 1);
 
-    assert.equal(ttlSeen[0], 259200, 'the proactive check must use the exact default TTL');
+    assert.equal(ttlSeen[0], 1209600, 'the proactive check must use the exact default TTL (14 days)');
     const check = sandbox._document.getElementById('filesSendReadinessCheck').innerHTML;
     assert.match(check, /Upload: ready/, 'the readiness check must render ready for the exact TTL');
 
@@ -1391,7 +1221,7 @@ async function test_send_readiness_stale_response_dropped() {
     const sandbox = buildSandbox({
         fetchImpl: defaultRoutes(async (url) => {
             if (url === '/api/mca/providers') {
-                return json(200, { ok: true, providers: [provider('prov1', { is_default: true })] });
+                return json(200, { ok: true, providers: [provider('prov1', { is_default: true, min_ttl_seconds: 3600, max_ttl_seconds: 2592000 })] });
             }
             if (url.includes('upload-readiness')) {
                 const m = url.match(/requested_ttl_seconds=(\d+)/);
@@ -1406,14 +1236,15 @@ async function test_send_readiness_stale_response_dropped() {
     dispatch(sandbox, { 'data-files-action': 'send' });
     await waitFor(() => pending.length >= 1);
 
-    // Switch to a valid custom TTL -> a newer readiness request for ttl=120.
+    // Switch to a valid custom TTL -> a newer readiness request for ttl=7200 (120 minutes).
     sandbox._document.getElementById('filesSendExpiry').value = 'custom';
-    sandbox._document.getElementById('filesSendCustomTtlSeconds').value = '120';
+    sandbox._document.getElementById('filesSendTtlUnit').value = 'minutes';
+    sandbox._document.getElementById('filesSendTtlValue').value = '120';
     dispatchChange(sandbox, 'filesSendExpiry');
-    await waitFor(() => pending.some((p) => p.ttl === 120));
+    await waitFor(() => pending.some((p) => p.ttl === 7200));
 
-    const newest = pending.filter((p) => p.ttl === 120).pop();
-    const older = pending.filter((p) => p.ttl === 259200);
+    const newest = pending.filter((p) => p.ttl === 7200).pop();
+    const older = pending.filter((p) => p.ttl === 1209600);
     assert.ok(newest && older.length >= 1, 'an older and a newer readiness request must both have fired');
 
     newest.resolve(json(200, { ok: true, ready: true, reason: null }));
@@ -1439,7 +1270,7 @@ async function test_send_readiness_blank_custom_ttl_no_request() {
     const sandbox = buildSandbox({
         fetchImpl: defaultRoutes(async (url) => {
             if (url === '/api/mca/providers') {
-                return json(200, { ok: true, providers: [provider('prov1', { is_default: true })] });
+                return json(200, { ok: true, providers: [provider('prov1', { is_default: true, min_ttl_seconds: 3600, max_ttl_seconds: 2592000 })] });
             }
             if (url.includes('upload-readiness')) {
                 readinessCalls += 1;
@@ -1454,15 +1285,15 @@ async function test_send_readiness_blank_custom_ttl_no_request() {
     await waitFor(() => readinessCalls >= 1); // the default-TTL check already fired
 
     sandbox._document.getElementById('filesSendExpiry').value = 'custom';
-    sandbox._document.getElementById('filesSendCustomTtlSeconds').value = '';
+    sandbox._document.getElementById('filesSendTtlValue').value = '';
     dispatchChange(sandbox, 'filesSendExpiry');
     await new Promise((r) => setTimeout(r, 40));
 
     const callsAtBlank = readinessCalls;
     const check = sandbox._document.getElementById('filesSendReadinessCheck').innerHTML;
     const summary = sandbox._document.getElementById('filesSendExpirySummary').innerHTML;
-    assert.match(check, /whole number/, 'a blank custom TTL must show the local prompt, not request readiness');
-    assert.match(summary, /whole number/, 'the expiry summary must prompt for a value, not show a fictitious expiry');
+    assert.doesNotMatch(check, /Upload: ready/, 'a blank custom TTL must not show a readiness result');
+    assert.equal(summary, '', 'FX1: a blank custom field shows no message at all (only after something was typed)');
     assert.doesNotMatch(summary, /86400/, 'the summary must never show a fabricated 86400-second expiry');
 
     await new Promise((r) => setTimeout(r, 40));
@@ -1472,13 +1303,11 @@ async function test_send_readiness_blank_custom_ttl_no_request() {
 }
 
 async function test_send_custom_ttl_summary_local_validation() {
-    // Section 7: the Custom-TTL summary validates against the provider min/max
-    // locally (below-min / above-max prompts), and renders expiry+grace only
-    // for a valid value.
+    // FX1: Custom = amount + unit, checked against the relay's range; ONE plain message under the field, only after input.
     const sandbox = buildSandbox({
         fetchImpl: defaultRoutes(async (url) => {
             if (url === '/api/mca/providers') {
-                return json(200, { ok: true, providers: [provider('prov1', { is_default: true, min_ttl_seconds: 60, max_ttl_seconds: 3600 })] });
+                return json(200, { ok: true, providers: [provider('prov1', { is_default: true, min_ttl_seconds: 3600, max_ttl_seconds: 86400 })] });
             }
             if (url.includes('upload-readiness')) {
                 return json(200, { ok: true, ready: true, reason: null });
@@ -1492,25 +1321,63 @@ async function test_send_custom_ttl_summary_local_validation() {
     await waitFor(() => (sandbox._document.getElementById('filesSendProvider').innerHTML || '').includes('prov1'));
 
     const summary = () => sandbox._document.getElementById('filesSendExpirySummary').innerHTML;
-    const setTtl = (v) => {
+    const hint = () => sandbox._document.getElementById('filesSendTtlHint').textContent;
+    const setTtl = (v, unit) => {
         sandbox._document.getElementById('filesSendExpiry').value = 'custom';
-        sandbox._document.getElementById('filesSendCustomTtlSeconds').value = v;
+        sandbox._document.getElementById('filesSendTtlValue').value = v;
+        sandbox._document.getElementById('filesSendTtlUnit').value = unit;
         dispatchChange(sandbox, 'filesSendExpiry');
     };
 
-    setTtl('30'); // below min (60)
-    assert.match(summary(), /below the provider minimum/, 'a below-minimum TTL must be flagged locally');
-    assert.doesNotMatch(summary(), /86400/, 'no fabricated expiry for a below-minimum TTL');
+    setTtl('', 'minutes');
+    assert.equal(summary(), '', 'nothing typed yet: no message');
+    assert.match(hint(), /from 1 hour to 1 day/, 'the range is shown in plain units');
 
-    setTtl('7200'); // above max (3600)
-    assert.match(summary(), /above the provider maximum/, 'an above-maximum TTL must be flagged locally');
+    setTtl('30', 'minutes'); // below the relay minimum (1 hour)
+    assert.match(summary(), /Choose between 1 hour and 1 day/, 'a below-minimum value is flagged locally, in plain units');
+    assert.doesNotMatch(summary(), /1800|3600|86400/, 'no raw seconds in the message');
 
-    setTtl('120'); // valid
-    assert.match(summary(), /Expires/, 'a valid custom TTL must render the expiry summary');
-    assert.match(summary(), /grace/, 'a valid custom TTL must render the download grace');
-    assert.doesNotMatch(summary(), /provider minimum|provider maximum/, 'a valid custom TTL must not show a min/max error');
+    setTtl('3', 'days'); // above the maximum
+    assert.match(summary(), /Choose between 1 hour and 1 day/, 'an above-maximum value is flagged locally');
+
+    setTtl('abc', 'hours');
+    assert.match(summary(), /whole number/, 'a non-number is flagged once');
+
+    setTtl('2', 'hours'); // valid
+    assert.match(summary(), /Expires/, 'a valid custom value renders the expiry summary');
+    assert.doesNotMatch(summary(), /Choose between|whole number/, 'a valid value shows no error');
 
     console.log('PASS: test_send_custom_ttl_summary_local_validation');
+}
+
+async function test_send_expiry_presets_are_limited_to_the_relay_range() {
+    // FX1: presets 1 h ... 30 d inside the relay's range; the default is 14 days, or the relay maximum when that is lower.
+    const optionValues = (sandbox) => (sandbox._document.getElementById('filesSendExpiry').innerHTML.match(/value="(\d+|custom)"/g) || [])
+        .map((m) => m.replace(/value="|"/g, ''));
+    const open = async (extra) => {
+        const sandbox = buildSandbox({
+            fetchImpl: defaultRoutes(async (url) => {
+                if (url === '/api/mca/providers') return json(200, { ok: true, providers: [provider('prov1', { is_default: true, ...extra })] });
+                if (url.includes('upload-readiness')) return json(200, { ok: true, ready: true, reason: null });
+                return undefined;
+            }),
+        });
+        activate(sandbox);
+        dispatch(sandbox, { 'data-files-action': 'send' });
+        await waitFor(() => (sandbox._document.getElementById('filesSendProvider').innerHTML || '').includes('prov1'));
+        return sandbox;
+    };
+
+    let sandbox = await open({ min_ttl_seconds: 3600, max_ttl_seconds: 2592000 });
+    assert.deepEqual(optionValues(sandbox), ['3600', '21600', '86400', '259200', '604800', '1209600', '2592000', 'custom']);
+    assert.equal(sandbox._document.getElementById('filesSendExpiry').value, '1209600', 'default is 14 days');
+
+    sandbox = await open({ min_ttl_seconds: 3600, max_ttl_seconds: 259200 });
+    assert.deepEqual(optionValues(sandbox), ['3600', '21600', '86400', '259200', 'custom']);
+    assert.equal(sandbox._document.getElementById('filesSendExpiry').value, '259200', 'the relay maximum is the default when below 14 days');
+    assert.match(sandbox._document.getElementById('filesSendTtlHint').textContent, /at most 3 days/, 'the dialog says why');
+
+    console.log('PASS: test_send_expiry_presets_are_limited_to_the_relay_range');
 }
 
 async function test_send_create_success_waits_for_refresh() {
@@ -2085,117 +1952,6 @@ async function test_counterparty_filter_reset_returns_full_list() {
     console.log('PASS: test_counterparty_filter_reset_returns_full_list');
 }
 
-async function test_counterparty_detail_invalidation_on_switch_to_empty() {
-    // P3 review: switching counterparty while a detail fetch is still in flight
-    // must invalidate it - a late detail response for the OLD counterparty can
-    // never paint into the new (empty) view.
-    let releaseDetail;
-    const gateDetail = new Promise((r) => { releaseDetail = r; });
-    const sandbox = buildSandbox({
-        fetchImpl: defaultRoutes(async (url) => {
-            if (url === '/api/mca/contacts') {
-                return json(200, { ok: true, contacts: [
-                    contact('!aaaaaaaa', 'trusted'),
-                    contact('!bbbbbbbb', 'trusted'),
-                ] });
-            }
-            if (url === '/api/attachments?counterparty=!aaaaaaaa') {
-                return json(200, { ok: true, attachments: [attachment('a1', 'sent', 'SENT', { file_name: 'from-a.pdf' })], total: 1 });
-            }
-            if (url === '/api/attachments?counterparty=!bbbbbbbb') {
-                return json(200, { ok: true, attachments: [], total: 0 });
-            }
-            if (url === '/api/attachments/a1') {
-                await gateDetail; // hold the OLD counterparty's detail fetch
-                return json(200, { ok: true, attachment: attachment('a1', 'sent', 'SENT', { file_name: 'a-detail.pdf' }), timeline: [] });
-            }
-            return undefined;
-        }),
-    });
-
-    activate(sandbox);
-
-    // Select A -> its first transfer is auto-selected and its detail fetch begins (held).
-    sandbox.window.MeshCenterTargets.toggleSelect('node', '!aaaaaaaa');
-    await waitFor(() => sandbox._document.elements.get('filesArchiveList').innerHTML.includes('from-a.pdf'));
-
-    // Switch to B (no transfers) -> the in-flight A detail is invalidated and
-    // the panel is cleared immediately.
-    sandbox.window.MeshCenterTargets.toggleSelect('node', '!bbbbbbbb');
-    await waitFor(() => !sandbox._document.elements.get('filesArchiveList').innerHTML.includes('from-a.pdf'));
-
-    const body = sandbox._document.elements.get('filesDetailBody');
-    assert.ok(!body.innerHTML.includes('a-detail.pdf'), 'detail panel must be cleared on switch to empty B');
-
-    // Release the stale A detail response - it must be dropped, not painted.
-    releaseDetail();
-    await new Promise((r) => setTimeout(r, 30));
-    assert.ok(!body.innerHTML.includes('a-detail.pdf'), 'late A detail must not paint after switching to empty B');
-
-    console.log('PASS: test_counterparty_detail_invalidation_on_switch_to_empty');
-}
-
-async function test_counterparty_switch_to_nonempty_selects_first_card() {
-    // P3 review: switching to a NON-empty counterparty must select the FIRST
-    // card of the new result and show only its detail - never the previous
-    // counterparty's detail, and never a non-first card.
-    const sandbox = buildSandbox({
-        fetchImpl: defaultRoutes(async (url) => {
-            if (url === '/api/mca/contacts') {
-                return json(200, { ok: true, contacts: [
-                    contact('!aaaaaaaa', 'trusted'),
-                    contact('!bbbbbbbb', 'trusted'),
-                ] });
-            }
-            if (url.startsWith('/api/attachments?')) {
-                const cp = new URL(url, 'http://x').searchParams.get('counterparty');
-                if (cp === '!aaaaaaaa') {
-                    return json(200, { ok: true, attachments: [attachment('a1', 'sent', 'SENT', { file_name: 'from-a.pdf' })], total: 1 });
-                }
-                if (cp === '!bbbbbbbb') {
-                    return json(200, { ok: true, attachments: [
-                        attachment('b1', 'sent', 'SENT', { file_name: 'from-b1.pdf' }),
-                        attachment('b2', 'sent', 'SENT', { file_name: 'from-b2.pdf' }),
-                    ], total: 2 });
-                }
-                return json(200, { ok: true, attachments: [], total: 0 });
-            }
-            if (url === '/api/attachments/a1') {
-                return json(200, { ok: true, attachment: attachment('a1', 'sent', 'SENT', { file_name: 'a-detail.pdf' }), timeline: [] });
-            }
-            if (url === '/api/attachments/b1') {
-                return json(200, { ok: true, attachment: attachment('b1', 'sent', 'SENT', { file_name: 'b1-detail.pdf' }), timeline: [] });
-            }
-            if (url === '/api/attachments/b2') {
-                return json(200, { ok: true, attachment: attachment('b2', 'sent', 'SENT', { file_name: 'b2-detail.pdf' }), timeline: [] });
-            }
-            return undefined;
-        }),
-    });
-
-    activate(sandbox);
-
-    // Select A -> its single transfer is auto-selected and its detail fetched.
-    sandbox.window.MeshCenterTargets.toggleSelect('node', '!aaaaaaaa');
-    await waitFor(() => (sandbox._document.elements.get('filesDetailBody')?.innerHTML || '').includes('a-detail.pdf'));
-
-    // Switch to B (two transfers) -> the FIRST card (b1) must be selected.
-    sandbox.window.MeshCenterTargets.toggleSelect('node', '!bbbbbbbb');
-    await waitFor(() => (sandbox._document.elements.get('filesDetailBody')?.innerHTML || '').includes('b1-detail.pdf'));
-
-    const listHtml = sandbox._document.elements.get('filesArchiveList').innerHTML;
-    assert.ok(listHtml.includes('from-b1.pdf'), 'B list shows its first transfer');
-    assert.ok(listHtml.includes('from-b2.pdf'), 'B list shows its second transfer');
-    assert.ok(!listHtml.includes('from-a.pdf'), 'A list must not survive the switch to B');
-
-    const detailHtml = sandbox._document.elements.get('filesDetailBody').innerHTML;
-    assert.ok(detailHtml.includes('b1-detail.pdf'), 'the first B card must be selected and its detail shown');
-    assert.ok(!detailHtml.includes('b2-detail.pdf'), 'a non-first B card must not be auto-selected');
-    assert.ok(!detailHtml.includes('a-detail.pdf'), 'the previous A detail must not survive');
-
-    console.log('PASS: test_counterparty_switch_to_nonempty_selects_first_card');
-}
-
 async function test_key_action_does_not_change_selection() {
     // Requirement (item 9): key actions (request key / confirm / accept / reject)
     // live on the right node card as siblings of the node-select button, and a
@@ -2337,55 +2093,6 @@ async function test_channel_selection_clears_node_counterparty() {
     console.log('PASS: test_channel_selection_clears_node_counterparty');
 }
 
-async function test_no_separate_contacts_or_targets_pane() {
-    // Requirement (item 1): the Files workspace must have NO separate contacts
-    // or targets panel - the only right-side target list is the shared global
-    // sidebar. files.js must not render (or reference) its own contact list.
-    assert.ok(!source.includes('filesContactsList'), 'files.js must not reference a files-local contact list');
-    assert.ok(!source.includes('filesContactsPane'), 'files.js must not reference a files-local contacts pane');
-    assert.ok(!source.includes('filesTargetsPane'), 'files.js must not introduce a files-local targets pane');
-
-    console.log('PASS: test_no_separate_contacts_or_targets_pane');
-}
-
-async function test_channel_selection_shows_unsupported_notice() {
-    // Requirement (item 6): a channel selection stays in the store (no
-    // counterparty) and shows the compact "channel transfers unsupported" notice
-    // above the transfer list; a node or no selection hides it - including the
-    // none→channel and channel→none transitions, where the counterparty itself
-    // does not change.
-    const cps = [];
-    const sandbox = buildSandbox({
-        fetchImpl: defaultRoutes(async (url) => {
-            if (url.startsWith('/api/attachments?')) {
-                cps.push(new URL(url, 'http://x').searchParams.get('counterparty'));
-                return json(200, { ok: true, attachments: [], total: 0 });
-            }
-            return undefined;
-        }),
-    });
-    activate(sandbox);
-
-    const notice = sandbox._document.getElementById('filesChannelNotice');
-    assert.equal(notice.style.display, 'none', 'no selection hides the channel notice');
-
-    // none → channel: the notice must appear even though the counterparty stays empty.
-    sandbox.window.MeshCenterTargets.toggleSelect('channel', 'LongFast');
-    assert.equal(sandbox.window.MeshCenterTargets.selected().kind, 'channel', 'the channel stays selected in the store');
-    assert.equal(notice.style.display, '', 'a channel selection shows the notice');
-
-    // channel → none: the notice hides on the no-op counterparty transition.
-    sandbox.window.MeshCenterTargets.toggleSelect('channel', 'LongFast');
-    assert.equal(sandbox.window.MeshCenterTargets.selected(), null, 're-clicking the channel deselects it');
-    assert.equal(notice.style.display, 'none', 'deselecting the channel hides the notice');
-
-    // A node selection also hides it.
-    sandbox.window.MeshCenterTargets.toggleSelect('node', '!aaaaaaaa');
-    assert.equal(notice.style.display, 'none', 'a node selection hides the channel notice');
-
-    console.log('PASS: test_channel_selection_shows_unsupported_notice');
-}
-
 async function test_send_dialog_preselects_valid_node() {
     // Finding 1: the Send dialog pre-selects a recipient only when the shared
     // store's selection is a valid, still-sendable node - here a trusted node.
@@ -2467,118 +2174,6 @@ async function test_send_dialog_no_fallback_for_invalid_channel_disappeared() {
     }
 
     console.log('PASS: test_send_dialog_no_fallback_for_invalid_channel_disappeared');
-}
-
-async function test_same_query_detail_invalidation_on_empty_poll() {
-    // P3 review (second pass): the list can change under the SAME query key -
-    // the selected transfer completed and left the pending filter, was deleted,
-    // or the server returned an empty list - with no direction/filter/
-    // counterparty switch. That selection change (to null) must invalidate the
-    // in-flight detail too, so a late old-detail response cannot repaint a
-    // transfer that is no longer shown.
-    let releaseDetail;
-    const gateDetail = new Promise((r) => { releaseDetail = r; });
-    let poll = 0;
-    const sandbox = buildSandbox({
-        fetchImpl: defaultRoutes(async (url) => {
-            if (url === '/api/mca/contacts') {
-                return json(200, { ok: true, contacts: [contact('!aaaaaaaa', 'trusted')] });
-            }
-            if (url.startsWith('/api/attachments?')) {
-                poll += 1;
-                if (poll === 1) {
-                    return json(200, { ok: true, attachments: [attachment('a1', 'sent', 'SENT', { file_name: 'from-a.pdf' })], total: 1 });
-                }
-                return json(200, { ok: true, attachments: [], total: 0 });
-            }
-            if (url === '/api/attachments/a1') {
-                await gateDetail; // hold the old selection's detail fetch across the poll
-                return json(200, { ok: true, attachment: attachment('a1', 'sent', 'SENT', { file_name: 'a-detail.pdf' }), timeline: [] });
-            }
-            return undefined;
-        }),
-    });
-
-    activate(sandbox);
-    await waitFor(() => sandbox._document.elements.get('filesArchiveList').innerHTML.includes('from-a.pdf'));
-
-    // Same-query poll now returns empty - the selection disappears without any
-    // query-key change.
-    dispatch(sandbox, { 'data-files-action': 'refresh' });
-    await waitFor(() => !sandbox._document.elements.get('filesArchiveList').innerHTML.includes('from-a.pdf'));
-
-    const body = sandbox._document.elements.get('filesDetailBody');
-    assert.ok(!body.innerHTML.includes('a-detail.pdf'), 'detail panel must be cleared when the selection disappears');
-
-    // Release the stale detail - it must be dropped, not painted.
-    releaseDetail();
-    await new Promise((r) => setTimeout(r, 30));
-    assert.ok(!body.innerHTML.includes('a-detail.pdf'), 'late detail for the now-missing transfer must not appear');
-
-    console.log('PASS: test_same_query_detail_invalidation_on_empty_poll');
-}
-
-async function test_same_query_replaces_selection_no_transient_stale_detail() {
-    // P3 review (second pass): the same query key replacing A with B (A left the
-    // pending filter and B became the first row) is a selection change, not a
-    // query change. It must invalidate A's in-flight detail so A's late response
-    // never paints - not even transiently - while B's coalesced detail is still
-    // pending.
-    let releaseDetailA, releaseDetailB;
-    const gateDetailA = new Promise((r) => { releaseDetailA = r; });
-    const gateDetailB = new Promise((r) => { releaseDetailB = r; });
-    let poll = 0;
-    const sandbox = buildSandbox({
-        fetchImpl: defaultRoutes(async (url) => {
-            if (url === '/api/mca/contacts') {
-                return json(200, { ok: true, contacts: [contact('!aaaaaaaa', 'trusted')] });
-            }
-            if (url.startsWith('/api/attachments?')) {
-                poll += 1;
-                if (poll === 1) {
-                    return json(200, { ok: true, attachments: [attachment('a1', 'sent', 'SENT', { file_name: 'from-a.pdf' })], total: 1 });
-                }
-                return json(200, { ok: true, attachments: [attachment('b1', 'sent', 'SENT', { file_name: 'from-b.pdf' })], total: 1 });
-            }
-            if (url === '/api/attachments/a1') {
-                await gateDetailA;
-                return json(200, { ok: true, attachment: attachment('a1', 'sent', 'SENT', { file_name: 'a-detail.pdf' }), timeline: [] });
-            }
-            if (url === '/api/attachments/b1') {
-                await gateDetailB;
-                return json(200, { ok: true, attachment: attachment('b1', 'sent', 'SENT', { file_name: 'b-detail.pdf' }), timeline: [] });
-            }
-            return undefined;
-        }),
-    });
-
-    activate(sandbox);
-    await waitFor(() => sandbox._document.elements.get('filesArchiveList').innerHTML.includes('from-a.pdf'));
-
-    // Same query now replaces A with B (same direction/filter/counterparty).
-    dispatch(sandbox, { 'data-files-action': 'refresh' });
-    await waitFor(() => {
-        const h = sandbox._document.elements.get('filesArchiveList').innerHTML;
-        return h.includes('from-b.pdf') && !h.includes('from-a.pdf');
-    });
-
-    const body = sandbox._document.elements.get('filesDetailBody');
-    // While B's detail is still pending (A's detail is still in flight and held),
-    // the panel must be empty - not showing A's stale detail.
-    assert.ok(!body.innerHTML.includes('a-detail.pdf'), 'panel must be cleared while the new selection is pending');
-
-    // Release the late A detail: it must be dropped, and the coalesced B detail
-    // fires next - A's content must never paint, even transiently.
-    releaseDetailA();
-    await new Promise((r) => setTimeout(r, 30));
-    assert.ok(!body.innerHTML.includes('a-detail.pdf'), 'late A detail must not paint even transiently');
-    assert.ok(!body.innerHTML.includes('b-detail.pdf'), 'B detail is still in flight (gated), not yet painted');
-
-    releaseDetailB();
-    await waitFor(() => body.innerHTML.includes('b-detail.pdf'));
-    assert.ok(!body.innerHTML.includes('a-detail.pdf'), 'the stale A detail must never have painted');
-
-    console.log('PASS: test_same_query_replaces_selection_no_transient_stale_detail');
 }
 
 async function test_reactivation_issues_fresh_transfers_request() {
@@ -2901,20 +2496,6 @@ function listRoutes(list, extra) {
     });
 }
 
-async function test_summary_parts_are_separated() {
-    const list = [
-        attachment('a1', 'received', 'WAITING_CONSENT'),
-        attachment('a2', 'received', 'AVAILABLE', { saved: true, plain_size: 24900 }),
-    ];
-    const sandbox = sandboxWithViews(listRoutes(list));
-    activate(sandbox);
-    await waitFor(() => String(sandbox._document.elements.get('filesSummary')?.innerHTML || '').includes('files-summary-saved'));
-    const html = sandbox._document.elements.get('filesSummary').innerHTML;
-    assert.ok(html.includes('files-summary-attention') && html.includes('files-summary-saved'), html);
-    assert.ok(html.includes('files-summary-sep'), 'a visible separator between "need attention" and "saved"');
-    console.log('PASS: test_summary_parts_are_separated');
-}
-
 async function test_files_tab_dot_counts_new_attention_and_clears_while_files_is_shown() {
     const list = [
         attachment('old', 'received', 'WAITING_CONSENT', { created_at: 100 }),
@@ -2940,19 +2521,25 @@ async function test_files_tab_dot_counts_new_attention_and_clears_while_files_is
 }
 
 async function test_chat_bubble_selects_its_transfer_even_before_the_list_has_loaded() {
+    // FX1: the list is one column; a chat bubble brings its card into view (and flashes it) once the list is rendered.
     const list = [attachment('a1', 'received', 'AVAILABLE'), attachment('a2', 'received', 'AVAILABLE', { created_at: 1700000100 })];
     const sandbox = sandboxWithViews(listRoutes(list));
+    let scrolled = 0;
+    const card = sandbox._document.getElementById('filesCard-a2');
+    card.scrollIntoView = () => { scrolled += 1; };
+    const flashed = [];
+    card.classList = { add: (c) => flashed.push(c), remove() {}, contains() { return false; } };
     sandbox.window.MeshCenterFiles.selectTransfer('a2');   // Files was never shown: remembered
     activate(sandbox);
-    await waitFor(() => /is-selected[^>]*data-attachment="a2"/.test(sandbox._document.elements.get('filesArchiveList')?.innerHTML || ''));
-    const html = sandbox._document.elements.get('filesArchiveList').innerHTML;
-    assert.ok(/is-selected[^>]*data-attachment="a2"/.test(html), 'a2 is the selected card');
-    assert.ok(!/is-selected[^>]*data-attachment="a1"/.test(html));
+    await waitFor(() => /id="filesCard-a2"/.test(sandbox._document.elements.get('filesArchiveList')?.innerHTML || ''));
+    await waitFor(() => scrolled > 0);
+    assert.equal(scrolled, 1, 'a2 is scrolled into view once');
+    assert.ok(flashed.includes('is-focus'), 'and flashes');
     console.log('PASS: test_chat_bubble_selects_its_transfer_even_before_the_list_has_loaded');
 }
 
 function storageRoutes(opts = {}) {
-    const routes = listRoutes([], async (url) => {
+    const routes = listRoutes([attachment('s1', 'received', 'AVAILABLE')], async (url) => {
         if (url === '/api/attachments/received-cache') return json(200, { ok: true, count: 3, bytes: 2048 });
         if (url.startsWith('/api/attachments/received-cache?older_than_days=')) {
             return json(200, { ok: true, count: 3, bytes: 2048, older_count: opts.olderCount ?? 2, older_bytes: 1500 });
@@ -2976,9 +2563,10 @@ async function test_received_copies_storage_line_and_purge_confirmation() {
         confirm: async (o) => { calls.confirm.push(o); return true; },
     };
     activate(sandbox);
-    await waitFor(() => String(sandbox._document.elements.get('filesStorage')?.innerHTML || '').includes('purge-received'));
-    const line = sandbox._document.elements.get('filesStorage').innerHTML;
-    assert.ok(line.includes('Received copies: 3, 2.0 KB') || line.includes('Received copies: 3'), line);
+    await waitFor(() => String(sandbox._document.elements.get('filesFooter')?.innerHTML || '').includes('purge-received'));
+    const line = sandbox._document.elements.get('filesFooter').innerHTML;
+    assert.ok(/Files use 4\.0 KB/.test(line), 'FX1: the bottom line reads "Files use <size>" - ' + line);
+    assert.ok(line.includes('Clean up...'), 'with the Clean up action');
 
     dispatch(sandbox, { 'data-files-action': 'purge-received' });
     await waitFor(() => purgePosts(sandbox).length === 1);
@@ -2993,7 +2581,7 @@ async function test_purge_cancelled_or_nothing_old_sends_nothing() {
     const a = sandboxWithViews(storageRoutes());
     a.window.MCDialog = { prompt: async () => ({ days: '30' }), confirm: async () => false };
     activate(a);
-    await waitFor(() => String(a._document.elements.get('filesStorage')?.innerHTML || '').includes('purge-received'));
+    await waitFor(() => String(a._document.elements.get('filesFooter')?.innerHTML || '').includes('purge-received'));
     dispatch(a, { 'data-files-action': 'purge-received' });
     await new Promise((r) => setTimeout(r, 150));
     assert.equal(purgePosts(a).length, 0, 'Cancel sends nothing');
@@ -3002,12 +2590,222 @@ async function test_purge_cancelled_or_nothing_old_sends_nothing() {
     let confirmed = 0;
     b.window.MCDialog = { prompt: async () => ({ days: '30' }), confirm: async () => { confirmed += 1; return true; } };
     activate(b);
-    await waitFor(() => String(b._document.elements.get('filesStorage')?.innerHTML || '').includes('purge-received'));
+    await waitFor(() => String(b._document.elements.get('filesFooter')?.innerHTML || '').includes('purge-received'));
     dispatch(b, { 'data-files-action': 'purge-received' });
     await new Promise((r) => setTimeout(r, 150));
     assert.equal(confirmed, 0, 'nothing old: no confirmation is asked');
     assert.equal(purgePosts(b).length, 0);
     console.log('PASS: test_purge_cancelled_or_nothing_old_sends_nothing');
+}
+
+// ---- FX1: one column, plain statuses, segments, selection ------------------------------------------------------
+
+const listHtml = (sandbox) => sandbox._document.elements.get('filesArchiveList')?.innerHTML || '';
+
+async function test_fx1_plain_status_table_pins_every_state_and_reason() {
+    const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
+    const plain = (direction, state, extra = {}) => sandbox.window.MeshCenterFiles.plainStatus(attachment('x', direction, state, extra));
+    const sent = {
+        DRAFT: 'sending', VALIDATING: 'sending', ENCRYPTING: 'sending', QUEUED_UPLOAD: 'sending', UPLOADING: 'sending', READY_TO_SEND: 'sending',
+        SENT: 'waiting_recipient', RECEIVED: 'waiting_recipient', DOWNLOADED: 'delivered',
+        EXPIRED: 'expired', REVOKED: 'revoked', CANCELLED: 'cancelled', REJECTED: 'declined',
+        FAILED_VALIDATION: 'not_delivered', FAILED_UPLOAD: 'not_delivered', FAILED_RADIO: 'not_delivered',
+    };
+    for (const [state, key] of Object.entries(sent)) assert.equal(plain('sent', state).key, key, 'sent ' + state);
+    const received = {
+        OFFER_RECEIVED: 'waiting_in', WAITING_KEY: 'waiting_key', WAITING_PROVIDER: 'waiting_relay', WAITING_NETWORK: 'waiting_internet',
+        WAITING_CONSENT: 'waiting_ok', DOWNLOADING: 'downloading', VERIFYING: 'downloading', AVAILABLE: 'received',
+        EXPIRED: 'expired_in', REJECTED: 'declined_in', CANCELLED: 'cancelled_in', FAILED: 'not_received',
+    };
+    for (const [state, key] of Object.entries(received)) assert.equal(plain('received', state).key, key, 'received ' + state);
+    // one chip, plain words, never a raw code
+    assert.equal(plain('sent', 'DOWNLOADED').text, 'Delivered');
+    assert.equal(plain('sent', 'SENT').text, 'Waiting for recipient');
+    assert.equal(plain('received', 'AVAILABLE').text, 'Received');
+    assert.equal(plain('received', 'WAITING_CONSENT').text, 'Waiting for your OK');
+    // a failure names its reason in plain words
+    assert.equal(plain('sent', 'FAILED_UPLOAD', { error_code: 'recipient_not_trusted' }).text, "Not delivered: the contact's key is not trusted");
+    assert.equal(plain('received', 'FAILED', { error_code: 'chunk_aead_failed' }).text, 'Not received: the file was damaged or not authentic');
+    assert.doesNotMatch(plain('received', 'FAILED', { error_code: 'chunk_aead_failed' }).text, /aead|chunk/i);
+    // a recipient that cannot use the relay will never get the file
+    assert.equal(plain('sent', 'SENT', { error_code: 'recipient_provider_unknown' }).key, 'not_delivered');
+    // an automatic retry keeps the status "Sending" (muted note), it is not shown as a failure
+    const retry = plain('sent', 'UPLOADING', { error_code: 'relay_unavailable' });
+    assert.equal(retry.key, 'sending');
+    assert.equal(retry.retrying, true);
+    // a short word for narrow phones, the full text stays for the opened card
+    assert.ok(plain('sent', 'SENT').short, 'a short word is always there (the catalogs are pinned by a Python test)');
+    // tones: waiting is neutral, failures are bad, done is ok
+    assert.equal(plain('sent', 'DOWNLOADED').tone, 'ok');
+    assert.equal(plain('sent', 'EXPIRED').tone, 'bad');
+    assert.equal(plain('received', 'WAITING_KEY').tone, 'wait');
+    console.log('PASS: test_fx1_plain_status_table_pins_every_state_and_reason');
+}
+
+async function test_fx1_cards_show_direction_in_words_one_chip_and_the_right_actions() {
+    const list = [
+        attachment('in1', 'received', 'AVAILABLE', { counterparty_contact_id: '!22222222', saved: true }),
+        attachment('out1', 'sent', 'SENT', { counterparty_contact_id: '!22222222' }),
+    ];
+    const sandbox = sandboxWithViews(listRoutes(list));
+    activate(sandbox);
+    await waitFor(() => listHtml(sandbox).includes('filesCard-out1'));
+    const html = listHtml(sandbox);
+    const card = (id) => { const i = html.lastIndexOf('<article', html.indexOf('id="filesCard-' + id + '"')); const n = html.indexOf('<article', i + 10); return html.slice(i, n < 0 ? undefined : n); };
+    assert.match(card('in1'), /class="files-card is-incoming/, 'incoming is on the incoming side');
+    assert.match(card('out1'), /class="files-card is-sent/, 'sent is on the sent side');
+    assert.match(card('in1'), /Received from /, 'direction in words, not colour only');
+    assert.match(card('out1'), /Sent to /, 'direction in words, not colour only');
+    assert.equal((card('in1').match(/class="files-chip /g) || []).length, 1, 'exactly one status chip');
+    assert.match(card('in1'), /attach-download-device/, 'a received file offers Download to device');
+    assert.match(card('in1'), /attach-delete-local/, 'and Delete');
+    assert.doesNotMatch(card('out1'), /attach-delete-local/, 'a sent entry has no Delete of a copy');
+    assert.match(card('out1'), /More details/, 'the technical rows are collapsed in the card');
+    assert.doesNotMatch(html, /filesDetail/, 'there is no Details pane');
+    console.log('PASS: test_fx1_cards_show_direction_in_words_one_chip_and_the_right_actions');
+}
+
+async function test_fx1_segments_count_filter_and_are_remembered() {
+    const list = [
+        attachment('in1', 'received', 'AVAILABLE'), attachment('in2', 'received', 'AVAILABLE', { created_at: 1700000100 }),
+        attachment('out1', 'sent', 'SENT', { created_at: 1700000200 }),
+    ];
+    const sandbox = sandboxWithViews(listRoutes(list));
+    activate(sandbox);
+    await waitFor(() => listHtml(sandbox).includes('filesCard-out1'));
+    const text = (id) => sandbox._document.getElementById(id).textContent;
+    assert.equal(text('filesCount_incoming'), '2');
+    assert.equal(text('filesCount_sent'), '1');
+    assert.equal(text('filesCount_all'), '3');
+    dispatch(sandbox, { 'data-files-action': 'segment', 'data-segment': 'sent' });
+    assert.ok(listHtml(sandbox).includes('filesCard-out1') && !listHtml(sandbox).includes('filesCard-in1'), 'Sent shows only sent');
+    dispatch(sandbox, { 'data-files-action': 'segment', 'data-segment': 'incoming' });
+    assert.ok(listHtml(sandbox).includes('filesCard-in1') && !listHtml(sandbox).includes('filesCard-out1'), 'Incoming shows only incoming');
+    assert.equal(sandbox._document.getElementById('filesSeg_incoming').getAttribute('aria-pressed'), 'true');
+    assert.equal(sandbox._store['mc.files.segment'], 'incoming', 'remembered on this device');
+    console.log('PASS: test_fx1_segments_count_filter_and_are_remembered');
+}
+
+async function test_fx1_days_group_the_list() {
+    const now = Math.floor(Date.now() / 1000);
+    const list = [
+        attachment('t1', 'received', 'AVAILABLE', { created_at: now - 60 }),
+        attachment('y1', 'received', 'AVAILABLE', { created_at: now - 86400 - 60 }),
+        attachment('o1', 'received', 'AVAILABLE', { created_at: now - 10 * 86400 }),
+    ];
+    const sandbox = sandboxWithViews(listRoutes(list));
+    activate(sandbox);
+    await waitFor(() => listHtml(sandbox).includes('filesCard-o1'));
+    const labels = (listHtml(sandbox).match(/<div class="files-day">([^<]*)<\/div>/g) || []).map((x) => x.replace(/<[^>]+>/g, ''));
+    assert.equal(labels.length, 3, 'three day headers');
+    assert.equal(labels[0], 'Today');
+    assert.equal(labels[1], 'Yesterday');
+    console.log('PASS: test_fx1_days_group_the_list');
+}
+
+async function test_fx1_multi_select_bulk_delete_asks_once_and_only_received_files() {
+    const list = [attachment('in1', 'received', 'AVAILABLE'), attachment('in2', 'received', 'AVAILABLE', { created_at: 1700000100 }), attachment('out1', 'sent', 'SENT')];
+    const deletes = [];
+    const sandbox = sandboxWithViews(listRoutes(list, async (url) => {
+        if (/^\/api\/attachments\/[^/]+\/delete-local$/.test(url)) { deletes.push(url); return json(202, { ok: true, command_id: 'c-' + deletes.length }); }
+        if (/^\/api\/mca\/commands\/c-/.test(url)) return json(200, { ok: true, command: { status: 'succeeded' } });
+        return undefined;
+    }));
+    const asked = [];
+    sandbox.window.MCDialog = { confirm: async (o) => { asked.push(o); return true; }, prompt: async () => null };
+    activate(sandbox);
+    await waitFor(() => listHtml(sandbox).includes('filesCard-out1'));
+    dispatch(sandbox, { 'data-files-action': 'select-mode' });
+    for (const id of ['in1', 'in2', 'out1']) {
+        const box = new FakeElement('input');
+        box.setAttribute('data-files-check', id);
+        box.checked = true;
+        for (const fn of sandbox._document.listeners.change || []) fn({ target: box });
+    }
+    assert.match(sandbox._document.getElementById('filesBulkCount').textContent, /3/, 'the bar counts the selection');
+    dispatch(sandbox, { 'data-files-action': 'bulk-delete' });
+    await waitFor(() => deletes.length === 2);
+    assert.equal(asked.length, 1, 'one confirmation for the whole selection');
+    assert.equal(asked[0].danger, true);
+    assert.ok(asked[0].message.includes('2'), 'it names the number of files that will be deleted (sent entries are skipped)');
+    console.log('PASS: test_fx1_multi_select_bulk_delete_asks_once_and_only_received_files');
+}
+
+async function test_fx1_executable_download_asks_first() {
+    const list = [attachment('exe', 'received', 'AVAILABLE', { file_name: 'setup.exe', mime_type: 'application/octet-stream' }),
+        attachment('pdf', 'received', 'AVAILABLE', { created_at: 1700000100 })];
+    const sandbox = sandboxWithViews(listRoutes(list));
+    const clicks = [];
+    const realCreate = sandbox._document.createElement.bind(sandbox._document);
+    sandbox._document.createElement = (tag) => { const el = realCreate(tag); el.click = () => clicks.push(el.href); return el; };
+    let answer = false;
+    const asked = [];
+    sandbox.window.MCDialog = { confirm: async (o) => { asked.push(o); return answer; }, prompt: async () => null };
+    activate(sandbox);
+    await waitFor(() => listHtml(sandbox).includes('filesCard-pdf'));
+    assert.ok(sandbox.window.MeshCenterFiles.isExecutableName('Run.BAT') && sandbox.window.MeshCenterFiles.isExecutableName('a.apk'));
+    assert.ok(!sandbox.window.MeshCenterFiles.isExecutableName('photo.jpg'));
+    dispatch(sandbox, { 'data-files-action': 'attach-download-device', 'data-attachment': 'pdf' });
+    assert.equal(asked.length, 0, 'an ordinary file downloads at once');
+    assert.equal(clicks.length, 1);
+    dispatch(sandbox, { 'data-files-action': 'attach-download-device', 'data-attachment': 'exe' });
+    await waitFor(() => asked.length === 1);
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(asked[0].danger, true, 'a danger dialog');
+    assert.equal(clicks.length, 1, 'Cancel downloads nothing');
+    answer = true;
+    dispatch(sandbox, { 'data-files-action': 'attach-download-device', 'data-attachment': 'exe' });
+    await waitFor(() => clicks.length === 2);
+    console.log('PASS: test_fx1_executable_download_asks_first');
+}
+
+async function test_fx1_waiting_card_says_how_long_the_link_stays_valid() {
+    const now = Math.floor(Date.now() / 1000);
+    const list = [attachment('w1', 'sent', 'SENT', { hard_expires_at: now + 5 * 86400 + 600 })];
+    const sandbox = sandboxWithViews(listRoutes(list));
+    activate(sandbox);
+    await waitFor(() => listHtml(sandbox).includes('filesCard-w1'));
+    assert.match(listHtml(sandbox), /Link valid for 5 more days/);
+    console.log('PASS: test_fx1_waiting_card_says_how_long_the_link_stays_valid');
+}
+
+async function test_fx1_phone_toolbar_search_more_menu_and_card_expansion() {
+    const list = [attachment('a1', 'received', 'AVAILABLE', { file_name: 'quarterly-report.pdf' }), attachment('a2', 'received', 'AVAILABLE', { file_name: 'photo.jpg', created_at: 1700000100 }),
+        attachment('a3', 'sent', 'SENT', { file_name: 'notes.txt', created_at: 1700000200 })];
+    const sandbox = sandboxWithViews(listRoutes(list));
+    activate(sandbox);
+    await waitFor(() => listHtml(sandbox).includes('filesCard-a3'));
+    const el = (id) => sandbox._document.getElementById(id);
+    const hidden = (id) => (el(id).hidden !== undefined ? el(id).hidden : el(id).style.display === 'none');
+    // the more menu opens and closes; Select starts selecting and closes it
+    dispatch(sandbox, { 'data-files-action': 'more-toggle' });
+    assert.equal(hidden('filesMoreMenu'), false, 'the menu opens');
+    assert.equal(el('filesMoreBtn').getAttribute('aria-expanded'), 'true');
+    dispatch(sandbox, { 'data-files-action': 'select-mode' });
+    assert.equal(hidden('filesMoreMenu'), true, 'a menu item closes the menu');
+    assert.equal(hidden('filesBulkBar'), false, 'Select started selecting');
+    dispatch(sandbox, { 'data-files-action': 'select-mode' });
+    // the storage line lives in the menu
+    assert.match(el('filesMenuUse').textContent, /Files use /);
+    // search: the count reads "N of M" and closing clears the filter
+    dispatch(sandbox, { 'data-files-action': 'search-open' });
+    const input = el('filesSearch');
+    input.value = 'photo';
+    for (const fn of sandbox._document.listeners.input || []) fn({ target: input });
+    assert.equal(el('filesSearchCount').textContent, '1 of 3');
+    assert.ok(listHtml(sandbox).includes('filesCard-a2') && !listHtml(sandbox).includes('filesCard-a1'), 'the list is filtered');
+    dispatch(sandbox, { 'data-files-action': 'search-close' });
+    assert.equal(el('filesSearchCount').textContent, '', 'closing clears the count');
+    assert.ok(listHtml(sandbox).includes('filesCard-a1'), 'and the filter');
+    // a phone card opens and stays open across a re-render (a poll)
+    dispatch(sandbox, { 'data-files-action': 'toggle-card', 'data-attachment': 'a1' });
+    dispatch(sandbox, { 'data-files-action': 'segment', 'data-segment': 'incoming' });
+    const html = listHtml(sandbox);
+    const card = html.slice(html.indexOf('filesCard-a1') - 60, html.indexOf('filesCard-a1') + 80);
+    assert.match(card, /files-card is-incoming is-open/, 'the expanded card stays expanded');
+    // the card carries the full name for the one-line ellipsis and the chip words in a title
+    assert.match(html, /files-card-name" title="quarterly-report\.pdf"/);
+    console.log('PASS: test_fx1_phone_toolbar_search_more_menu_and_card_expansion');
 }
 
 // ---- MCA-UX2: Accept needs no second confirmation, Reject asks once -----------------------------------------------
@@ -3070,15 +2868,11 @@ async function main() {
     await test_send_failed_settles_and_unlocks();
     await test_send_inflight_guard_blocks_double_submit();
     await test_send_unknown_retains_request_id();
-    await test_detail_terminal_not_refetched_every_poll();
-    await test_detail_inflight_coalesces();
     await test_provider_edit_patches_only_changed_fields();
     await test_provider_edit_rejects_min_gt_max();
     await test_provider_edit_clears_ttl_as_null();
     await test_modal_accessibility_and_escape();
     await test_filter_select_all_six_values_issue_correct_api_request();
-    await test_transfer_row_aria_pressed();
-    await test_phone_files_is_master_detail();
     await test_send_dialog_renders_custom_ttl_input();
     await test_send_file_feedback_shows_mime();
     await test_send_lists_all_providers_with_reason();
@@ -3090,6 +2884,7 @@ async function main() {
     await test_send_readiness_stale_response_dropped();
     await test_send_readiness_blank_custom_ttl_no_request();
     await test_send_custom_ttl_summary_local_validation();
+    await test_send_expiry_presets_are_limited_to_the_relay_range();
     await test_send_create_success_waits_for_refresh();
     await test_send_unknown_awaits_refresh();
     await test_provider_command_awaits_refresh();
@@ -3105,20 +2900,14 @@ async function main() {
     await test_counterparty_filter_a_b_a_switching();
     await test_counterparty_filter_refresh_keeps_filter();
     await test_counterparty_filter_reset_returns_full_list();
-    await test_counterparty_detail_invalidation_on_switch_to_empty();
-    await test_counterparty_switch_to_nonempty_selects_first_card();
     await test_key_action_does_not_change_selection();
     // PR 5: desktop Files workspace redesign.
-    await test_no_separate_contacts_or_targets_pane();
-    await test_channel_selection_shows_unsupported_notice();
     // PR 4 Finding 1: shared-store selection wiring.
     await test_contact_click_routes_through_shared_store();
     await test_second_contact_click_deselects_returns_full_list();
     await test_channel_selection_clears_node_counterparty();
     await test_send_dialog_preselects_valid_node();
     await test_send_dialog_no_fallback_for_invalid_channel_disappeared();
-    await test_same_query_detail_invalidation_on_empty_poll();
-    await test_same_query_replaces_selection_no_transient_stale_detail();
     await test_reactivation_issues_fresh_transfers_request();
     // PR 5 final correction (Finding 2): post-command target refresh.
     await test_contact_command_awaits_fresh_store_refresh();
@@ -3133,15 +2922,23 @@ async function main() {
     await test_send_pictures_untrusted_contact_offers_connect_securely_and_cannot_send();
     await test_send_pictures_loads_providers_without_the_files_tab_being_active();
     // MCA-UX1
-    await test_summary_parts_are_separated();
     await test_files_tab_dot_counts_new_attention_and_clears_while_files_is_shown();
     await test_chat_bubble_selects_its_transfer_even_before_the_list_has_loaded();
     await test_received_copies_storage_line_and_purge_confirmation();
     await test_purge_cancelled_or_nothing_old_sends_nothing();
+    // FX1: one column
+    await test_fx1_plain_status_table_pins_every_state_and_reason();
+    await test_fx1_cards_show_direction_in_words_one_chip_and_the_right_actions();
+    await test_fx1_segments_count_filter_and_are_remembered();
+    await test_fx1_days_group_the_list();
+    await test_fx1_multi_select_bulk_delete_asks_once_and_only_received_files();
+    await test_fx1_executable_download_asks_first();
+    await test_fx1_waiting_card_says_how_long_the_link_stays_valid();
+    await test_fx1_phone_toolbar_search_more_menu_and_card_expansion();
     // MCA-UX2
     await test_accept_and_download_sends_at_once_without_a_confirm_dialog();
     await test_reject_asks_once_with_a_danger_dialog_and_cancel_sends_nothing();
-    console.log('All files UI behavior tests passed (71 scenarios).');
+    console.log('All files UI behavior tests passed (69 scenarios).');
 }
 
 main()

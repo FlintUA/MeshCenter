@@ -104,6 +104,11 @@ class RelayVerificationError(RelayError):
     conflate with "try again"."""
 
 
+def _optional_positive_int(value):
+    """A published number, or None when the relay does not publish it (or sends something that is not a positive integer)."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
+
+
 @dataclasses.dataclass(frozen=True)
 class RelayLimits:
     max_ciphertext_bytes: int
@@ -114,6 +119,8 @@ class RelayLimits:
     default_hard_ttl_seconds: int
     max_hard_ttl_seconds: int
     default_download_grace_seconds: int
+    # FX1: a relay that publishes its minimum says so here (older relays do not; the node then assumes the usual 1 hour)
+    min_hard_ttl_seconds: Optional[int] = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -301,6 +308,7 @@ class RelayClient:
                 default_hard_ttl_seconds=limits["default_hard_ttl_seconds"],
                 max_hard_ttl_seconds=limits["max_hard_ttl_seconds"],
                 default_download_grace_seconds=limits["default_download_grace_seconds"],
+                min_hard_ttl_seconds=_optional_positive_int(limits.get("min_hard_ttl_seconds")),
             ),
             anonymous_upload=capabilities["anonymous_upload"],
             download_authorization=capabilities["download_authorization"],

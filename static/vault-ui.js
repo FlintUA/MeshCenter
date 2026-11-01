@@ -236,13 +236,32 @@
             esc(b.encrypted ? tr('vault.backup_delete_enc', null, 'Delete the backup') : tr('vault.backup_delete', null, 'Delete the plain backup')) + '</button></div>';
     }
 
+    // FX1: the one line in the header of Files: "Files are encrypted", or "locked" with the way to unlock
+    function renderLines() {
+        var hosts = doc.querySelectorAll ? doc.querySelectorAll('[data-vault-line]') : [];
+        var model = chipModel(status);
+        Array.prototype.forEach.call(hosts, function (host) {
+            if (!model) { host.hidden = true; host.innerHTML = ''; host.className = 'files-vault-line'; return; }
+            host.hidden = false;
+            var locked = model.state === 'locked';
+            host.className = 'files-vault-line' + (locked ? ' is-locked' : '');
+            var text = locked ? tr('vault.line_locked', null, 'Files are encrypted and locked')
+                : (model.state === 'migrating' ? tr('vault.chip_title_migrating', null, 'A vault job is running or was interrupted') : tr('vault.line_encrypted', null, 'Files are encrypted'));
+            host.innerHTML = '<span class="vault-line-text">🔒 ' + esc(text) + '</span>' +
+                (locked ? '<button type="button" class="vault-banner-btn" data-vault-action="unlock">' + esc(tr('vault.unlock', null, 'Unlock')) + '</button>' : '');
+        });
+    }
+
     function renderBanner() {
         var hosts = doc.querySelectorAll ? doc.querySelectorAll('[data-vault-banner]') : [];
         var lines = bannerModel(status);
         Array.prototype.forEach.call(hosts, function (host) {
-            if (!lines.length) { host.hidden = true; host.innerHTML = ''; return; }
+            // a host marked "backups" shows only the plain-backup warning and the interrupted job: the line above it says "locked"
+            var only = host.getAttribute && host.getAttribute('data-vault-banner') === 'backups';
+            var mine = only ? lines.filter(function (line) { return line.kind !== 'locked'; }) : lines;
+            if (!mine.length) { host.hidden = true; host.innerHTML = ''; return; }
             host.hidden = false;
-            host.innerHTML = lines.map(function (line) {
+            host.innerHTML = mine.map(function (line) {
                 if (line.kind === 'locked') {
                     var text = tr('vault.banner_locked', { count: line.items }, 'MCAttach is locked. {count} transfers are hidden until you unlock it.');
                     if (line.offers > 0) text += ' ' + tr('vault.banner_offers', { count: line.offers }, '{count} file offers are waiting.');
@@ -315,7 +334,7 @@
         });
     }
 
-    function renderAll() { renderChip(); renderBanner(); renderCard(); renderNotices(); }
+    function renderAll() { renderChip(); renderLines(); renderBanner(); renderCard(); renderNotices(); }
 
     // ---- the dialog / bottom sheet -------------------------------------------------------------------------------
     function closeSheet() {

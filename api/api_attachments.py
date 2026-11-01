@@ -104,6 +104,7 @@ from meshsrv.attachments.provider_registry import (
     normalize_origin,
 )
 from meshsrv.attachments.recipient_snapshot import RecipientRejectionReason, evaluate_recipient_trust
+from meshsrv.attachments.thumbnail import ThumbnailError, make_thumbnail
 from meshsrv.attachments.vault.errors import VaultError
 from meshsrv.attachments.vault import migration as vault_migration, passphrase as vault_passphrase, runtime as vault_runtime
 from meshsrv.attachments.snapshots import (
@@ -1472,6 +1473,61 @@ def register_attachments_routes(app, handle_errors):
         response.headers["Content-Security-Policy"] = "sandbox"
         return response
 
+    _THUMB_STATUS = {"not_an_image": 404, "type_mismatch": 415, "undecodable": 415, "too_large": 413, "busy": 503}
+    _THUMB_READ_LIMIT = 5 * 1024 * 1024 + 1024
+
+    @app.route("/api/attachments/<attachment_id>/thumbnail", methods=["GET"])
+    @handle_errors
+    @_mca_error_boundary
+    @_vault_gated
+    def get_attachment_thumbnail(attachment_id):
+        """FX1: a small JPEG for a Files card. Only for a content-available image of the three previewed types whose magic bytes
+        match; made in memory, never stored (under the vault the decrypted bytes live for this call only and the answer is
+        `no-store`). Anything else is an error the page answers with the type icon."""
+        facade = _facade()
+        if facade is None:
+            return _not_ready()
+        record, err = _resolve_attachment(facade, attachment_id)
+        if err is not None:
+            body, status = err
+            return body, status
+        descriptor = record.descriptor
+        if descriptor is None or descriptor.disposition is not ContentDisposition.INLINE:
+            return _json_error("not_available", "no preview for this file"), 404
+        try:
+            file_path = facade.resolve_content_locator(descriptor.locator)
+        except ContentLocatorError:
+            return _json_error("content_missing", "content file is missing"), 404
+        if not file_path.is_file():
+            return _json_error("content_missing", "content file is missing"), 404
+        content_codec = getattr(facade, "content_codec", lambda: None)()
+        encrypted = str(file_path).endswith(".mcv") or (content_codec is not None and content_codec.active)
+        try:
+            if encrypted:
+                if content_codec is None or not content_codec.active:
+                    return _json_error("vault_not_available", "The vault is not available"), 409
+                with content_codec.open_content(file_path, attachment_id) as handle:
+                    data = handle.read(_THUMB_READ_LIMIT)
+            else:
+                if file_path.stat().st_size > _THUMB_READ_LIMIT:
+                    return _json_error("too_large", "the picture is too large for a preview"), 413
+                data = file_path.read_bytes()
+        except OSError:
+            return _json_error("content_missing", "content file is missing"), 404
+        except VaultError as error:
+            return _vault_error(error)
+        try:
+            thumb = make_thumbnail(data, descriptor.mime_type)
+        except ThumbnailError as error:
+            return _json_error(error.code, "no preview for this file"), _THUMB_STATUS.get(error.code, 415)
+        finally:
+            data = None
+        response = Response(thumb, mimetype="image/jpeg")
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Content-Security-Policy"] = "sandbox"
+        response.headers["Cache-Control"] = "no-store" if encrypted else "private, max-age=300"
+        return response
+
     def _serve_vault_content(content_codec, attachment_id, file_path, inline, served_mime, safe_name):
         """MCA-VAULT (ADR-0013 Decisions 4 and 6): the content is an `<id>.mcv`; no decrypted temp file is ever written.
 
@@ -1565,8 +1621,9 @@ def register_attachments_routes(app, handle_errors):
         if err is not None:
             body, status = err
             return body, status
-        if not record.saved:
-            return _json_error("not_saved", "no saved content to delete"), 409
+        # FX1: any received file with a copy on this node (saved or still in the cache) can be deleted
+        if record.direction != "received" or not (record.saved or record.content_available):
+            return _json_error("not_saved", "no local copy to delete"), 409
         command = Command(
             command_id=mint_command_id(),
             kind="attachment_delete_local_content",

@@ -70,16 +70,6 @@
     var ATTENTION_STATES = { WAITING_CONSENT: 1, WAITING_KEY: 1, WAITING_PROVIDER: 1,
         FAILED_VALIDATION: 1, FAILED_UPLOAD: 1, FAILED_RADIO: 1, FAILED: 1 };
 
-    // The six visible archive filters -> list-endpoint query (C5 §10.2).
-    var FILTER_API = {
-        all:      { direction: 'all', filter: 'all' },
-        received: { direction: 'received', filter: 'all' },
-        sent:     { direction: 'sent', filter: 'all' },
-        pending:  { direction: 'all', filter: 'pending' },
-        saved:    { direction: 'all', filter: 'saved' },
-        errors:   { direction: 'all', filter: 'errors' },
-    };
-
     var IMAGE_MIME = { 'image/jpeg': 1, 'image/png': 1, 'image/webp': 1 };
     var ALLOWED_MIME = { 'image/jpeg': 1, 'image/png': 1, 'image/webp': 1,
         'application/pdf': 1, 'text/plain': 1, 'text/csv': 1, 'application/json': 1 };
@@ -127,28 +117,6 @@
     // plain-language via FILES_STATE_LABELS: "Rejected", "Expired",
     // "Cancelled", "Validation failed", etc.) rather than merged into one
     // generic "Failed"/"Done" bucket that would lose the distinction.
-    var FILES_SIMPLE_STATE_BUCKET = {
-        DRAFT: 'preparing', VALIDATING: 'preparing', ENCRYPTING: 'preparing',
-        QUEUED_UPLOAD: 'uploading', UPLOADING: 'uploading', READY_TO_SEND: 'uploading',
-        SENT: 'waiting', RECEIVED: 'waiting',
-        OFFER_RECEIVED: 'waiting', WAITING_KEY: 'waiting', WAITING_PROVIDER: 'waiting',
-        WAITING_NETWORK: 'waiting', WAITING_CONSENT: 'waiting',
-        DOWNLOADING: 'receiving', VERIFYING: 'receiving',
-        DOWNLOADED: 'ready', AVAILABLE: 'ready',
-    };
-    var FILES_SIMPLE_STATE_LABELS = {
-        preparing: 'Preparing',
-        uploading: 'Uploading',
-        // Shared by a sender's SENT/RECEIVED (waiting on the recipient) and a
-        // receiver's own pre-download states (waiting on key exchange/relay/
-        // network/consent) - a single direction-neutral label rather than
-        // two near-duplicate keys, since the viewer IS the recipient in the
-        // second case and "waiting for recipient" would be wrong there.
-        waiting: 'Waiting',
-        receiving: 'Receiving',
-        ready: 'Ready',
-    };
-
     var FILES_CONTACT_STATUS_LABELS = {
         trusted: 'Trusted',
         confirmation_required: 'Confirmation required',
@@ -234,12 +202,6 @@
         loading: {},              // per-resource in-flight guard (key -> Promise; joinable, G1)
         followUp: {},             // per-resource coalesced post-command authoritative read (G1)
         busy: {},                 // resourceKey -> commandId currently tracked
-        detailSeq: 0,             // guards stale detail renders (V2)
-        detailInFlight: false,    // at most one detail fetch at a time (R4)
-        detailPending: null,      // coalesced follow-up id, or null (R4)
-        detailFingerprint: null,  // signature of the last-rendered detail (R4)
-        detailOpen: { advanced: false, tech: false }, // <details> open state, survives a poll-driven re-render (Step 2 regression fix)
-
         contacts: [],             // node targets projected from the shared store (PR 4)
         providers: [],
         connectivity: { internet: 'unknown', relays: {} },
@@ -250,17 +212,21 @@
         attachments: [],
         total: 0,
         truncated: false,
-        filter: 'all',
         counterparty: '',         // active counterparty filter (canonical !hex contact id); '' = none (P3)
-        lastTransfersQueryKey: '', // last query applied by loadTransfers - a change invalidates detail (P3)
+        lastTransfersQueryKey: '', // last query applied by loadTransfers
         search: '',
-        selectedId: null,
-        pendingSelectId: null,    // a transfer to select as soon as the list has it (MCA-UX1)
-        scrollToSelected: false,
-        view: 'list',             // phone only: 'list' or 'detail', one pane at a time (the CSS reads data-view)
-        ignorePop: false,         // the popstate we caused ourselves with history.back()
-        viewPushed: false,        // a history entry stands for the open Details view
-        listScroll: 0,            // the page scroll to return to when going back to the list
+        segment: 'all',           // FX1: incoming / sent / all, remembered per device
+        pendingSelectId: null,    // a transfer to bring into view as soon as the list has it (MCA-UX1)
+        focusId: '',              // the card to scroll to and flash after the next render
+        selectMode: false,        // FX1: multi-select (long press on touch, the Select button elsewhere)
+        checked: {},              // id -> true while selecting
+        openMore: {},             // id -> true: the "More details" of this card is open (survives a poll re-render)
+        openComment: {},          // id -> true: the full comment is shown
+        openCard: {},             // id -> true: the phone card is expanded (actions and details shown)
+        searchOpen: false,        // phone: the search field replaces the toolbar
+        moreOpen: false,          // phone: the more menu is open
+        moreExtra: {},            // id -> timeline / deliveries html fetched when "More details" was first opened
+        chatScrolledFor: '',      // the contact the messenger layout was last scrolled to the bottom for
         storage: null,            // {count, bytes}: the received copies in cache/incoming (MCA-UX1)
 
         sendSignature: null,      // semantic send-form signature (C7 idempotency)
@@ -312,16 +278,6 @@
 
     function filesStateLabel(s) { return t('files.state.' + s, FILES_STATE_LABELS[s] || s); }
 
-    // Step 5: the "Normal" detail level's plain-language status - the raw
-    // backend state stays available (unchanged) in the Technical tier via
-    // filesStateLabel(). Falls back to the raw state's own label for any
-    // state this module doesn't know how to bucket, rather than showing
-    // nothing or an unbucketed placeholder.
-    function simpleStatusLabel(a) {
-        var bucket = FILES_SIMPLE_STATE_BUCKET[a.state];
-        if (!bucket) return filesStateLabel(a.state);
-        return t('files.simple_state.' + bucket, FILES_SIMPLE_STATE_LABELS[bucket] || bucket);
-    }
     function filesContactStatusLabel(s) { return t('files.contact.' + s, FILES_CONTACT_STATUS_LABELS[s] || s); }
     function filesKeyRequestStateLabel(s) { return t('files.key_request_state.' + s, FILES_KEY_REQUEST_STATE_LABELS[s] || s); }
     function fileUnavailableReasonLabel(s) { return t('files.unavailable.' + s, FILES_UNAVAILABLE_REASON_LABELS[s] || s || 'Unknown'); }
@@ -474,7 +430,6 @@
             var dl = state.dialog;
             if (dl.className.indexOf('is-providers') !== -1) renderProviderSettings();
         }
-        if (state.active && state.selectedId) renderDetail(state.selectedId, true);
         if (state.active) renderTransfers();
     }
 
@@ -681,16 +636,13 @@
         });
     }
 
+    // ---- the list: always the whole history of the selected contact (or of everybody); the segment narrows it in the page --
     function transfersQueryKey() {
-        var mapping = FILTER_API[state.filter] || FILTER_API.all;
-        return mapping.direction + '|' + mapping.filter + '|' + (state.counterparty || '');
+        return 'all|all|' + (state.counterparty || '');
     }
 
     function transfersUrl() {
-        var mapping = FILTER_API[state.filter] || FILTER_API.all;
-        var url = '/api/attachments?direction=' + encodeURIComponent(mapping.direction) +
-            '&filter=' + encodeURIComponent(mapping.filter) +
-            '&limit=' + LIST_LIMIT;
+        var url = '/api/attachments?direction=all&filter=all&limit=' + LIST_LIMIT;
         if (state.counterparty) url += '&counterparty=' + encodeURIComponent(state.counterparty);
         return url;
     }
@@ -698,29 +650,13 @@
     function loadTransfers() {
         var url = transfersUrl();
         var queryKey = transfersQueryKey();
-        // P3: the guard key carries the epoch so a reactivated tab never joins
-        // a request left in-flight from a previous activation (which would be
-        // dropped on epoch mismatch, leaving the fresh activation with no data
-        // until the next timer tick). Same-query reloads within one activation
-        // still share the key (G1 join/coalesce preserved).
+        // P3: the guard key carries the epoch so a reactivated tab never joins a request left in flight by a previous activation
         var key = 'transfers:' + state.epoch + ':' + queryKey;
-        // A direction/filter/counterparty change invalidates the old selection
-        // and any in-flight/rendered detail immediately, so the old
-        // counterparty's card can't linger during the fetch gap.
-        if (state.lastTransfersQueryKey !== queryKey) {
-            state.lastTransfersQueryKey = queryKey;
-            state.selectedId = null;
-            invalidateDetail();
-        }
-        // The response is applied only if its query (direction|filter|counterparty)
-        // is still the active one. A stale out-of-order response from a superseded
-        // filter/counterparty switch is dropped (including a stale error); a
-        // same-query reload still joins/coalesces via the query-keyed guard (G1
-        // preserved) instead of being swallowed.
+        state.lastTransfersQueryKey = queryKey;
         return guardedLoad(key, function () {
             return api(url);
         }, function (r) {
-            if (transfersQueryKey() !== queryKey) return; // superseded - drop, incl. errors
+            if (transfersQueryKey() !== queryKey) return; // superseded by another contact: drop, including a stale error
             if (r.status !== 200 || !r.data || r.data.ok !== true) {
                 if (r.status === 503) renderTransfersError(t('files.not_ready', 'MCAttach service is not ready'));
                 else renderTransfersError(filesErrorCode(r.data));
@@ -729,57 +665,19 @@
             state.attachments = Array.isArray(r.data.attachments) ? r.data.attachments : [];
             state.total = r.data.total || 0;
             state.truncated = state.total > LIST_LIMIT;
-
-            // Compute the new selection BEFORE mutating detail/selection state.
-            // A selection that changed - or became null - under the SAME query
-            // (the selected transfer left the pending filter, was deleted, or
-            // the server returned an empty list) must invalidate the detail
-            // too, not just a query-key change: a late response for the old
-            // selection must never repaint a transfer that's no longer selected.
-            var nextId = state.selectedId;
             if (state.pendingSelectId && state.attachments.some(function (a) { return a.id === state.pendingSelectId; })) {
-                nextId = state.pendingSelectId;   // MCA-UX1: opened from a chat bubble
+                var pending = state.attachments.filter(function (a) { return a.id === state.pendingSelectId; })[0];
+                if (state.segment !== 'all' && segmentOf(pending) !== state.segment) { state.segment = 'all'; writeSegment('all'); }
+                state.focusId = state.pendingSelectId;   // MCA-UX1: opened from a chat bubble
                 state.pendingSelectId = null;
-                state.scrollToSelected = true;
-                openDetailView();
             }
-            if (!nextId || !state.attachments.some(function (a) { return a.id === nextId; })) {
-                nextId = state.attachments.length ? state.attachments[0].id : null;
-            }
-            if (nextId !== state.selectedId) {
-                invalidateDetail();
-                // the open transfer is gone (deleted, filtered out): back to the list, not to another transfer's details
-                if (state.view === 'detail' && !state.scrollToSelected) closeDetailView(false);
-            }
-            state.selectedId = nextId;
-
             renderTransfers();
-            renderSummaries();
+            renderFooter();
             noteFilesSeen();
-            if (state.scrollToSelected) { state.scrollToSelected = false; scrollSelectedIntoView(); }
-            if (state.selectedId) {
-                var sel = null;
-                for (var i = 0; i < state.attachments.length; i++) {
-                    if (state.attachments[i].id === state.selectedId) { sel = state.attachments[i]; break; }
-                }
-                // R4: a terminal attachment whose list projection is unchanged
-                // since the last detail render does not need a per-poll detail
-                // fetch; only active (still-changing) or changed attachments do.
-                if (sel && (!isTerminalState(sel.state) || detailFingerprint(sel) !== state.detailFingerprint)) {
-                    renderDetail(state.selectedId, true);
-                }
-            } else {
-                // No selection - ensure the panel and fingerprint are clear.
-                state.detailFingerprint = null;
-                clearDetailPanel();
-            }
         });
     }
 
-    // P3: the post-command authoritative refresh for the transfer list keys off
-    // the current epoch + query (direction|filter|counterparty), so a command
-    // settling after a filter/counterparty switch - or after a reactivation -
-    // refreshes the query the user is actually looking at, never a stale bucket.
+    // P3: the post-command authoritative refresh keys off the current epoch + query
     function refreshTransfers() {
         return refreshAfterCommand('transfers:' + state.epoch + ':' + transfersQueryKey(), loadTransfers);
     }
@@ -822,37 +720,158 @@
 
     // ---- rendering: archive (C5) -------------------------------------------
 
-    function renderTransfersError(message) {
-        var list = getEl('filesArchiveList');
-        if (!list) return;
-        list.innerHTML = '<div class="files-empty">' + esc(message) + '</div>';
+    // ---- rendering: detail + action matrix (C4/C6) -------------------------
+
+    // ---- FX1 Phase A: plain statuses ---------------------------------------------------------------------------------
+    // The ONE place that turns the internal state machine into what a person reads. Internal codes only appear under
+    // "More details" in the card. tests/frontend/test_files_status.mjs pins this table.
+    var PLAIN_STATUS = {
+        sent: {
+            DRAFT: 'sending', VALIDATING: 'sending', ENCRYPTING: 'sending', QUEUED_UPLOAD: 'sending', UPLOADING: 'sending',
+            READY_TO_SEND: 'sending',
+            SENT: 'waiting_recipient', RECEIVED: 'waiting_recipient',
+            DOWNLOADED: 'delivered',
+            EXPIRED: 'expired', REVOKED: 'revoked', CANCELLED: 'cancelled', REJECTED: 'declined',
+            FAILED_VALIDATION: 'not_delivered', FAILED_UPLOAD: 'not_delivered', FAILED_RADIO: 'not_delivered',
+        },
+        received: {
+            OFFER_RECEIVED: 'waiting_in', WAITING_KEY: 'waiting_key', WAITING_PROVIDER: 'waiting_relay',
+            WAITING_NETWORK: 'waiting_internet', WAITING_CONSENT: 'waiting_ok',
+            DOWNLOADING: 'downloading', VERIFYING: 'downloading',
+            AVAILABLE: 'received',
+            EXPIRED: 'expired_in', REJECTED: 'declined_in', CANCELLED: 'cancelled_in', FAILED: 'not_received',
+        },
+    };
+    var PLAIN_TONE = {
+        sending: 'progress', waiting_recipient: 'wait', delivered: 'ok', expired: 'bad', revoked: 'bad', cancelled: 'bad',
+        declined: 'bad', not_delivered: 'bad',
+        waiting_in: 'wait', waiting_key: 'wait', waiting_relay: 'wait', waiting_internet: 'wait', waiting_ok: 'wait',
+        downloading: 'progress', received: 'ok', expired_in: 'bad', declined_in: 'bad', cancelled_in: 'bad', not_received: 'bad',
+    };
+    var PLAIN_LABELS = {
+        sending: 'Sending', waiting_recipient: 'Waiting for recipient', delivered: 'Delivered', expired: 'Not delivered: the link expired',
+        revoked: 'Cancelled by you', cancelled: 'Cancelled', declined: 'Not delivered: the recipient declined',
+        not_delivered: 'Not delivered',
+        waiting_in: 'Waiting', waiting_key: "Waiting for the sender's key", waiting_relay: 'Waiting for the relay',
+        waiting_internet: 'Waiting for the internet', waiting_ok: 'Waiting for your OK',
+        downloading: 'Downloading', received: 'Received', expired_in: "Not received: the sender's link expired",
+        declined_in: 'You declined this file', cancelled_in: 'Cancelled by the sender', not_received: 'Not received',
+    };
+    // an error code that only means "trying again automatically": the status stays "Sending" with a muted note
+    var RETRYING_CODES = { relay_unavailable: 1, radio_send_failed: 1, radio_send_not_confirmed: 1 };
+    var REASON_BY_CODE = {
+        recipient_not_trusted: 'key_not_trusted', no_recipients: 'no_recipient', source_file_missing: 'source_missing',
+        disk_low_block: 'disk_low', recipient_provider_unknown: 'recipient_relay',
+        mime_not_allowed: 'type_not_allowed', extension_not_allowed: 'type_not_allowed',
+        pending_offer_signature_invalid: 'sender_unverified', provider_missing: 'no_relay',
+        chunk_fetch_failed: 'download_failed',
+        descriptor_signature_invalid: 'damaged', manifest_invalid: 'damaged', header_size_mismatch: 'damaged',
+        chunk_digest_mismatch: 'damaged', chunk_aead_failed: 'damaged', plaintext_digest_mismatch: 'damaged',
+    };
+    var REASON_LABELS = {
+        key_not_trusted: "the contact's key is not trusted", no_recipient: 'there is no recipient', source_missing: 'the file is no longer on this node',
+        disk_low: 'not enough free space on this node', recipient_relay: 'the recipient does not use this relay',
+        type_not_allowed: 'this file type is not accepted', sender_unverified: 'the sender could not be verified',
+        no_relay: 'no relay is set up here', download_failed: 'the download failed', damaged: 'the file was damaged or not authentic',
+        relay_refused: 'the relay refused the file', unknown: 'something went wrong',
+    };
+
+    function reasonKeyFor(code) {
+        if (!code) return '';
+        if (REASON_BY_CODE[code]) return REASON_BY_CODE[code];
+        if (/^(relay_http_|create_upload_http_|relay_)/.test(code)) return 'relay_refused';
+        return 'unknown';
+    }
+
+    function reasonText(code) {
+        var key = reasonKeyFor(code);
+        return key ? t('files.reason.' + key, REASON_LABELS[key]) : '';
+    }
+
+    // {key, tone, text, retrying, busy}: key is the plain status, text what the chip says (with the reason for a failure)
+    function plainStatus(a) {
+        var side = a.direction === 'sent' ? 'sent' : 'received';
+        var key = PLAIN_STATUS[side][a.state] || (side === 'sent' ? 'sending' : 'waiting_in');
+        // a recipient that cannot use this relay will never get the file: a state of its own, not "waiting"
+        if (side === 'sent' && a.error_code === 'recipient_provider_unknown' && !SENDER_TERMINAL[a.state]) key = 'not_delivered';
+        var retrying = Boolean(key === 'sending' && a.error_code && RETRYING_CODES[a.error_code]);
+        var text = t('files.status.' + key, PLAIN_LABELS[key]);
+        if ((key === 'not_delivered' || key === 'not_received') && a.error_code) {
+            var reason = reasonText(a.error_code);
+            if (reason) {
+                text = tparams('files.status.' + key + '_reason', { reason: reason }, PLAIN_LABELS[key] + ': ' + reason);
+            }
+        }
+        var tone = PLAIN_TONE[key] || 'wait';
+        // a short word for a narrow phone (a tooltip does not exist on touch); the full text is shown in the opened card
+        return { key: key, tone: tone, text: text, short: t('files.status_short.' + key, text), retrying: retrying, busy: tone === 'progress' };
+    }
+
+    // "Link valid for 2 more days": only while the file still waits (nobody has it yet)
+    function plural(key, count, fallbackOne, fallbackOther) {
+        if (typeof window !== 'undefined' && window.I18N && typeof window.I18N.tOrFallback === 'function' &&
+            window.I18N.tOrFallback(key, {}, null) !== null && typeof window.I18N.plural === 'function') {
+            return window.I18N.plural(key, count, {});
+        }
+        return (count === 1 ? fallbackOne : fallbackOther).replace('{count}', String(count));
+    }
+
+    function linkValidText(a) {
+        if (!a.hard_expires_at) return '';
+        var key = plainStatus(a).key;
+        if (key !== 'waiting_recipient' && key !== 'waiting_in' && key !== 'waiting_key' && key !== 'waiting_relay' &&
+            key !== 'waiting_internet' && key !== 'waiting_ok') return '';
+        var left = a.hard_expires_at - Math.floor(Date.now() / 1000);
+        if (left <= 0) return '';
+        if (left >= 2 * 86400) {
+            var days = Math.round(left / 86400);
+            return plural('files.link_valid_days', days, 'Link valid for {count} more day', 'Link valid for {count} more days');
+        }
+        if (left >= 2 * 3600) {
+            var hours = Math.round(left / 3600);
+            return plural('files.link_valid_hours', hours, 'Link valid for {count} more hour', 'Link valid for {count} more hours');
+        }
+        var minutes = Math.max(1, Math.round(left / 60));
+        return plural('files.link_valid_minutes', minutes, 'Link valid for {count} more minute', 'Link valid for {count} more minutes');
+    }
+
+    // ---- executable files: a short warning before they leave the node --------------------------------------------------
+    var EXECUTABLE_EXT = /\.(exe|msi|apk|sh|bat|cmd|ps1|jar|js|vbs|scr|com|app|dmg|pkg|deb|rpm|bin|run|py|pl|php|lnk|reg|hta|wsf|cpl|msc|gadget|appimage)$/i;
+    function isExecutableName(name) { return Boolean(name && EXECUTABLE_EXT.test(String(name))); }
+
+    // ---- segments, grouping, cards -----------------------------------------------------------------------------------
+    var SEGMENT_KEY = 'mc.files.segment';
+    function readSegment() {
+        try {
+            var v = window.localStorage.getItem(SEGMENT_KEY);
+            return (v === 'incoming' || v === 'sent' || v === 'all') ? v : 'all';
+        } catch (e) { return 'all'; }
+    }
+    function writeSegment(v) { try { window.localStorage.setItem(SEGMENT_KEY, v); } catch (e) { /* private window: not remembered */ } }
+
+    function segmentOf(a) { return a.direction === 'sent' ? 'sent' : 'incoming'; }
+
+    function segmentCounts(list) {
+        var c = { incoming: 0, sent: 0, all: list.length };
+        list.forEach(function (a) { c[segmentOf(a)]++; });
+        return c;
     }
 
     function visibleAttachments() {
         var q = state.search.trim().toLowerCase();
-        if (!q) return state.attachments;
         return state.attachments.filter(function (a) {
-            var provider = providerById(a.provider_id);
+            if (state.segment !== 'all' && segmentOf(a) !== state.segment) return false;
+            if (!q) return true;
             var contact = contactForAttachment(a);
-            var hay = [
-                a.file_name || '',
-                (contact && contact.name) || '',
-                (contact && contact.contact_id) || '',
-                (provider && provider.display_name) || '',
-                (provider && provider.origin) || '',
-                filesStateLabel(a.state),
-            ].join(' ').toLowerCase();
+            var hay = [a.file_name || '', (contact && contact.name) || '', (contact && contact.contact_id) || '',
+                a.comment || '', plainStatus(a).text].join(' ').toLowerCase();
             return hay.indexOf(q) !== -1;
         });
     }
 
     function contactForAttachment(a) {
-        // §7.5 counterparty_contact_id: a canonical transport address the
-        // worker derives from routing data (sent DIRECT delivery route_id /
-        // received DIRECT reply_route_id), never from recipient.principal_id
-        // (a different 16-hex namespace). When it is null (missing / ambiguous
-        // / non-DIRECT) there is no trustworthy contact mapping, so return
-        // null rather than guessing from a wrong-namespace recipient field.
+        // §7.5 counterparty_contact_id: a canonical transport address the worker derives from routing data, never from
+        // recipient.principal_id (a different namespace). Null means there is no trustworthy mapping: never guess.
         if (!a.counterparty_contact_id) return null;
         return findContact(a.counterparty_contact_id);
     }
@@ -864,101 +883,373 @@
         return null;
     }
 
+    function dayStart(ms) { var d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime(); }
+
+    function dayLabel(epochSeconds) {
+        var ms = epochSeconds * 1000;
+        var today = dayStart(Date.now());
+        var that = dayStart(ms);
+        var diff = Math.round((today - that) / 86400000);
+        if (diff === 0) return t('files.day_today', 'Today');
+        if (diff === 1) return t('files.day_yesterday', 'Yesterday');
+        var locale = (typeof window !== 'undefined' && window.I18N && window.I18N.locale) || undefined;
+        try {
+            return new Date(ms).toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long', year: diff > 300 ? 'numeric' : undefined });
+        } catch (e) { return new Date(ms).toDateString(); }
+    }
+
+    function clock(epochSeconds) {
+        var locale = (typeof window !== 'undefined' && window.I18N && window.I18N.locale) || undefined;
+        try { return new Date(epochSeconds * 1000).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; }
+    }
+
+    // newest first, or oldest first like a messenger when one contact is selected
+    function groupByDay(list, ascending) {
+        var sorted = list.slice().sort(function (a, b) { return ascending ? a.created_at - b.created_at : b.created_at - a.created_at; });
+        var groups = [];
+        sorted.forEach(function (a) {
+            var key = dayStart((a.created_at || 0) * 1000);
+            var last = groups[groups.length - 1];
+            if (!last || last.key !== key) {
+                last = { key: key, label: dayLabel(a.created_at || 0), items: [] };
+                groups.push(last);
+            }
+            last.items.push(a);
+        });
+        return groups;
+    }
+
+    function thumbOk(a) {
+        if (a.locked || !a.content_available || !IMAGE_MIME[a.mime_type]) return false;
+        return !(a.direction === 'sent' && a.state === 'DOWNLOADED');       // after Delivered the card shows the type icon
+    }
+
+    function whoLine(a) {
+        var contact = contactForAttachment(a);
+        var name = contact ? (contact.name || contact.contact_id) : (a.counterparty_contact_id || '');
+        if (!name) return a.direction === 'sent' ? t('files.sent', 'Sent') : t('files.received', 'Received');
+        return a.direction === 'sent'
+            ? tparams('files.card.sent_to', { name: name }, 'Sent to ' + name)
+            : tparams('files.card.received_from', { name: name }, 'Received from ' + name);
+    }
+
+    function cardActionsHtml(a) {
+        var out = [];
+        var more = [];
+        if (a.locked) {
+            return { primary: '<button type="button" class="files-action-btn" data-vault-action="unlock">' + esc(t('vault.unlock', 'Unlock')) + '</button>', more: '' };
+        }
+        if (a.direction === 'sent') {
+            if (SENDER_AUTOMATIC.indexOf(a.state) !== -1) {
+                out.push(actionBtn(a.id, 'attach-retry', t('files.retry', 'Retry'), false));
+                out.push(actionBtn(a.id, 'attach-cancel', t('files.cancel', 'Cancel'), true));
+            } else if (SENDER_REVOKABLE.indexOf(a.state) !== -1) {
+                more.push(actionBtn(a.id, 'attach-revoke', t('files.revoke', 'Revoke'), true));
+            }
+            if (a.content_available) {
+                if (IMAGE_MIME[a.mime_type]) out.push(actionBtn(a.id, 'attach-open', t('files.open_preview', 'Open'), false));
+                out.push(actionBtn(a.id, 'attach-download-device', t('files.download_to_device', 'Download to device'), false));
+            }
+        } else if (RECEIVER_AUTOMATIC.indexOf(a.state) !== -1) {
+            out.push(actionBtn(a.id, 'attach-retry', t('files.retry', 'Retry'), false));
+        } else if (a.state === 'WAITING_CONSENT') {
+            out.push(actionBtn(a.id, 'attach-download', t('files.accept_download', 'Download'), false));
+            out.push(actionBtn(a.id, 'attach-reject', t('files.decline', 'Decline'), true));
+        } else if (a.state === 'AVAILABLE' && a.content_available) {
+            if (IMAGE_MIME[a.mime_type]) out.push(actionBtn(a.id, 'attach-open', t('files.open_preview', 'Open'), false));
+            out.push(actionBtn(a.id, 'attach-download-device', t('files.download_to_device', 'Download to device'), false));
+            out.push(actionBtn(a.id, 'attach-delete-local', t('files.delete', 'Delete'), true));
+        }
+        return { primary: out.join(''), more: more.join('') };
+    }
+
+    function moreRowsHtml(a) {
+        var provider = providerById(a.provider_id);
+        var rows = [
+            ['files.detail_file', 'File', a.locked ? '-' : (a.file_name || '-')],
+            ['files.more_state', 'Internal state', filesStateLabel(a.state)],
+            ['files.detail_created', 'Created', fmtDate(a.created_at)],
+            ['files.detail_expires', 'Relay link expires', a.hard_expires_at ? fmtDate(a.hard_expires_at) + ' (' + fmtRel(a.hard_expires_at) + ')' : '-'],
+            ['files.detail_provider', 'Relay used', provider ? (provider.display_name || provider.origin || a.provider_id) : (a.provider_id || '-')],
+            ['files.tech_id', 'ID', a.id],
+            ['files.detail_type', 'Type', a.mime_type || '-'],
+            ['files.detail_route', 'Route', t('files.detail_direct', 'Direct')],
+            ['files.detail_grace', 'Download grace', fmtGrace(a.download_grace_seconds)],
+            ['files.tech_cipher_size', 'Ciphertext size', fmtBytes(a.cipher_size)],
+            ['files.tech_provider_id', 'Provider ID', a.provider_id || '-'],
+            ['files.tech_delivery_id', 'Primary delivery', a.primary_delivery_id || '-'],
+        ];
+        if (a.error_code) rows.push(['files.tech_error_code', 'Raw error code', a.error_code]);
+        return detailRowsHtml(rows);
+    }
+
+    var CHEVRON = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+    // Phone: collapsed = three lines (who, name, size + time + status); a tap opens the rest (the extra block). Elsewhere the
+    // extra block is always shown. One markup, the CSS decides.
+    function cardHtml(a) {
+        var status = plainStatus(a);
+        var actions = cardActionsHtml(a);
+        var incoming = a.direction !== 'sent';
+        var name = a.locked ? '🔒 ' + t('vault.locked_name', 'Locked') : (a.file_name || t('files.encrypted_file', 'Encrypted file'));
+        var thumb = thumbOk(a)
+            ? '<img data-thumb loading="lazy" alt="" src="/api/attachments/' + esc(encodeURIComponent(a.id)) + '/thumbnail">'
+            : mimeIcon(a.mime_type);
+        var valid = linkValidText(a);
+        var checked = state.checked[a.id] ? ' is-checked' : '';
+        var open = state.openMore[a.id] ? ' open' : '';
+        var expanded = state.openCard[a.id] ? ' is-open' : '';
+        var comment = (!a.locked && a.comment)
+            ? '<div class="files-card-comment' + (state.openComment[a.id] ? ' is-open' : '') + '" data-files-action="toggle-comment" data-attachment="' + esc(a.id) + '">' + esc(a.comment) + '</div>'
+            : '';
+        var busy = status.busy ? '<div class="files-progress" role="progressbar" aria-label="' + esc(status.text) + '"><span></span></div>' : '';
+        var note = status.retrying ? '<span class="files-card-note">' + esc(t('files.note_retrying', 'trying again automatically')) + '</span>' : '';
+        if (valid) note += '<span class="files-card-note">' + esc(valid) + '</span>';
+        if (a.state === 'WAITING_KEY') {
+            note += '<span class="files-card-note">' + esc(t('files.note_confirm_key', "Confirm this contact's key in the node list to receive the file.")) + '</span>';
+        }
+        var noteBlock = (note || busy) ? '<div class="files-card-status">' + note + busy + '</div>' : '';
+        var more = '<details class="files-card-more" data-more="' + esc(a.id) + '"' + open + '><summary>' + esc(t('files.more_details', 'More details')) + '</summary>' +
+            '<div class="files-detail-table">' + moreRowsHtml(a) + '</div>' +
+            (actions.more ? '<div class="files-card-actions">' + actions.more + '</div>' : '') +
+            '<div class="files-more-extra" data-more-extra="' + esc(a.id) + '">' + (state.moreExtra[a.id] || '') + '</div></details>';
+        return '<article class="files-card ' + (incoming ? 'is-incoming' : 'is-sent') + checked + expanded + '" id="filesCard-' + esc(a.id) + '" data-attachment="' + esc(a.id) + '" data-direction="' + (incoming ? 'incoming' : 'sent') + '">' +
+            '<label class="files-check"><input type="checkbox" data-files-check="' + esc(a.id) + '"' + (state.checked[a.id] ? ' checked' : '') +
+                ' aria-label="' + esc(t('files.select_one', 'Select')) + '"></label>' +
+            '<div class="files-card-thumb">' + thumb + '</div>' +
+            '<div class="files-card-body">' +
+                '<div class="files-card-who">' + esc(whoLine(a)) + '</div>' +
+                '<div class="files-card-name" title="' + esc(a.locked ? '' : (a.file_name || '')) + '">' + esc(name) + '</div>' +
+                '<div class="files-card-line3"><span class="files-card-meta">' + esc(fmtBytes(a.plain_size)) + ' · ' + esc(clock(a.created_at || 0)) + '</span>' +
+                    '<span class="files-chip is-' + esc(status.tone) + '" title="' + esc(status.text) + '"><span class="files-chip-full">' + esc(status.text) + '</span><span class="files-chip-short">' + esc(status.short) + '</span></span></div>' +
+                '<div class="files-card-extra">' +
+                    comment + noteBlock +
+                    (actions.primary ? '<div class="files-card-actions">' + actions.primary + '</div>' : '') +
+                    more +
+                '</div>' +
+            '</div>' +
+            '<button type="button" class="files-card-chev" data-files-action="toggle-card" data-attachment="' + esc(a.id) + '" aria-expanded="' + (state.openCard[a.id] ? 'true' : 'false') +
+                '" aria-label="' + esc(t('files.card_toggle', 'Show details')) + '">' + CHEVRON + '</button>' +
+        '</article>';
+    }
+
+    function renderTransfersError(message) {
+        var list = getEl('filesArchiveList');
+        if (!list) return;
+        list.innerHTML = '<div class="files-empty">' + esc(message) + '</div>';
+    }
+
+    function renderSegments() {
+        var counts = segmentCounts(state.attachments);
+        ['incoming', 'sent', 'all'].forEach(function (seg) {
+            var count = getEl('filesCount_' + seg);
+            if (count) count.textContent = String(counts[seg]);
+            var btn = getEl('filesSeg_' + seg);
+            if (btn) btn.setAttribute('aria-pressed', state.segment === seg ? 'true' : 'false');
+        });
+    }
+
+    function isPhone() {
+        try { return Boolean(window.matchMedia && window.matchMedia('(max-width: 768px)').matches); } catch (e) { return false; }
+    }
+
+    function setFlag(el, cls, on) {
+        if (el && el.classList && el.classList.toggle) el.classList.toggle(cls, Boolean(on));
+    }
+
+    // Phone toolbar: [segments] [search] [more]; the search field takes the toolbar's place (like the gallery filter), the more
+    // menu holds Select, Refresh and the storage line. Elsewhere the same elements are laid out as a normal toolbar.
+    function renderToolbar() {
+        var bar = getEl('filesToolbar');
+        setFlag(bar, 'is-search', state.searchOpen);
+        var menu = getEl('filesMoreMenu');
+        if (menu) { if (menu.hidden !== undefined) menu.hidden = !state.moreOpen; else menu.style.display = state.moreOpen ? '' : 'none'; }
+        var more = getEl('filesMoreBtn');
+        if (more) more.setAttribute('aria-expanded', state.moreOpen ? 'true' : 'false');
+        setFlag(getEl('filesView'), 'is-selecting', state.selectMode);
+        var count = getEl('filesSearchCount');
+        if (count) {
+            var q = state.search.trim();
+            if (!q) { count.textContent = ''; } else {
+                var total = state.attachments.filter(function (a) { return state.segment === 'all' || segmentOf(a) === state.segment; }).length;
+                count.textContent = tparams('files.search_count', { shown: visibleAttachments().length, total: total },
+                    visibleAttachments().length + ' of ' + total);
+            }
+        }
+        var search = getEl('filesSearch');
+        if (search && search.value !== state.search) search.value = state.search;
+    }
+
+    function closeMoreMenu() {
+        if (!state.moreOpen) return;
+        state.moreOpen = false;
+        renderToolbar();
+    }
+
+    function setSearchOpen(on) {
+        state.searchOpen = Boolean(on);
+        if (!state.searchOpen && state.search) { state.search = ''; renderTransfers(); } else renderToolbar();
+        var input = getEl('filesSearch');
+        if (state.searchOpen && input && input.focus) { try { input.focus(); } catch (e) { /* no focus in a stub */ } }
+    }
+
     function renderTransfers() {
         var list = getEl('filesArchiveList');
         if (!list) return;
+        renderSegments();
+        renderToolbar();
         var items = visibleAttachments();
+        var chat = Boolean(state.counterparty);
+        if (list.classList) {
+            list.classList.toggle('is-chat', chat);
+            list.classList.toggle('is-selecting', state.selectMode);
+        }
         if (!items.length) {
-            list.innerHTML = '<div class="files-empty">' +
-                esc(t('files.no_transfers', 'No transfers match this filter.')) + '</div>';
+            list.innerHTML = '<div class="files-empty">' + esc(t('files.no_transfers', 'No files here yet.')) + '</div>';
+            renderBulkBar();
             return;
         }
-        list.innerHTML = items.map(function (a) {
-            var provider = providerById(a.provider_id);
-            var contact = contactForAttachment(a);
-            var dir = a.direction === 'sent' ? '↑' : '↓';
-            var dirLabel = a.direction === 'sent'
-                ? t('files.sent', 'Sent') : t('files.received', 'Received');
-            var selected = a.id === state.selectedId ? ' is-selected' : '';
-            var pressed = a.id === state.selectedId ? 'true' : 'false';
-            var active = !isTerminalState(a.state) ? ' is-active' : '';
-            var contactLabel = contact
-                ? (esc(contact.name || '') + ' <span class="files-transfer-id">' + esc(contact.contact_id) + '</span>')
-                : '';
-            var providerLabel = provider ? esc(provider.display_name || provider.origin || '') : '';
-            var expiry = a.hard_expires_at
-                ? '<span class="files-transfer-expiry" title="' + esc(fmtDate(a.hard_expires_at)) + '">' + esc(fmtRel(a.hard_expires_at)) + '</span>'
-                : '';
-            var busy = state.busy['attach:' + a.id] ? ' is-busy' : '';
-            return (
-                '<button type="button" class="files-transfer-item' + selected + active + busy + '" aria-pressed="' + pressed + '" data-files-action="select" data-attachment="' + esc(a.id) + '">' +
-                    '<span class="files-transfer-icon">' + mimeIcon(a.mime_type) + '</span>' +
-                    '<span class="files-transfer-dir" title="' + esc(dirLabel) + '">' + dir + '</span>' +
-                    '<span class="files-transfer-main">' +
-                        '<span class="files-transfer-name">' + (a.locked ? '🔒 ' + esc(t('vault.locked_name', 'Locked')) : esc(a.file_name || t('files.encrypted_file', 'Encrypted file'))) + '</span>' +
-                        '<span class="files-transfer-sub">' + contactLabel + '</span>' +
-                    '</span>' +
-                    '<span class="files-transfer-meta">' +
-                        '<span class="files-transfer-provider">' + providerLabel + '</span>' +
-                        '<span class="files-transfer-state files-state-' + esc(a.state) + '" title="' + esc(filesStateLabel(a.state)) + '">' + esc(simpleStatusLabel(a)) + '</span>' +
-                        '<span class="files-transfer-size">' + esc(fmtBytes(a.plain_size)) + '</span>' +
-                        '<span class="files-transfer-date">' + esc(fmtDate(a.created_at)) + '</span>' +
-                        expiry +
-                    '</span>' +
-                '</button>'
-            );
+        var html = groupByDay(items, chat).map(function (g) {
+            return '<div class="files-day">' + esc(g.label) + '</div>' + g.items.map(cardHtml).join('');
         }).join('');
+        // a poll must not throw away the scroll position the user is looking at
+        var top = list.scrollTop;
+        list.innerHTML = html;
+        if (chat && state.chatScrolledFor !== state.counterparty) {
+            state.chatScrolledFor = state.counterparty;
+            list.scrollTop = list.scrollHeight;
+        } else if (!chat) {
+            state.chatScrolledFor = '';
+            list.scrollTop = top;
+        } else {
+            list.scrollTop = top;
+        }
+        renderBulkBar();
+        if (state.focusId) { var f = state.focusId; state.focusId = ''; focusCard(f); }
     }
 
-    function renderSummaries() {
-        var summary = getEl('filesSummary');
-        if (!summary) return;
-        var attention = state.attachments.filter(isAttention).length;
-        var savedBytes = state.attachments.reduce(function (acc, a) {
-            return acc + (a.saved ? (a.plain_size || 0) : 0);
-        }, 0);
-
-        var parts = [];
-        if (attention > 0) {
-            parts.push('<span class="files-summary-attention">' +
-                esc(tparams('files.attention_count', { count: attention }, attention + ' need attention')) + '</span>');
-        }
-        if (savedBytes > 0 && state.truncated) {
-            parts.push('<span class="files-summary-saved">' +
-                esc(tparams('files.saved_bytes_subset', { bytes: fmtBytes(savedBytes) }, fmtBytes(savedBytes) + ' saved')) + '</span>');
-        } else if (savedBytes > 0) {
-            parts.push('<span class="files-summary-saved">' +
-                esc(tparams('files.saved_bytes', { bytes: fmtBytes(savedBytes) }, fmtBytes(savedBytes) + ' saved')) + '</span>');
-        }
-        if (state.truncated) {
-            parts.push('<span class="files-summary-truncated">' +
-                esc(tparams('files.truncated_notice', { limit: LIST_LIMIT, total: state.total },
-                    'Showing the newest ' + LIST_LIMIT + ' of ' + state.total + ' transfers')) + '</span>');
-        }
-        // the parts are separate inline spans: a visible separator keeps them from running together
-        summary.innerHTML = parts.join('<span class="files-summary-sep" aria-hidden="true"> &middot; </span>');
+    function focusCard(id) {
+        var el = getEl('filesCard-' + id);
+        if (!el) return;
+        if (el.scrollIntoView) el.scrollIntoView({ block: 'center' });
+        if (el.classList && el.classList.add) { el.classList.add('is-focus'); }
     }
 
-    // ---- rendering: detail + action matrix (C4/C6) -------------------------
-
-    function scrollSelectedIntoView() {
-        var el = typeof document !== 'undefined' && typeof document.querySelector === 'function' ? document.querySelector('.files-transfer-item.is-selected') : null;
-        if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
-    }
-
-    // MCA-UX1: select a transfer from outside (a chat bubble). Selected at once when the list has it, otherwise as
-    // soon as the next load brings it.
+    // MCA-UX1: a chat bubble opens its transfer. The list is one column, so the card is brought into view and flashes.
     function selectTransferFromOutside(id) {
         id = String(id || '');
         if (!id) return;
-        if (state.attachments.some(function (a) { return a.id === id; })) {
-            selectAttachment(id);
-            openDetailView();
-            scrollSelectedIntoView();
+        var found = state.attachments.filter(function (a) { return a.id === id; })[0];
+        if (found) {
+            if (state.segment !== 'all' && segmentOf(found) !== state.segment) setSegment('all');
+            state.focusId = id;
+            renderTransfers();
             return;
         }
         state.pendingSelectId = id;
         if (state.active) refresh();
+    }
+
+    function setSegment(seg) {
+        if (seg !== 'incoming' && seg !== 'sent' && seg !== 'all') return;
+        state.segment = seg;
+        writeSegment(seg);
+        renderTransfers();
+    }
+
+    // ---- multi-select ------------------------------------------------------------------------------------------------
+    function checkedIds() { return Object.keys(state.checked).filter(function (id) { return state.checked[id]; }); }
+
+    function renderBulkBar() {
+        var bar = getEl('filesBulkBar');
+        var btn = getEl('filesSelectBtn');
+        if (btn) btn.setAttribute('aria-pressed', state.selectMode ? 'true' : 'false');
+        if (!bar) return;
+        var n = checkedIds().length;
+        if (bar.hidden !== undefined) bar.hidden = !state.selectMode; else bar.style.display = state.selectMode ? '' : 'none';
+        var count = getEl('filesBulkCount');
+        if (count) count.textContent = plural('files.bulk_count', n, '{count} selected', '{count} selected');
+    }
+
+    function toggleCard(id) {
+        if (state.openCard[id]) delete state.openCard[id]; else state.openCard[id] = true;
+        var card = getEl('filesCard-' + id);
+        setFlag(card, 'is-open', state.openCard[id]);
+        var chev = card && card.querySelector ? card.querySelector('.files-card-chev') : null;
+        if (chev) chev.setAttribute('aria-expanded', state.openCard[id] ? 'true' : 'false');
+    }
+
+    function setSelectMode(on) {
+        state.selectMode = Boolean(on);
+        if (!state.selectMode) state.checked = {};
+        renderTransfers();
+    }
+
+    function toggleChecked(id, force) {
+        var on = force === undefined ? !state.checked[id] : Boolean(force);
+        if (on) state.checked[id] = true; else delete state.checked[id];
+        var card = getEl('filesCard-' + id);
+        if (card && card.classList && card.classList.toggle) card.classList.toggle('is-checked', on);
+        renderBulkBar();
+    }
+
+    function checkedAttachments() {
+        var ids = checkedIds();
+        return state.attachments.filter(function (a) { return ids.indexOf(a.id) !== -1; });
+    }
+
+    function bulkDownload() {
+        var items = checkedAttachments().filter(function (a) { return a.content_available && !a.locked; });
+        if (!items.length) { toast(t('files.bulk_nothing_download', 'Nothing to download in the selection'), 'info'); return; }
+        var risky = items.some(function (a) { return isExecutableName(a.file_name); });
+        var go = function () {
+            items.forEach(function (a, i) { setTimeout(function () { downloadToDevice(a.id); }, i * 400); });
+            setSelectMode(false);
+        };
+        if (!risky) { go(); return; }
+        confirmExecutable().then(function (yes) { if (yes) go(); });
+    }
+
+    function bulkDelete() {
+        var items = checkedAttachments().filter(function (a) { return a.direction !== 'sent' && a.state === 'AVAILABLE' && a.content_available && !a.locked; });
+        if (!items.length) { toast(t('files.bulk_nothing_delete', 'Only received files can be deleted'), 'info'); return; }
+        var dialog = (typeof window !== 'undefined') ? window.MCDialog : null;
+        var asked = (dialog && dialog.confirm)
+            ? dialog.confirm({
+                title: t('files.confirm_bulk_delete_title', 'Delete the selected files?'),
+                message: plural('files.confirm_bulk_delete_body', items.length,
+                    'Delete {count} file from this node? The entry stays in the history.', 'Delete {count} files from this node? The entries stay in the history.'),
+                confirmLabel: t('files.delete', 'Delete'), cancelLabel: t('dialog.cancel', 'Cancel'), danger: true,
+            })
+            : Promise.resolve(false);
+        asked.then(function (yes) {
+            if (!yes) return;
+            items.reduce(function (chain, a) { return chain.then(function () { return deleteLocalRequest(a.id); }); }, Promise.resolve())
+                .then(function () { setSelectMode(false); refreshTransfers(); });
+        });
+    }
+
+    // ---- the line under the list -------------------------------------------------------------------------------------
+    function filesBytes() {
+        return state.attachments.reduce(function (sum, a) { return sum + (a.content_available ? (a.plain_size || 0) : 0); }, 0);
+    }
+
+    function renderFooter() {
+        var el = getEl('filesFooter');
+        var use = getEl('filesMenuUse');
+        if (use) use.textContent = tparams('files.footer_use', { size: fmtBytes(filesBytes()) }, 'Files use ' + fmtBytes(filesBytes()));
+        if (!el) return;
+        if (!state.attachments.length && !state.storage) { el.innerHTML = ''; return; }
+        el.innerHTML =
+            '<span class="files-footer-text">' + esc(tparams('files.footer_use', { size: fmtBytes(filesBytes()) }, 'Files use ' + fmtBytes(filesBytes()))) + '</span>' +
+            '<button type="button" class="files-footer-btn" data-files-action="purge-received">' + esc(t('files.clean_up', 'Clean up...')) + '</button>';
+    }
+
+    function loadStorage() {
+        return api('/api/attachments/received-cache').then(function (r) {
+            state.storage = (r.status === 200 && r.data && r.data.ok) ? { count: r.data.count || 0, bytes: r.data.bytes || 0 } : null;
+            renderFooter();
+        }).catch(function () { /* the line stays as it was */ });
     }
 
     // ---- MCA-UX1: the Files tab dot ------------------------------------------------------------------------------
@@ -1023,31 +1314,6 @@
 
     // ---- MCA-UX1: the space the received copies take, and deleting the old ones ---------------------------------
 
-    function loadStorage() {
-        return api('/api/attachments/received-cache').then(function (r) {
-            if (r.status === 200 && r.data && r.data.ok) {
-                state.storage = { count: r.data.count || 0, bytes: r.data.bytes || 0 };
-            } else {
-                state.storage = null;
-            }
-            renderStorage();
-        }).catch(function () { /* the line stays as it was */ });
-    }
-
-    function renderStorage() {
-        var el = getEl('filesStorage');
-        if (!el) return;
-        if (!state.storage) { el.innerHTML = ''; return; }
-        el.innerHTML =
-            '<span class="files-storage-text">' +
-                esc(tparams('files.storage_summary', { count: state.storage.count, size: fmtBytes(state.storage.bytes) },
-                    'Received copies: ' + state.storage.count + ', ' + fmtBytes(state.storage.bytes))) +
-            '</span>' +
-            '<button type="button" class="files-storage-btn" data-files-action="purge-received"' + (state.storage.count ? '' : ' disabled') + '>' +
-                esc(t('files.purge_button', 'Delete older received copies...')) + '</button>' +
-            '<span class="files-storage-hint">' + esc(t('files.storage_hint', 'Files saved with Save to Files are not affected. Nothing is deleted automatically.')) + '</span>';
-    }
-
     function purgeReceivedCopies() {
         var dialog = (typeof window !== 'undefined') ? window.MCDialog : null;
         if (!dialog || !dialog.prompt || !dialog.confirm) return Promise.resolve();
@@ -1105,230 +1371,6 @@
         });
     }
 
-    // ---- phone: master/detail. One pane at a time (data-view on #filesLayout); wide screens ignore it ------------------
-    // Compact = the Files panel is too narrow for two panes: a phone, or a desktop whose sidebars leave a narrow centre column.
-    // FILES_COMPACT_MAX must match the @container filesview (max-width: 700px) rule in static/ui-kit.css.
-    var FILES_COMPACT_MAX = 700;
-
-    function isPhoneLayout() {
-        var m = typeof window !== 'undefined' ? window.MCMobileLayout : null;
-        if (m && typeof m.isMobile === 'function' && m.isMobile()) return true;
-        var view = getEl('filesView');
-        var width = view && view.clientWidth;
-        if (width > 0) {
-            var style = typeof getComputedStyle === 'function' ? getComputedStyle(view) : null;
-            var pad = style ? (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0) : 0;
-            return width - pad <= FILES_COMPACT_MAX;
-        }
-        return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 768px)').matches;
-    }
-
-    function pageScroller() {
-        var layout = getEl('filesLayout');
-        return layout && layout.parentNode ? layout.parentNode : null;
-    }
-
-    function applyView(view) {
-        state.view = view;
-        var layout = getEl('filesLayout');
-        if (layout && layout.setAttribute) layout.setAttribute('data-view', view);
-    }
-
-    // Only a person's own choice opens Details (a tap on a row, a chat notification); the automatic first selection never does.
-    function openDetailView() {
-        if (!isPhoneLayout() || state.view === 'detail') return;
-        var scroller = pageScroller();
-        state.listScroll = scroller ? scroller.scrollTop : 0;
-        applyView('detail');
-        if (scroller) scroller.scrollTop = 0;
-        if (typeof history !== 'undefined' && history.pushState) {
-            try { history.pushState({ mcFiles: 'detail' }, ''); state.viewPushed = true; } catch (e) { state.viewPushed = false; }
-        }
-        var back = getEl('filesBackBtn');
-        if (back && back.focus) back.focus();
-    }
-
-    // viaHistory: the browser/Android back already popped our entry. Otherwise a button, or the transfer went away.
-    function closeDetailView(viaHistory) {
-        if (state.view !== 'detail') return;
-        applyView('list');
-        var scroller = pageScroller();
-        if (scroller) scroller.scrollTop = state.listScroll;
-        if (!viaHistory && state.viewPushed && typeof history !== 'undefined' && history.back) {
-            state.viewPushed = false;
-            state.ignorePop = true;
-            history.back();
-        }
-        state.viewPushed = false;
-        scrollSelectedIntoView();
-    }
-
-    function onPopState() {
-        if (state.ignorePop) { state.ignorePop = false; return; }
-        if (state.view === 'detail') closeDetailView(true);
-    }
-
-    function selectAttachment(id) {
-        state.selectedId = id;
-        state.detailSeq++;
-        state.detailOpen = { advanced: false, tech: false };
-        renderTransfers();
-        renderDetail(id, false);
-    }
-
-    function clearDetailPanel() {
-        var body = getEl('filesDetailBody');
-        if (body) body.innerHTML = '';
-    }
-
-    // Step 2 regression fix: a poll-driven re-render replaces the whole detail
-    // panel's innerHTML (fresh <details>, closed by default), so without this
-    // an expanded "Advanced"/"Technical" section would snap shut on the next
-    // poll tick. state.detailOpen is kept in sync by onDetailToggle() below
-    // and reapplied here after every (re-)render.
-    function applyDetailOpenState(body) {
-        var advancedEl = body.querySelector('.files-detail-advanced');
-        var techEl = body.querySelector('.files-detail-tech');
-        if (advancedEl && state.detailOpen.advanced) advancedEl.open = true;
-        if (techEl && state.detailOpen.tech) techEl.open = true;
-    }
-
-    function onDetailToggle(e) {
-        var target = e.target;
-        if (!target || !target.classList) return;
-        if (target.classList.contains('files-detail-advanced')) {
-            state.detailOpen.advanced = target.open;
-        } else if (target.classList.contains('files-detail-tech')) {
-            state.detailOpen.tech = target.open;
-        }
-    }
-
-    // P3: invalidate any in-flight or already-rendered detail (and the
-    // coalesced pending refetch + fingerprint), without an explicit selection
-    // change. Used both on query change and when the selection changes - or
-    // becomes null - under the same query key (selected transfer left the
-    // filter, was deleted, or the server returned an empty list), so a late
-    // old-detail response can never repaint a transfer that is no longer shown.
-    function invalidateDetail() {
-        state.detailSeq++;
-        state.detailPending = null;
-        state.detailFingerprint = null;
-        state.detailOpen = { advanced: false, tech: false };
-        clearDetailPanel();
-    }
-
-    function detailFingerprint(a) {
-        // A cheap signature of everything detailMarkup shows that can change
-        // without the list projection changing. Built from the *list*
-        // projection's own fields (id/state/error_code/saved/content_available/
-        // delivery states), so it can be compared against the fingerprint
-        // stored after the last *detail* fetch to decide whether a terminal
-        // attachment's detail needs re-fetching at all (R4).
-        var parts = [a.id, a.state, a.error_code || '', a.saved ? '1' : '0', a.content_available ? '1' : '0'];
-        var deliveries = a.deliveries || [];
-        for (var i = 0; i < deliveries.length; i++) parts.push(deliveries[i].state || '');
-        return parts.join('\u0000');
-    }
-
-    function renderDetail(id, silent) {
-        var body = getEl('filesDetailBody');
-        if (!body) return;
-
-        // In-flight guard + coalescing (R4): never issue a second concurrent
-        // detail request. A follow-up requested while one is running is
-        // collapsed into a single pending refetch, fired once the in-flight
-        // request settles.
-        if (state.detailInFlight) {
-            state.detailPending = id;
-            return;
-        }
-
-        var token = ++state.detailSeq;
-        var epoch = state.epoch;
-        state.detailInFlight = true;
-        state.detailPending = null;
-
-        function settle() {
-            state.detailInFlight = false;
-            var pending = state.detailPending;
-            state.detailPending = null;
-            if (pending !== null && state.active && epoch === state.epoch) {
-                renderDetail(pending, true);
-            }
-        }
-
-        api('/api/attachments/' + encodeURIComponent(id)).then(function (r) {
-            if (token !== state.detailSeq || epoch !== state.epoch) { settle(); return; } // stale (V2)
-            if (!state.active) { settle(); return; }
-            if (r.status !== 200 || !r.data || r.data.ok !== true) {
-                body.innerHTML = '<div class="files-detail-empty">' + esc(filesErrorCode(r.data)) + '</div>';
-                settle();
-                return;
-            }
-            body.innerHTML = detailMarkup(r.data.attachment, Array.isArray(r.data.timeline) ? r.data.timeline : []);
-            state.detailFingerprint = detailFingerprint(r.data.attachment);
-            applyDetailOpenState(body);
-            settle();
-        }).catch(function () {
-            if (token !== state.detailSeq || epoch !== state.epoch) { settle(); return; }
-            if (!state.active) { settle(); return; }
-            body.innerHTML = '<div class="files-detail-empty">' + esc(t('files.error.network_error', 'Network error')) + '</div>';
-            settle();
-        });
-    }
-
-    // Step 5: split into { basic, advanced } rather than one joined string -
-    // Revoke and Delete-local-copy are the plan's named "advanced" actions
-    // (administrative/destructive, not part of the normal flow), everything
-    // else (Retry/Cancel/Accept/Reject/Save/Open/Download) stays basic. The
-    // underlying eligibility logic - which state gets which button at all -
-    // is UNCHANGED: still driven entirely by the existing
-    // SENDER_AUTOMATIC/SENDER_REVOKABLE/RECEIVER_AUTOMATIC classification,
-    // per the task's own instruction to reuse it rather than invent a new
-    // UI-side retryability heuristic.
-    function detailActions(a) {
-        var basic = [];
-        var advanced = [];
-        if (a.direction === 'sent') {
-            if (SENDER_AUTOMATIC.indexOf(a.state) !== -1) {
-                basic.push(actionBtn(a.id, 'attach-retry', t('files.retry', 'Retry'), false));
-                basic.push(actionBtn(a.id, 'attach-cancel', t('files.cancel', 'Cancel'), true));
-            } else if (SENDER_REVOKABLE.indexOf(a.state) !== -1) {
-                advanced.push(actionBtn(a.id, 'attach-revoke', t('files.revoke', 'Revoke'), true));
-            }
-            // terminal FAILED_* / EXPIRED / REVOKED / CANCELLED -> no unsupported Retry (C4 §9.1)
-        } else {
-            if (RECEIVER_AUTOMATIC.indexOf(a.state) !== -1) {
-                basic.push(actionBtn(a.id, 'attach-retry', t('files.retry', 'Retry'), false));
-            } else if (a.state === 'WAITING_CONSENT') {
-                basic.push(actionBtn(a.id, 'attach-download', t('files.accept_download', 'Accept and download'), false));
-                basic.push(actionBtn(a.id, 'attach-reject', t('files.reject', 'Reject'), true));
-            } else if (a.state === 'AVAILABLE') {
-                var content = contentActions(a);
-                basic = basic.concat(content.basic);
-                advanced = advanced.concat(content.advanced);
-            }
-            // OFFER_RECEIVED / VERIFYING / EXPIRED / REJECTED / FAILED -> no mutation
-        }
-        return { basic: basic.join(''), advanced: advanced.join('') };
-    }
-
-    function contentActions(a) {
-        var basic = [];
-        var advanced = [];
-        if (a.saved) {
-            advanced.push(actionBtn(a.id, 'attach-delete-local', t('files.delete_local', 'Delete local copy'), true));
-        } else {
-            basic.push(actionBtn(a.id, 'attach-save', t('files.save_to_files', 'Save to Files'), false));
-        }
-        if (a.content_available) {
-            if (IMAGE_MIME[a.mime_type]) {
-                basic.push(actionBtn(a.id, 'attach-open', t('files.open_preview', 'Open preview'), false));
-            }
-            basic.push(actionBtn(a.id, 'attach-download-device', t('files.download_to_device', 'Download to device'), false));
-        }
-        return { basic: basic, advanced: advanced };
-    }
 
     function actionBtn(id, action, label, danger) {
         var busy = state.busy['attach:' + id];
@@ -1343,132 +1385,6 @@
             return '<div class="files-detail-row"><span class="files-detail-label">' +
                 esc(t(r[0], r[1])) + '</span><span class="files-detail-value">' + esc(r[2]) + '</span></div>';
         }).join('');
-    }
-
-    // Step 5: the transfer card collapses into three levels.
-    //   - Normal (always visible, no expansion): identity of the transfer,
-    //     the plain-language status, the plain-language error (if any,
-    //     see below), and the primary action.
-    //   - Advanced details (<details>, closed by default): timing/lifecycle
-    //     facts and the Relay used, plus the plan's own named "advanced"
-    //     actions (Revoke, Delete local copy).
-    //   - Technical diagnostics (<details>, closed by default): everything
-    //     raw - ids, route, per-delivery state, the timeline, mime type,
-    //     ciphertext size.
-    // Hard requirement, independent of level: a genuine configuration/
-    // security error is never left as a raw, unlocalized backend code (the
-    // previous behavior) and never demoted into a collapsed section - it is
-    // rendered in the always-visible Normal block, through the SAME
-    // plain-language reason mapping (filesErrorCode()) used for every other
-    // error surface in this module (toasts, the archive "errors" filter).
-    // The vault is locked: the name and comment are not available, nothing can be opened or accepted. Only the facts that are
-    // not secret (direction, size) and the way out.
-    function lockedDetailMarkup(a) {
-        return '<div class="files-detail-head"><div class="files-detail-name">🔒 ' + esc(t('vault.locked_name', 'Locked')) + '</div></div>' +
-            '<div class="files-detail-info" role="status">' + esc(t('vault.locked_detail', 'MCAttach is locked. Unlock it to see the name and open this file.')) + '</div>' +
-            '<div class="files-detail-actions"><button type="button" class="btn btn-sm" data-vault-action="unlock">' + esc(t('vault.unlock', 'Unlock')) + '</button></div>' +
-            '<div class="files-detail-table">' +
-            '<div class="files-detail-row"><span class="files-detail-label">' + esc(t('files.detail_direction', 'Direction')) + '</span><span class="files-detail-value">' +
-                esc(a.direction === 'sent' ? t('files.sent', 'Sent') : t('files.received', 'Received')) + '</span></div>' +
-            '<div class="files-detail-row"><span class="files-detail-label">' + esc(t('files.detail_size', 'Size')) + '</span><span class="files-detail-value">' + esc(fmtBytes(a.plain_size)) + '</span></div>' +
-            '</div>';
-    }
-
-    function detailMarkup(a, timeline) {
-        var contact = contactForAttachment(a);
-        var recipientLabel = contact ? (contact.name || contact.contact_id) : (a.counterparty_contact_id || '-');
-        var provider = providerById(a.provider_id);
-        var providerLabel = provider ? (provider.display_name || provider.origin || a.provider_id) : (a.provider_id || '-');
-        var route = t('files.detail_direct', 'Direct');
-        var deliveries = (Array.isArray(a.deliveries) && a.deliveries.length) ? a.deliveries : [];
-        if (a.locked) return lockedDetailMarkup(a);
-        var actions = detailActions(a);
-
-        var basicRows = [
-            ['files.detail_direction', 'Direction', a.direction === 'sent' ? t('files.sent', 'Sent') : t('files.received', 'Received')],
-            ['files.detail_file', 'File', a.file_name || '-'],
-            ['files.detail_recipient', 'Contact', recipientLabel],
-            ['files.detail_size', 'Size', fmtBytes(a.plain_size)],
-        ];
-
-        var errorMarkup = a.error_code
-            ? '<div class="files-detail-error" role="alert">' + esc(filesErrorCode({ error_code: a.error_code })) + '</div>'
-            // Step 6 regression finding: a receiver-side transfer waiting on a
-            // Relay it cannot currently resolve carries no error_code at all
-            // (receiver.py never sets one for this branch) - without this,
-            // the Normal block would show nothing beyond the generic
-            // "Waiting" bucket label, indefinitely, with zero explanation.
-            // Deliberately neutral styling (not the red error box above) -
-            // this is not necessarily a failure, just something that can
-            // take a while and deserves an honest, calm word about why.
-            : (a.state === 'WAITING_PROVIDER'
-                ? '<div class="files-detail-info">' + esc(t('files.detail_waiting_provider_hint',
-                    'Waiting for a Relay to become reachable. This can take a while on a degraded connection.')) + '</div>'
-                : '');
-
-        var advancedRows = [
-            ['files.detail_created', 'Created', fmtDate(a.created_at)],
-            ['files.detail_expires', 'Expires', fmtDate(a.hard_expires_at) + ' (' + fmtRel(a.hard_expires_at) + ')'],
-            ['files.detail_saved', 'Saved', a.saved ? t('files.yes', 'Yes') : t('files.no', 'No')],
-            ['files.detail_provider', 'Relay used', providerLabel],
-        ];
-
-        var techRows = [
-            ['files.tech_id', 'ID', a.id],
-            ['files.detail_type', 'Type', a.mime_type || '-'],
-            ['files.detail_route', 'Route', route],
-            ['files.detail_grace', 'Download grace', fmtGrace(a.download_grace_seconds)],
-            ['files.detail_content', 'Content available', a.content_available ? t('files.yes', 'Yes') : t('files.no', 'No')],
-            ['files.tech_cipher_size', 'Ciphertext size', fmtBytes(a.cipher_size)],
-            ['files.tech_provider_id', 'Provider ID', a.provider_id || '-'],
-            ['files.tech_delivery_id', 'Primary delivery', a.primary_delivery_id || '-'],
-        ];
-        if (a.error_code) {
-            // The technical tier additionally carries the raw code for
-            // diagnosis - but never as the ONLY place the error is visible;
-            // errorMarkup above already put the plain-language version in
-            // the always-visible Normal block.
-            techRows.push(['files.tech_error_code', 'Raw error code', a.error_code]);
-        }
-
-        var timelineMarkup = timeline.length
-            ? '<div class="files-detail-timeline">' + timeline.map(function (e) {
-                return '<div class="files-timeline-event"><span class="files-timeline-time">' +
-                    esc(fmtDate(e.created_at || e.at)) + '</span>' +
-                    '<span class="files-timeline-text">' + esc(e.event_type || '') + '</span></div>';
-            }).join('') + '</div>'
-            : '';
-
-        var deliveriesMarkup = deliveries.length
-            ? '<div class="files-detail-deliveries"><div class="files-detail-subtitle">' +
-                esc(t('files.detail_deliveries', 'Deliveries')) + '</div>' +
-                deliveries.map(function (d) {
-                    return '<div class="files-delivery">' +
-                        '<span class="files-delivery-state files-state-' + esc(d.state) + '">' + esc(d.state) + '</span>' +
-                        '<span class="files-delivery-route">' + esc(d.route_type || '') + '</span>' +
-                        '<span class="files-delivery-sent">' + esc(fmtDate(d.sent_at)) + '</span>' +
-                    '</div>';
-                }).join('') + '</div>'
-            : '';
-
-        return '<div class="files-detail-head">' +
-                '<div class="files-detail-name">' + esc(a.file_name || a.id) + '</div>' +
-                '<div class="files-detail-state files-state-' + esc(a.state) + '" title="' + esc(filesStateLabel(a.state)) + '">' + esc(simpleStatusLabel(a)) + '</div>' +
-            '</div>' +
-            errorMarkup +
-            '<div class="files-detail-table">' + detailRowsHtml(basicRows) + '</div>' +
-            '<div class="files-detail-actions">' + actions.basic + '</div>' +
-            '<details class="files-detail-advanced">' +
-                '<summary>' + esc(t('files.advanced_details', 'Advanced details')) + '</summary>' +
-                '<div class="files-detail-table">' + detailRowsHtml(advancedRows) + '</div>' +
-                (actions.advanced ? '<div class="files-detail-actions">' + actions.advanced + '</div>' : '') +
-            '</details>' +
-            '<details class="files-detail-tech">' +
-                '<summary>' + esc(t('files.technical_details', 'Technical details')) + '</summary>' +
-                '<div class="files-detail-table">' + detailRowsHtml(techRows) + '</div>' +
-                deliveriesMarkup +
-                timelineMarkup +
-            '</details>';
     }
 
     // ---- attachment lifecycle actions (C4/C6) ------------------------------
@@ -1556,33 +1472,36 @@
             success: t('files.retried', 'Retry started'),
         });
     }
-    function attachmentDeleteLocal(id) {
-        confirmDialog(confirmSpec('files.confirm_delete_local_title', 'files.confirm_delete_local_body', 'files.delete_local',
-            'Delete local copy?', 'This removes the saved copy on the Pi but keeps the transfer history.')).then(function (yes) {
-            if (!yes) return;
-            var resourceKey = 'attach:' + id;
-            if (state.busy[resourceKey]) return;
-            api('/api/attachments/' + encodeURIComponent(id) + '/local-content', { method: 'DELETE' }).then(function (r) {
-                if (r.status === 202 && r.data && r.data.command_id) {
-                    trackCommand(r.data.command_id, {
-                        resourceKey: resourceKey,
-                        queued: t('files.deleting_local', 'Deleting local copy…'),
-                        success: t('files.local_deleted', 'Local copy deleted'),
-                        onSuccess: function () { return refreshTransfers(); },
-                        onUnknown: function () { return refreshTransfers(); },
-                    });
-                } else {
-                    toast(filesErrorCode(r.data), 'error');
-                }
-            }).catch(function () {
-                toast(t('files.error.network_error', 'Network error'), 'error');
-            });
+    // One request to delete the local copy; resolves when the command is accepted (the bulk delete chains these)
+    function deleteLocalRequest(id) {
+        var resourceKey = 'attach:' + id;
+        if (state.busy[resourceKey]) return Promise.resolve();
+        return api('/api/attachments/' + encodeURIComponent(id) + '/local-content', { method: 'DELETE' }).then(function (r) {
+            if (r.status === 202 && r.data && r.data.command_id) {
+                trackCommand(r.data.command_id, {
+                    resourceKey: resourceKey,
+                    queued: t('files.deleting_local', 'Deleting...'),
+                    success: t('files.local_deleted', 'File deleted'),
+                    onSuccess: function () { return refreshTransfers(); },
+                    onUnknown: function () { return refreshTransfers(); },
+                });
+            } else {
+                toast(filesErrorCode(r.data), 'error');
+            }
+        }).catch(function () {
+            toast(t('files.error.network_error', 'Network error'), 'error');
         });
     }
 
-    // "Download to device" - a same-origin link to /content with a download
-    // attribute; must never call /save (C6). Keeps backend security headers.
-    function attachmentDownloadToDevice(id) {
+    function attachmentDeleteLocal(id) {
+        confirmDialog(confirmSpec('files.confirm_delete_local_title', 'files.confirm_delete_local_body', 'files.delete',
+            'Delete this file?', 'The file is removed from this node. The entry stays in the history.')).then(function (yes) {
+            if (yes) deleteLocalRequest(id);
+        });
+    }
+
+    // "Download to device" - a same-origin link to /content with a download attribute; must never call /save (C6).
+    function downloadToDevice(id) {
         if (typeof document === 'undefined') return;
         var a = document.createElement('a');
         a.href = '/api/attachments/' + encodeURIComponent(id) + '/content';
@@ -1592,6 +1511,28 @@
         }
         a.click();
         if (a.parentNode) a.parentNode.removeChild(a);
+    }
+
+    function confirmExecutable() {
+        var dialog = (typeof window !== 'undefined') ? window.MCDialog : null;
+        var spec = {
+            title: t('files.exec_title', 'Executable file'),
+            message: t('files.exec_body', 'This is an executable file. Open it only if you trust the sender.'),
+            confirmLabel: t('files.exec_confirm', 'Download anyway'),
+            cancelLabel: t('dialog.cancel', 'Cancel'),
+            danger: true,
+        };
+        if (dialog && dialog.confirm) return dialog.confirm(spec);
+        return confirmDialog(confirmSpec('files.exec_title', 'files.exec_body', 'files.exec_confirm', spec.title, spec.message));
+    }
+
+    function attachmentDownloadToDevice(id) {
+        var a = state.attachments.filter(function (x) { return x.id === id; })[0];
+        if (a && isExecutableName(a.file_name)) {
+            confirmExecutable().then(function (yes) { if (yes) downloadToDevice(id); });
+            return;
+        }
+        downloadToDevice(id);
     }
 
     // "Open preview" - inline image preview in a new tab.
@@ -1957,9 +1898,44 @@
         return null;
     }
 
+    function closestSel(el, selector) {
+        while (el && el.nodeType === 1) {
+            if (el.matches && el.matches(selector)) return el;
+            el = el.parentNode;
+        }
+        return null;
+    }
+
     function onDocumentClick(e) {
         var target = e.target || e.srcElement;
         if (!target) return;
+
+        if (state.moreOpen && !closestSel(target, '#filesMoreMenu') && !closestSel(target, '#filesMoreBtn')) {
+            state.moreOpen = false;
+            renderToolbar();
+        }
+
+        // FX1: while selecting, a tap on the card itself ticks it (buttons, links and the details toggle keep their own job)
+        if (state.selectMode) {
+            var card = closestSel(target, '.files-card');
+            if (card && !closestSel(target, 'button, a, summary, input, .files-card-comment')) {
+                if (state.longPressed) { state.longPressed = false; return; }
+                toggleChecked(card.getAttribute('data-attachment'));
+                var box = card.querySelector ? card.querySelector('input[data-files-check]') : null;
+                if (box) box.checked = Boolean(state.checked[card.getAttribute('data-attachment')]);
+                return;
+            }
+        }
+
+        // phone: a tap on the card (not on a button, link, the details toggle or the comment) opens or closes it
+        if (!state.selectMode && isPhone()) {
+            var tapped = closestSel(target, '.files-card');
+            if (tapped && !closestSel(target, 'button, a, summary, input, details, .files-card-comment')) {
+                if (state.longPressed) { state.longPressed = false; return; }
+                toggleCard(tapped.getAttribute('data-attachment'));
+                return;
+            }
+        }
 
         // Modal backdrops / cancel / close / confirm.
         var modal = closestAttr(target, 'data-files-action');
@@ -1979,9 +1955,16 @@
         if (action === 'send') { openSendDialog(); return; }
         if (action === 'providers') { openProviderSettings(); return; }
         if (action === 'relay-wizard') { openRelayWizard(); return; }
-        if (action === 'refresh') { refresh(); return; }
-        if (action === 'back') { closeDetailView(false); return; }
-        if (action === 'purge-received') { purgeReceivedCopies(); return; }
+        if (action === 'refresh') { state.moreOpen = false; renderToolbar(); refresh(); return; }
+        if (action === 'segment') { setSegment(modal.getAttribute('data-segment')); return; }
+        if (action === 'select-mode') { state.moreOpen = false; setSelectMode(!state.selectMode); return; }
+        if (action === 'search-open') { state.moreOpen = false; setSearchOpen(true); return; }
+        if (action === 'search-close') { setSearchOpen(false); return; }
+        if (action === 'more-toggle') { state.moreOpen = !state.moreOpen; renderToolbar(); return; }
+        if (action === 'select-mode-off') { setSelectMode(false); return; }
+        if (action === 'bulk-download') { bulkDownload(); return; }
+        if (action === 'bulk-delete') { bulkDelete(); return; }
+        if (action === 'purge-received') { state.moreOpen = false; renderToolbar(); purgeReceivedCopies(); return; }
 
         // Attachment + contact + provider actions carry a data-attachment /
         // data-contact / data-provider id validated against the current model.
@@ -1990,7 +1973,8 @@
         var providerId = modal.getAttribute('data-provider');
 
         if (attachmentId && state.attachments.some(function (a) { return a.id === attachmentId; })) {
-            if (action === 'select') { selectAttachment(attachmentId); openDetailView(); return; }
+            if (action === 'toggle-card') { toggleCard(attachmentId); return; }
+            if (action === 'toggle-comment') { state.openComment[attachmentId] = !state.openComment[attachmentId]; renderTransfers(); return; }
             if (action === 'attach-download') { attachmentDownload(attachmentId); return; }
             if (action === 'attach-reject') { attachmentReject(attachmentId); return; }
             if (action === 'attach-save') { attachmentSave(attachmentId); return; }
@@ -2060,15 +2044,14 @@
         if (!target || !target.id) return;
         if (target.id === 'filesSearch') {
             state.search = target.value || '';
-            refreshChannelNotice();
             renderTransfers();
-            renderSummaries();
             return;
         }
         // The custom-TTL number input fires 'input' as digits are typed, so the
         // expiry summary updates live rather than only on blur; the authoritative
         // readiness refresh is debounced (F2).
-        if (target.id === 'filesSendCustomTtlSeconds') {
+        if (target.id === 'filesSendComment') { renderSendCommentLeft(); renderSendSubmit(); return; }
+        if (target.id === 'filesSendTtlValue') {
             renderSendExpiry();
             renderSendSubmit();
             scheduleSendReadinessRefresh();
@@ -2080,46 +2063,17 @@
     // useful 'input' event; this routes the send form's dynamic feedback.
     function onDocumentChange(e) {
         var target = e.target;
+        if (target && target.getAttribute && target.getAttribute('data-files-check')) { toggleChecked(target.getAttribute('data-files-check'), Boolean(target.checked)); return; }
         if (!target || !target.id) return;
-        if (target.id === 'filesSendExpiry') { renderSendCustomTtl(); refreshSendReadiness(); return; }
+        if (target.id === 'filesSendExpiry') { renderSendCustomTtl(); renderSendSubmit(); refreshSendReadiness(); return; }
+        if (target.id === 'filesSendTtlUnit') { renderSendExpiry(); renderSendSubmit(); refreshSendReadiness(); return; }
         if (target.id === 'filesSendFile') { renderSendFileFeedback(); return; }
-        if (target.id === 'filesSendProvider') { renderSendProviderReadiness(); refreshSendReadiness(); return; }
+        if (target.id === 'filesSendProvider') { renderSendExpiryOptions(); renderSendProviderReadiness(); refreshSendReadiness(); return; }
         if (target.id === 'filesSendRecipient') { renderSendKeyStatus(); renderSendSubmit(); return; }
         if (target.id === 'filesSendResize') { renderSendSubmit(); return; }
-        if (target.id === 'filesFilterSelect') { setFilter(target.value); return; }
     }
 
     // ---- filter (C5) -------------------------------------------------------
-
-    function setFilter(filter) {
-        if (!FILTER_API[filter]) return;
-        state.filter = filter;
-        refreshChannelNotice();
-        var sel = getEl('filesFilterSelect');
-        if (sel && sel.value !== filter) sel.value = filter;
-        loadTransfers();
-    }
-
-    // A channel selection shows a compact unsupported-transfer notice above the
-    // transfer list (channels are navigation-only and never file recipients);
-    // any node or no selection hides it.
-    //
-    // UX5: it explains one thing, that the list is NOT narrowed to the selected channel. It shows only while the list is
-    // shown plain (filter "All", nothing typed in the search); once the user narrows the list themselves it has nothing left to
-    // explain, and showing it above a "Sent" list only looked like an error.
-    function renderChannelNotice(sel) {
-        var notice = getEl('filesChannelNotice');
-        if (!notice) return;
-        var plainList = state.filter === 'all' && !state.search;
-        var isChannel = Boolean(sel && sel.kind === 'channel') && plainList;
-        if (notice.hidden !== undefined) notice.hidden = !isChannel;
-        else notice.style.display = isChannel ? '' : 'none';
-    }
-
-    function refreshChannelNotice() {
-        var store = (typeof window !== 'undefined') ? window.MeshCenterTargets : null;
-        renderChannelNotice(store && typeof store.selected === 'function' ? store.selected() : null);
-    }
 
     // PR 4 Finding 1: the shared store's selection is the single source of
     // truth for the Files counterparty filter. A node selection becomes the
@@ -2131,10 +2085,7 @@
         var changed = state.counterparty !== nodeId;
         state.counterparty = nodeId;
         if (!state.active) return; // re-derived on the next activate()→refresh()
-        // The channel notice tracks the selection KIND, not just the counterparty,
-        // so it must update even when the counterparty itself is unchanged
-        // (none→channel and channel→none both leave counterparty empty).
-        renderChannelNotice(sel);
+        // a channel is never a file counterparty: with a channel selected the list simply shows everything
         if (changed) loadTransfers(); // avoid a reload loop on a no-op counterparty change
     }
 
@@ -2171,6 +2122,7 @@
     function activate() {
         state.epoch++;
         state.active = true;
+        state.segment = readSegment();
         state.visible = !(typeof document !== 'undefined' && document.hidden);
         // PR 4 Finding 1: subscribe to the shared target store once, so the
         // counterparty filter always mirrors the store's selection (node clicks
@@ -2194,8 +2146,8 @@
         state.active = false;
         state.epoch++;
         stopTimer();
-        applyView('list');
-        state.viewPushed = false;
+        state.selectMode = false;
+        state.checked = {};
         closeModal(false);
         // In-flight reads are dropped by the epoch bump; submitted commands are left untouched.
         refreshBadge();   // MCA-UX1: the tab dot counts again as soon as Files is left
@@ -2205,11 +2157,6 @@
         if (!state.active) return;
         refreshContacts();
         loadStorage();
-        // Re-derive the channel notice from the store's *current* selection each
-        // refresh, so an already-selected channel (no new onStoreSelection event)
-        // still shows the unsupported-transfer notice on reactivate/tick.
-        var store = (typeof window !== 'undefined') ? window.MeshCenterTargets : null;
-        renderChannelNotice(store && typeof store.selected === 'function' ? store.selected() : null);
         loadTransfers();
     }
 
@@ -2259,20 +2206,26 @@
                             '<input type="file" id="filesSendFile" />' +
                             '<div class="files-send-file-feedback" id="filesSendFileFeedback" aria-live="polite"></div>' +
                         '</label>') +
+                        '<div class="files-field">' +
+                            '<label class="files-field-label" for="filesSendExpiry">' + esc(t('files.send_expiry', 'Keep the link for')) + '</label>' +
+                            '<select id="filesSendExpiry"></select>' +
+                            '<div class="files-ttl-custom" id="filesSendTtlCustom" hidden>' +
+                                '<input type="number" id="filesSendTtlValue" min="1" step="1" inputmode="numeric" autocomplete="off" aria-label="' +
+                                    esc(t('files.send_ttl_value', 'Amount')) + '" />' +
+                                '<select id="filesSendTtlUnit" aria-label="' + esc(t('files.send_ttl_unit', 'Unit')) + '">' +
+                                    '<option value="minutes">' + esc(t('files.unit_minutes', 'minutes')) + '</option>' +
+                                    '<option value="hours">' + esc(t('files.unit_hours', 'hours')) + '</option>' +
+                                    '<option value="days" selected>' + esc(t('files.unit_days', 'days')) + '</option>' +
+                                '</select>' +
+                            '</div>' +
+                            '<div class="files-send-hint" id="filesSendTtlHint"></div>' +
+                            '<div class="files-send-expiry-summary" id="filesSendExpirySummary" aria-live="polite"></div>' +
+                        '</div>' +
                         '<label class="files-field">' +
-                            '<span class="files-field-label">' + esc(t('files.send_expiry', 'Expiry')) + '</span>' +
-                            '<select id="filesSendExpiry">' +
-                                '<option value="default">' + esc(t('files.expiry_default', 'Default (3 days)')) + '</option>' +
-                                '<option value="extended">' + esc(t('files.expiry_extended', 'Extended (7 days)')) + '</option>' +
-                                '<option value="custom">' + esc(t('files.expiry_custom', 'Custom')) + '</option>' +
-                            '</select>' +
-                            '<input type="number" id="filesSendCustomTtlSeconds" min="1" step="1" inputmode="numeric" placeholder="' +
-                                esc(t('files.send_ttl_custom_placeholder', 'Seconds')) + '" autocomplete="off" style="display:none" />' +
-                        '</label>' +
-                        '<div class="files-send-expiry-summary" id="filesSendExpirySummary" aria-live="polite"></div>' +
-                        '<label class="files-field">' +
-                            '<span class="files-field-label">' + esc(t('files.send_comment', 'Comment (optional)')) + '</span>' +
+                            '<span class="files-field-label">' + esc(t('files.send_comment', 'Comment for the recipient (optional)')) + '</span>' +
                             '<input type="text" id="filesSendComment" maxlength="280" autocomplete="off" />' +
+                            '<div class="files-send-hint">' + esc(t('files.send_comment_hint', 'Sent encrypted together with the file, not as a chat message')) + '</div>' +
+                            '<div class="files-send-hint" id="filesSendCommentLeft" aria-live="polite"></div>' +
                         '</label>' +
                     '</div>' +
                     '<div class="files-modal-footer">' +
@@ -2292,7 +2245,8 @@
         renderSendKeyStatus();
         renderSendProvidersLoading();
         renderSendStatus();
-        renderSendCustomTtl();
+        renderSendExpiryOptions();
+        renderSendCommentLeft();
         renderSendSubmit();
         loadConnectivityForSend(gen);
         loadSettingsForSend(gen);
@@ -2359,7 +2313,7 @@
         }
         var ttl = sendTtlSecondsStrict();
         if (ttl === null) {
-            toast(t('files.err_ttl_custom', 'Enter a positive whole number of seconds for the custom expiry'), 'error');
+            toast(t('files.err_ttl_custom', 'Enter a whole number greater than zero'), 'error');
             return;
         }
         var grace = sendGraceSeconds(ttl);
@@ -2698,6 +2652,7 @@
             }
             if (chosen) sel.value = chosen.provider_id;
         }
+        renderSendExpiryOptions();       // the presets follow the relay's limits
         renderSendProviderReadiness();
     }
 
@@ -2777,25 +2732,94 @@
         renderSendSubmit();
     }
 
+    // ---- the expiry of a transfer (FX1): presets inside what the relay allows; Custom is a number and a unit ------------------
+    var TTL_PRESETS = [3600, 21600, 86400, 259200, 604800, 1209600, 2592000];
+    var TTL_PRESET_LABELS = { 3600: '1 hour', 21600: '6 hours', 86400: '1 day', 259200: '3 days', 604800: '7 days', 1209600: '14 days', 2592000: '30 days' };
+    var TTL_DEFAULT = 1209600;          // 14 days
+    var RELAY_MIN_TTL = 3600;           // the relay's own minimum (1 hour) until the relay publishes it in /v1/info
+    var RELAY_MAX_TTL_FALLBACK = 2592000;
+    var TTL_UNIT_SECONDS = { minutes: 60, hours: 3600, days: 86400 };
+
+    function durationText(seconds) {
+        if (seconds % 86400 === 0) return plural('files.dur_days', seconds / 86400, '{count} day', '{count} days');
+        if (seconds % 3600 === 0) return plural('files.dur_hours', seconds / 3600, '{count} hour', '{count} hours');
+        return plural('files.dur_minutes', Math.round(seconds / 60), '{count} minute', '{count} minutes');
+    }
+
+    // {min, max}: what the selected relay allows (its published minimum when it has one)
+    function sendTtlLimits() {
+        var sel = getEl('filesSendProvider');
+        var p = sel && sel.value ? providerById(sel.value) : null;
+        var min = p && p.min_ttl_seconds != null ? p.min_ttl_seconds : RELAY_MIN_TTL;
+        var max = p && p.max_ttl_seconds != null ? p.max_ttl_seconds : RELAY_MAX_TTL_FALLBACK;
+        return { min: min, max: max };
+    }
+
+    function ttlPresetLabel(seconds) {
+        return t('files.ttl_preset_' + seconds, TTL_PRESET_LABELS[seconds]);
+    }
+
+    // The select lists only the presets this relay allows. The default is 14 days; a relay that keeps files for less has its
+    // own maximum as the default, and the dialog says so.
+    function renderSendExpiryOptions() {
+        var sel = getEl('filesSendExpiry');
+        if (!sel) return;
+        var limits = sendTtlLimits();
+        var allowed = TTL_PRESETS.filter(function (v) { return v >= limits.min && v <= limits.max; });
+        var previous = sel.value;
+        var wanted = allowed.indexOf(TTL_DEFAULT) !== -1 ? TTL_DEFAULT : (allowed.length ? allowed[allowed.length - 1] : 'custom');
+        var keep = previous && (previous === 'custom' || allowed.indexOf(Number(previous)) !== -1) ? previous : String(wanted);
+        sel.innerHTML = allowed.map(function (v) {
+            return '<option value="' + v + '">' + esc(ttlPresetLabel(v)) + '</option>';
+        }).join('') + '<option value="custom">' + esc(t('files.ttl_custom', 'Custom...')) + '</option>';
+        sel.value = keep;
+        var note = getEl('filesSendTtlHint');
+        state.sendTtlLimited = allowed.indexOf(TTL_DEFAULT) === -1 && allowed.length > 0;
+        if (note) {
+            note.textContent = state.sendTtlLimited
+                ? tparams('files.ttl_default_limited', { duration: durationText(wanted) }, 'This relay keeps files at most ' + durationText(wanted) + ', so that is the default.')
+                : '';
+        }
+        renderSendCustomTtl();
+    }
+
     function renderSendCustomTtl() {
         var sel = getEl('filesSendExpiry');
-        var input = getEl('filesSendCustomTtlSeconds');
+        var box = getEl('filesSendTtlCustom');
         var custom = sel && sel.value === 'custom';
-        if (input) input.style.display = custom ? '' : 'none';
+        if (box) { if (box.hidden !== undefined) box.hidden = !custom; else box.style.display = custom ? '' : 'none'; }
+        var hint = getEl('filesSendTtlHint');
+        if (hint && custom) {
+            var limits = sendTtlLimits();
+            hint.textContent = tparams('files.ttl_range', { min: durationText(limits.min), max: durationText(limits.max) },
+                'from ' + durationText(limits.min) + ' to ' + durationText(limits.max));
+        } else if (hint && !state.sendTtlLimited) {
+            hint.textContent = '';
+        }
         renderSendExpiry();
+    }
+
+    // Typed in Custom: null when there is nothing valid yet. A blank field is not an error message, only no TTL.
+    function customTtlSeconds() {
+        var input = getEl('filesSendTtlValue');
+        var unit = getEl('filesSendTtlUnit');
+        var raw = input ? String(input.value || '').trim() : '';
+        if (raw === '') return { seconds: null, blank: true };
+        var n = parseInt(raw, 10);
+        if (!Number.isFinite(n) || String(n) !== raw || n <= 0) return { seconds: null, blank: false };
+        return { seconds: n * (TTL_UNIT_SECONDS[unit ? unit.value : 'days'] || 86400), blank: false };
     }
 
     function renderSendExpiry() {
         var summary = getEl('filesSendExpirySummary');
         if (!summary) return;
         var ttl = sendTtlSecondsStrict();
-        // Section 7: a blank/invalid Custom TTL shows a localized prompt, not a
-        // fictitious 86400-second expiry. Expiry/grace are computed only once a
-        // valid value is present, and the value is checked against the selected
-        // provider's min/max locally before the summary is shown.
+        var sel = getEl('filesSendExpiry');
+        // One message, under the field, and only after something was typed (never for a blank field)
         if (ttl === null) {
-            summary.innerHTML = '<span class="files-status-warn">' +
-                esc(t('files.err_ttl_custom', 'Enter a positive whole number of seconds for the custom expiry')) + '</span>';
+            var typed = customTtlSeconds();
+            summary.innerHTML = typed.blank ? '' : '<span class="files-status-warn">' +
+                esc(t('files.err_ttl_custom', 'Enter a whole number greater than zero')) + '</span>';
             return;
         }
         var minMax = sendTtlMinMaxError(ttl);
@@ -2803,51 +2827,50 @@
             summary.innerHTML = '<span class="files-status-warn">' + esc(minMax) + '</span>';
             return;
         }
-        var grace = sendGraceSeconds(ttl);
         var expiry = Math.floor(Date.now() / 1000) + ttl;
-        summary.innerHTML =
-            '<span>' + esc(tparams('files.expiry_summary', { date: fmtDate(expiry) }, 'Expires ' + fmtDate(expiry))) + '</span>' +
-            ' · <span>' + esc(tparams('files.grace_summary', { grace: fmtGrace(grace) }, 'Download grace: ' + fmtGrace(grace))) + '</span>';
+        summary.innerHTML = '<span>' + esc(tparams('files.expiry_summary', { date: fmtDate(expiry) }, 'Expires ' + fmtDate(expiry))) + '</span>';
     }
 
     function sendTtlSeconds() {
-        // Submit-path helper: returns the resolved TTL. submitSend validates a
-        // Custom value before this is ever consulted, so the 86400 fallback is
-        // unreachable in the custom branch during a real submit.
+        // Submit-path helper: submitSend validates the TTL before this is consulted
         var ttl = sendTtlSecondsStrict();
-        if (ttl !== null) return ttl;
-        return 86400;
+        return ttl !== null ? ttl : TTL_DEFAULT;
     }
 
     function sendTtlSecondsStrict() {
         var sel = getEl('filesSendExpiry');
-        var mode = sel ? sel.value : 'default';
-        if (mode === 'extended') return 604800;
-        if (mode === 'custom') {
-            var input = getEl('filesSendCustomTtlSeconds');
-            var raw = input ? String(input.value || '').trim() : '';
-            var n = parseInt(raw, 10);
-            if (raw !== '' && Number.isFinite(n) && String(n) === raw && n > 0) return n;
-            return null; // blank/zero/non-integer/negative - no fictitious TTL
-        }
-        return 259200; // default 3 days
+        var mode = sel ? sel.value : String(TTL_DEFAULT);
+        if (mode === 'custom') return customTtlSeconds().seconds;
+        var n = parseInt(mode, 10);
+        return Number.isFinite(n) && n > 0 ? n : TTL_DEFAULT;
     }
 
     function sendTtlMinMaxError(ttl) {
-        var sel = getEl('filesSendProvider');
-        var p = sel && sel.value ? providerById(sel.value) : null;
-        if (!p) return null;
-        if (p.min_ttl_seconds != null && ttl < p.min_ttl_seconds) {
-            return filesReadinessLabel('ttl_below_minimum');
-        }
-        if (p.max_ttl_seconds != null && ttl > p.max_ttl_seconds) {
-            return filesReadinessLabel('ttl_above_maximum');
+        var limits = sendTtlLimits();
+        if (ttl < limits.min || ttl > limits.max) {
+            return tparams('files.ttl_out_of_range', { min: durationText(limits.min), max: durationText(limits.max) },
+                'Choose between ' + durationText(limits.min) + ' and ' + durationText(limits.max));
         }
         return null;
     }
 
     function sendGraceSeconds(ttl) {
-        return ttl === 604800 ? 86400 : 3600;
+        return ttl >= 604800 ? 86400 : 3600;
+    }
+
+    // the comment counter: only near the limit (the server counts bytes: 1000)
+    var COMMENT_MAX_BYTES = 1000;
+    function utf8Length(text) {
+        try { return new TextEncoder().encode(text).length; } catch (e) { return String(text).length; }
+    }
+    function renderSendCommentLeft() {
+        var input = getEl('filesSendComment');
+        var out = getEl('filesSendCommentLeft');
+        if (!input || !out) return;
+        var left = COMMENT_MAX_BYTES - utf8Length(input.value || '');
+        out.textContent = left <= 100
+            ? plural('files.comment_left', Math.max(left, 0), '{count} character left', '{count} characters left')
+            : '';
     }
 
     function sendSignature() {
@@ -2861,7 +2884,7 @@
         return [
             recipient ? recipient.value : '',
             provider ? provider.value : '',
-            expiry ? expiry.value : 'default',
+            expiry ? expiry.value : String(TTL_DEFAULT),
             ttl === null ? '' : String(ttl), // exact TTL in the semantic form
             ttl === null ? '' : String(sendGraceSeconds(ttl)), // exact grace too (Section 7)
             comment ? (comment.value || '').trim() : '',
@@ -2923,11 +2946,7 @@
             el.innerHTML = '<span>' + esc(t('files.readiness_checking', 'Checking upload…')) + '</span>';
             return;
         }
-        if (s.reason === 'ttl_invalid') {
-            el.innerHTML = '<span class="files-status-warn">' +
-                esc(t('files.err_ttl_custom', 'Enter a positive whole number of seconds for the custom expiry')) + '</span>';
-            return;
-        }
+        if (s.reason === 'ttl_invalid') { el.innerHTML = ''; return; }       // the expiry field owns this message
         var label = s.ready
             ? t('files.upload_ready', 'Upload: ready')
             : t('files.upload_not_ready', 'Upload: not ready') + ' - ' + filesReadinessLabel(s.reason);
@@ -3039,16 +3058,14 @@
             return;
         }
 
-        // R7: a custom expiry must be a positive whole number of seconds.
-        if ((getEl('filesSendExpiry') || {}).value === 'custom') {
-            var ttlInput = getEl('filesSendCustomTtlSeconds');
-            var raw = ttlInput ? String(ttlInput.value || '').trim() : '';
-            var n = parseInt(raw, 10);
-            if (raw === '' || !Number.isFinite(n) || String(n) !== raw || n <= 0) {
-                toast(t('files.err_ttl_custom', 'Enter a positive whole number of seconds for the custom expiry'), 'error');
-                return;
-            }
+        // a custom expiry must be a whole number in range (the message is under the field, here only the toast)
+        var ttlCheck = sendTtlSecondsStrict();
+        if (ttlCheck === null) {
+            toast(t('files.err_ttl_custom', 'Enter a whole number greater than zero'), 'error');
+            return;
         }
+        var rangeError = sendTtlMinMaxError(ttlCheck);
+        if (rangeError) { toast(rangeError, 'error'); return; }
 
         // Idempotency: reuse the client_request_id for an unchanged semantic
         // form; mint a new one on any semantic change (C7 §12.7).
@@ -3103,7 +3120,7 @@
                             // does not announce success early.
                             return refreshTransfers().then(function () {
                                 closeModal(false);
-                                if (attachmentId) selectAttachment(attachmentId);
+                                if (attachmentId) { state.focusId = attachmentId; renderTransfers(); }
                             });
                         },
                         onFailed: function () {
@@ -3895,13 +3912,18 @@
             document.addEventListener('change', onDocumentChange);
             document.addEventListener('visibilitychange', onVisibilityChange);
             if (typeof window !== 'undefined' && window.addEventListener) {
-                window.addEventListener('popstate', onPopState);
                 // the vault was unlocked or locked: the list shows names again / a placeholder
                 window.addEventListener('mcvault:change', function () { if (state.active) refresh(); });
             }
-            // 'toggle' does not bubble, so only the capture phase reaches a
-            // delegated listener for the dynamically-rendered <details> below.
-            document.addEventListener('toggle', onDetailToggle, true);
+            // 'toggle' does not bubble, so only the capture phase reaches a delegated listener for the dynamic <details>
+            document.addEventListener('toggle', onMoreToggle, true);
+            // a thumbnail that cannot be made (not an image after all, a locked vault, a gone file) falls back to the type icon
+            document.addEventListener('error', onThumbError, true);
+            // long press on a card (touch) starts selecting
+            document.addEventListener('pointerdown', onCardPointerDown);
+            document.addEventListener('pointerup', cancelLongPress);
+            document.addEventListener('pointermove', cancelLongPress);
+            document.addEventListener('pointercancel', cancelLongPress);
         }
         // Direct input listener for the search box (delegation covers dynamic content,
         // but the search box is static markup so bind it directly too for clarity).
@@ -3912,9 +3934,78 @@
         }
     }
 
+    // ---- "More details": the technical rows are in the card; the timeline is fetched when it is first opened ---------------
+    function moreExtraHtml(a, timeline) {
+        var deliveries = (Array.isArray(a.deliveries) && a.deliveries.length) ? a.deliveries : [];
+        var parts = [];
+        if (deliveries.length) {
+            parts.push('<div class="files-detail-subtitle">' + esc(t('files.detail_deliveries', 'Deliveries')) + '</div>' + deliveries.map(function (d) {
+                return '<div class="files-timeline-event"><span class="files-timeline-time">' + esc(fmtDate(d.sent_at)) + '</span><span>' +
+                    esc((d.route_type || '') + ' ' + (d.state || '')) + '</span></div>';
+            }).join(''));
+        }
+        if (timeline.length) {
+            parts.push(timeline.map(function (e) {
+                return '<div class="files-timeline-event"><span class="files-timeline-time">' + esc(fmtDate(e.created_at || e.at)) + '</span>' +
+                    '<span>' + esc(e.event_type || '') + '</span></div>';
+            }).join(''));
+        }
+        return parts.join('');
+    }
+
+    function onMoreToggle(e) {
+        var el = e && e.target;
+        if (!el || !el.getAttribute || !el.hasAttribute || !el.hasAttribute('data-more')) return;
+        var id = el.getAttribute('data-more');
+        if (el.open) state.openMore[id] = true; else delete state.openMore[id];
+        if (!el.open || state.moreExtra[id] !== undefined) return;
+        state.moreExtra[id] = '';
+        api('/api/attachments/' + encodeURIComponent(id)).then(function (r) {
+            if (r.status !== 200 || !r.data || r.data.ok !== true) { delete state.moreExtra[id]; return; }
+            var html = moreExtraHtml(r.data.attachment || {}, Array.isArray(r.data.timeline) ? r.data.timeline : []);
+            state.moreExtra[id] = html;
+            var target = document.querySelector ? document.querySelector('[data-more-extra="' + id + '"]') : null;
+            if (target) target.innerHTML = html;
+        }).catch(function () { delete state.moreExtra[id]; });
+    }
+
+    function onThumbError(e) {
+        var el = e && e.target;
+        if (!el || el.tagName !== 'IMG' || !el.hasAttribute || !el.hasAttribute('data-thumb')) return;
+        var holder = el.parentNode;
+        var card = closestSel(holder, '.files-card');
+        var a = card ? state.attachments.filter(function (x) { return x.id === card.getAttribute('data-attachment'); })[0] : null;
+        if (holder) holder.textContent = mimeIcon(a ? a.mime_type : '');
+    }
+
+    var longPressTimer = null;
+    function cancelLongPress() { if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; } }
+    function onCardPointerDown(e) {
+        if (!e || e.pointerType !== 'touch' || state.selectMode) return;
+        var card = closestSel(e.target, '.files-card');
+        if (!card || closestSel(e.target, 'button, a, summary, input')) return;
+        var id = card.getAttribute('data-attachment');
+        cancelLongPress();
+        longPressTimer = setTimeout(function () {
+            longPressTimer = null;
+            state.selectMode = true;
+            state.checked[id] = true;
+            state.longPressed = true;
+            renderTransfers();
+        }, 500);
+    }
+
+    // the node card's quick links (chat.js) ask for "received" / "sent" / "all"
+    function setFilterCompat(direction) {
+        setSegment(direction === 'received' ? 'incoming' : (direction === 'sent' ? 'sent' : 'all'));
+    }
+
     bindListeners();
 
     window.MeshCenterFiles = {
+        plainStatus: plainStatus,
+        isExecutableName: isExecutableName,
+        setSegment: setSegment,
         activate: activate,
         deactivate: deactivate,
         refresh: refresh,
@@ -3940,7 +4031,7 @@
     window.openFilesWorkspace = activate;
     window.closeFilesWorkspace = deactivate;
     window.loadFilesWorkspace = refresh;
-    window.setFilesFilter = setFilter;
+    window.setFilesFilter = setFilterCompat;
     window.openFilesSendDialog = openSendDialog;
     window.closeFilesSendDialog = function () { closeModal(false); };
     window.openFilesProviderSettings = openProviderSettings;

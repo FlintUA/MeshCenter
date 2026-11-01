@@ -498,6 +498,41 @@ class ProviderRegistry:
         self._conn.commit()
         return self.resolve(provider_id)  # type: ignore[return-value]
 
+    def refresh_limits(
+        self,
+        provider_id: str,
+        *,
+        max_ciphertext_bytes: Optional[int],
+        min_ttl_seconds: Optional[int],
+        max_ttl_seconds: Optional[int],
+    ) -> bool:
+        """FX1: follow the limits the relay itself publishes in `/v1/info` (they were copied once at registration and went
+        stale when the operator changed the relay). Called by `ConnectivityMonitor` after a verified `/v1/info` read, so
+        every provider check (the periodic one and the manual Check button) refreshes them. A value the relay does not
+        publish (or an invalid one) leaves the stored value alone; a relay maximum below the stored minimum clears the
+        stored minimum instead of failing. Returns True when something changed."""
+        existing = self.resolve(provider_id)
+        if existing is None:
+            return False
+
+        def _positive(value):
+            return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
+
+        new_bytes = _positive(max_ciphertext_bytes) or existing.max_ciphertext_bytes
+        new_max = _positive(max_ttl_seconds) or existing.max_ttl_seconds
+        new_min = _positive(min_ttl_seconds) or existing.min_ttl_seconds
+        if new_min is not None and new_max is not None and new_min > new_max:
+            new_min = _positive(min_ttl_seconds) and None
+        if (new_bytes, new_min, new_max) == (existing.max_ciphertext_bytes, existing.min_ttl_seconds, existing.max_ttl_seconds):
+            return False
+        self._conn.execute(
+            "UPDATE mca_provider_profiles SET max_ciphertext_bytes = ?, min_ttl_seconds = ?, max_ttl_seconds = ? "
+            "WHERE workspace_id = ? AND provider_id = ?",
+            (new_bytes, new_min, new_max, self._workspace_id, provider_id),
+        )
+        self._conn.commit()
+        return True
+
     def record_check_result(
         self,
         provider_id: str,

@@ -5454,15 +5454,15 @@ function renderNodeCardKeyActions(nodeId, isSelected) {
         actions.push(`<button type="button" class="node-card-key-btn"${disabled} data-files-action="contact-accept" data-contact="${escapeHtml(t.id)}">${escapeHtml(window.I18N.t('files.key_change_accept'))}</button>`);
         actions.push(`<button type="button" class="node-card-key-btn is-danger"${disabled} data-files-action="contact-reject" data-contact="${escapeHtml(t.id)}">${escapeHtml(window.I18N.t('files.key_change_reject'))}</button>`);
     } else {
-        // trust_state === 'unknown': reflect the worker-published key-request
-        // state, and offer "Request key" only when the store says we may.
+        // trust_state === 'unknown' (FX1): ONE control. "Request key"; after a request a plain "Key requested, waiting"
+        // (with the automatic retries when they run); "Request again" when it can be repeated. No separate "Key unknown" text.
         const kr = t.key_request_state;
         if (t.can_request_key) {
-            status = kr === 'no_answer' ? window.I18N.t('files.key_request_state.no_answer') : window.I18N.t('files.contact.key_unknown');
+            status = kr === 'no_answer' ? window.I18N.t('files.key_request_state.no_answer') : '';
             const again = kr === 'retry_available' || kr === 'no_answer';
             actions.push(`<button type="button" class="node-card-key-btn"${disabled} data-files-action="contact-request-key" data-contact="${escapeHtml(t.id)}">${escapeHtml(again ? window.I18N.t('files.request_key_again') : window.I18N.t('files.request_key'))}</button>`);
         } else if (kr === 'queued' || kr === 'waiting_response') {
-            status = window.I18N.t('files.key_request_state.' + kr);
+            status = window.I18N.t('files.key_request_state.requested_waiting');
             if (kr === 'waiting_response' && t.retry_attempt > 0 && t.retry_max > 0) {
                 // automatic retries are running: say which attempt, when the next one is due, and offer to stop them
                 status = window.I18N.t('files.key_request_retry_status', {
@@ -5473,7 +5473,8 @@ function renderNodeCardKeyActions(nodeId, isSelected) {
                 actions.push(`<button type="button" class="node-card-key-btn"${disabled} data-files-action="contact-cancel-key" data-contact="${escapeHtml(t.id)}">${escapeHtml(window.I18N.t('files.cancel_key_request'))}</button>`);
             }
         } else {
-            status = window.I18N.t('files.contact.key_unknown');
+            // a request cannot go out right now (the radio is busy or released, the quota is used): the same button, off
+            actions.push(`<button type="button" class="node-card-key-btn" disabled data-files-action="contact-request-key" data-contact="${escapeHtml(t.id)}">${escapeHtml(window.I18N.t('files.request_key'))}</button>`);
         }
     }
 

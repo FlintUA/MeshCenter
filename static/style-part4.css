@@ -4687,6 +4687,7 @@ html[data-theme="dark"] #notificationsCard {
    values as bare :root fallbacks, dark values under [data-theme="dark"]. */
 
 .files-view.workspace-view {
+    container: filesview / inline-size;
     flex: 1 1 auto;
     min-width: 0;
     min-height: 0;
@@ -4784,16 +4785,19 @@ html[data-theme="dark"] #notificationsCard {
 .files-filter-row {
     flex: 0 0 auto;
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 10px;
+    gap: 8px 10px;
     padding: 8px 10px;
+    box-sizing: border-box;
+    min-width: 0;
     border-bottom: 1px solid var(--mc-border, #d8e1ec);
 }
 .files-filter-label {
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    flex: 1 1 auto;
+    flex: 0 0 auto;
     font-size: 12px;
     font-weight: 600;
     color: var(--mc-muted, #5c7290);
@@ -4815,8 +4819,10 @@ html[data-theme="dark"] #notificationsCard {
     outline-offset: 1px;
 }
 .files-search {
-    flex: 0 0 auto;
-    width: 180px;
+    /* label + select + search in one row; the search takes what is left and never runs past the pane, a narrow pane wraps it to a line of its own */
+    flex: 1 1 140px;
+    min-width: 0;
+    box-sizing: border-box;
     padding: 6px 8px;
     border: 1px solid var(--mc-border, #d8e1ec);
     border-radius: 8px;
@@ -7219,34 +7225,21 @@ body.media-lightbox-open {
     color: var(--mc-warn-text, #7a5a12);
 }
 
-/* the Files tab: padding for the lines above the list, and on a phone the Transfers pane grows with its content instead of being
-   cut to a 240 px row that the Details header then overlapped */
-.files-summary,
+/* the Files tab: the lines above and below the list use the normal small text style */
+.files-summary {
+    padding: 0 12px;
+    margin: 6px 0;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--mc-muted, #5c7290);
+}
+
 .files-storage {
     padding: 0 12px;
+    margin: 10px 0 8px;
 }
 
-.files-storage {
-    margin: 6px 0 8px;
-}
-
-@media (max-width: 768px) {
-    .files-layout {
-        grid-auto-rows: auto;
-    }
-
-    .files-archive,
-    .files-detail {
-        min-height: auto;
-        overflow: visible;
-    }
-
-    .files-archive-list {
-        flex: 0 1 auto;
-        max-height: 60vh;
-    }
-
-    .files-detail-body {
-        flex: 0 1 auto;
-    }
+/* the phone's way back from Details to the transfers (the side-by-side layout never needs it) */
+.files-back-btn {
+    display: none;
 }

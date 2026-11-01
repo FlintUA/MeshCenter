@@ -7,14 +7,14 @@
     <meta name="csrf-token" content="{{ csrf_token }}">
     <meta name="runtime-capabilities" content="{{ runtime_capabilities }}">
     <!-- csrf.js must stay the FIRST script, in <head>, without defer/async: it wraps window.fetch, so no API request can run before the wrapper exists (tests/test_csrf_script_order.py) -->
-    <script src="{{ url_for('static', filename='csrf.js') }}?v=20261101-ux5b"></script>
+    <script src="{{ url_for('static', filename='csrf.js') }}?v=20261101-ux5c"></script>
     <title>MeshCenter</title>
     <!-- MeshCenter build: stage2c7-4-unified-popovers-20260725 -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part1.css') }}?v=20261101-ux5b">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part2.css') }}?v=20261101-ux5b">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part3.css') }}?v=20261101-ux5b">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part4.css') }}?v=20261101-ux5b">
-    <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=20261101-ux5b">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part1.css') }}?v=20261101-ux5c">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part2.css') }}?v=20261101-ux5c">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part3.css') }}?v=20261101-ux5c">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part4.css') }}?v=20261101-ux5c">
+    <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=20261101-ux5c">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 </head>
@@ -746,7 +746,7 @@
                             <button type="button" class="mc-refresh-btn" data-files-action="refresh">↻ <span data-i18n="common.refresh">Refresh</span></button>
                         </div>
                     </header>
-                    <div class="files-layout" id="filesLayout">
+                    <div class="files-layout" id="filesLayout" data-view="list">
                         <section class="files-archive" id="filesArchivePane" aria-label="Files transfers">
                             <div class="files-pane-title">🗂️ <span data-i18n="files.archive_title">Transfers</span></div>
                             <div class="files-filter-row">
@@ -767,13 +767,17 @@
                             <div class="files-channel-notice" id="filesChannelNotice" hidden
                                 data-i18n="files.channel_unsupported_notice">File transfer to channels is not supported. Showing all transfers.</div>
                             <div class="files-summary" id="filesSummary" aria-live="polite"></div>
-                            <div class="files-storage" id="filesStorage"></div>
                             <div class="files-archive-list" id="filesArchiveList">
                                 <div class="device-dashboard-loading" data-i18n="files.loading_transfers">Loading transfers...</div>
                             </div>
+                            <div class="files-storage" id="filesStorage"></div>
                         </section>
                         <section class="files-detail" id="filesDetailPane" aria-label="Files details">
-                            <div class="files-pane-title">ℹ️ <span data-i18n="files.detail_title">Details</span></div>
+                            <div class="files-pane-title">
+                                <button type="button" class="files-back-btn" id="filesBackBtn" data-files-action="back"
+                                    aria-label="Back to transfers" data-i18n-aria-label="files.back_to_list">&larr; <span data-i18n="files.back_to_list_short">Transfers</span></button>
+                                ℹ️ <span data-i18n="files.detail_title">Details</span>
+                            </div>
                             <div class="files-detail-body" id="filesDetailBody">
                                 <div class="files-detail-empty" data-i18n="files.select_transfer_hint">Select a transfer to view its progress and details.</div>
                             </div>
@@ -2497,8 +2501,9 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="/static/chart.umd.min.js"></script>
-<script src="/static/i18n.js?v=20261101-ux5b"></script>
-<script src="/static/runtime-caps.js?v=20261101-ux5b"></script>
+<script src="/static/i18n.js?v=20261101-ux5c"></script>
+<script src="/static/format-size.js?v=20261101-ux5c"></script>
+<script src="/static/runtime-caps.js?v=20261101-ux5c"></script>
 <script>
     // Server already resolved "auto" (stored ui.language, or an
     // Accept-Language guess) to a concrete locale for <html lang> above -
@@ -2508,25 +2513,25 @@
     // weather.js is untouched until those call I18N.t()/plural() directly.
     window.I18N.init("{{ ui_language }}").then(() => window.I18N.applyStaticDom());
 </script>
-<script src="{{ url_for('static', filename='app-dialog.js') }}?v=20261101-ux5b"></script>
+<script src="{{ url_for('static', filename='app-dialog.js') }}?v=20261101-ux5c"></script>
 <script src="{{ url_for('static', filename='chat-emoji.js') }}?v=20260821-domain-split"></script>
 <script src="{{ url_for('static', filename='chat-photo.js') }}?v=20260821-domain-split"></script>
-<script src="{{ url_for('static', filename='chat-telemetry.js') }}?v=20261101-ux5b"></script>
-<script src="{{ url_for('static', filename='chat-camera.js') }}?v=20261101-ux5b"></script>
-<script src="{{ url_for('static', filename='camera-ip.js') }}?v=20261101-ux5b"></script>
-<script src="{{ url_for('static', filename='camera-ip-controls.js') }}?v=20261101-ux5b"></script>
-<script src="{{ url_for('static', filename='camera-sources.js') }}?v=20261101-ux5b"></script>
-<script src="{{ url_for('static', filename='camera-diag.js') }}?v=20261101-ux5b"></script>
-<script src="{{ url_for('static', filename='chat-map.js') }}?v=20261101-ux5b"></script>
-<script src="{{ url_for('static', filename='chat-updates-security.js') }}?v=20261101-ux5b"></script>
-<script src="{{ url_for('static', filename='targets.js') }}?v=20261101-ux5b"></script>
-<script src="/static/recipient-picker.js?v=20261101-ux5b"></script>
-<script src="/static/files.js?v=20261101-ux5b"></script>
-<script src="{{ url_for('static', filename='chat-views.js') }}?v=20261101-ux5b"></script>
-<script src="/static/chat.js?v=20261101-ux5b"></script>
-<script src="/static/mobile-layout.js?v=20261101-ux5b"></script>
-<script src="/static/media-views.js?v=20261101-ux5b"></script>
-<script src="/static/media.js?v=20261101-ux5b"></script>
+<script src="{{ url_for('static', filename='chat-telemetry.js') }}?v=20261101-ux5c"></script>
+<script src="{{ url_for('static', filename='chat-camera.js') }}?v=20261101-ux5c"></script>
+<script src="{{ url_for('static', filename='camera-ip.js') }}?v=20261101-ux5c"></script>
+<script src="{{ url_for('static', filename='camera-ip-controls.js') }}?v=20261101-ux5c"></script>
+<script src="{{ url_for('static', filename='camera-sources.js') }}?v=20261101-ux5c"></script>
+<script src="{{ url_for('static', filename='camera-diag.js') }}?v=20261101-ux5c"></script>
+<script src="{{ url_for('static', filename='chat-map.js') }}?v=20261101-ux5c"></script>
+<script src="{{ url_for('static', filename='chat-updates-security.js') }}?v=20261101-ux5c"></script>
+<script src="{{ url_for('static', filename='targets.js') }}?v=20261101-ux5c"></script>
+<script src="/static/recipient-picker.js?v=20261101-ux5c"></script>
+<script src="/static/files.js?v=20261101-ux5c"></script>
+<script src="{{ url_for('static', filename='chat-views.js') }}?v=20261101-ux5c"></script>
+<script src="/static/chat.js?v=20261101-ux5c"></script>
+<script src="/static/mobile-layout.js?v=20261101-ux5c"></script>
+<script src="/static/media-views.js?v=20261101-ux5c"></script>
+<script src="/static/media.js?v=20261101-ux5c"></script>
 <script src="/static/weather.js?v=20260815-weather-provider"></script>
 
 <div class="modal-overlay" id="wifiConnectModal" style="display:none;" onclick="closeWifiConnectModal()">

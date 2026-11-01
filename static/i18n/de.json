@@ -84,6 +84,8 @@
     "channel_unsupported_notice": "In der Seitenleiste ist ein Kanal ausgewählt. Kanäle haben keine Dateienübertragung, daher werden alle Übertragungen angezeigt, nicht nur die dieses Kanals.",
     "loading_transfers": "Lade Übertragungen...",
     "detail_title": "Details",
+    "back_to_list": "Zurück zu den Übertragungen",
+    "back_to_list_short": "Übertragungen",
     "select_transfer_hint": "Wähle eine Übertragung, um Fortschritt und Details zu sehen.",
     "not_ready": "MCAttach-Dienst ist nicht bereit",
     "no_contacts": "Noch keine bekannten Kontakte.",

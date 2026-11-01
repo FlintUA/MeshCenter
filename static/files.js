@@ -257,6 +257,10 @@
         selectedId: null,
         pendingSelectId: null,    // a transfer to select as soon as the list has it (MCA-UX1)
         scrollToSelected: false,
+        view: 'list',             // phone only: 'list' or 'detail', one pane at a time (the CSS reads data-view)
+        ignorePop: false,         // the popstate we caused ourselves with history.back()
+        viewPushed: false,        // a history entry stands for the open Details view
+        listScroll: 0,            // the page scroll to return to when going back to the list
         storage: null,            // {count, bytes}: the received copies in cache/incoming (MCA-UX1)
 
         sendSignature: null,      // semantic send-form signature (C7 idempotency)
@@ -361,7 +365,9 @@
         });
     }
 
+    // the shared formatter (static/format-size.js): localized units, the same everywhere in the UI
     function fmtBytes(n) {
+        if (typeof window !== 'undefined' && window.MCSize) return window.MCSize.format(n);
         if (n === null || n === undefined) return '-';
         if (n < 1024) return n + ' B';
         if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
@@ -733,12 +739,15 @@
                 nextId = state.pendingSelectId;   // MCA-UX1: opened from a chat bubble
                 state.pendingSelectId = null;
                 state.scrollToSelected = true;
+                openDetailView();
             }
             if (!nextId || !state.attachments.some(function (a) { return a.id === nextId; })) {
                 nextId = state.attachments.length ? state.attachments[0].id : null;
             }
             if (nextId !== state.selectedId) {
                 invalidateDetail();
+                // the open transfer is gone (deleted, filtered out): back to the list, not to another transfer's details
+                if (state.view === 'detail' && !state.scrollToSelected) closeDetailView(false);
             }
             state.selectedId = nextId;
 
@@ -931,7 +940,7 @@
     // ---- rendering: detail + action matrix (C4/C6) -------------------------
 
     function scrollSelectedIntoView() {
-        var el = typeof document !== 'undefined' ? document.querySelector('.files-transfer-item.is-selected') : null;
+        var el = typeof document !== 'undefined' && typeof document.querySelector === 'function' ? document.querySelector('.files-transfer-item.is-selected') : null;
         if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
     }
 
@@ -942,6 +951,7 @@
         if (!id) return;
         if (state.attachments.some(function (a) { return a.id === id; })) {
             selectAttachment(id);
+            openDetailView();
             scrollSelectedIntoView();
             return;
         }
@@ -1091,6 +1101,69 @@
         }).catch(function () {
             toast(t('files.error.network_error', 'Network error'), 'error');
         });
+    }
+
+    // ---- phone: master/detail. One pane at a time (data-view on #filesLayout); wide screens ignore it ------------------
+    // Compact = the Files panel is too narrow for two panes: a phone, or a desktop whose sidebars leave a narrow centre column.
+    // FILES_COMPACT_MAX must match the @container filesview (max-width: 700px) rule in static/ui-kit.css.
+    var FILES_COMPACT_MAX = 700;
+
+    function isPhoneLayout() {
+        var m = typeof window !== 'undefined' ? window.MCMobileLayout : null;
+        if (m && typeof m.isMobile === 'function' && m.isMobile()) return true;
+        var view = getEl('filesView');
+        var width = view && view.clientWidth;
+        if (width > 0) {
+            var style = typeof getComputedStyle === 'function' ? getComputedStyle(view) : null;
+            var pad = style ? (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0) : 0;
+            return width - pad <= FILES_COMPACT_MAX;
+        }
+        return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 768px)').matches;
+    }
+
+    function pageScroller() {
+        var layout = getEl('filesLayout');
+        return layout && layout.parentNode ? layout.parentNode : null;
+    }
+
+    function applyView(view) {
+        state.view = view;
+        var layout = getEl('filesLayout');
+        if (layout && layout.setAttribute) layout.setAttribute('data-view', view);
+    }
+
+    // Only a person's own choice opens Details (a tap on a row, a chat notification); the automatic first selection never does.
+    function openDetailView() {
+        if (!isPhoneLayout() || state.view === 'detail') return;
+        var scroller = pageScroller();
+        state.listScroll = scroller ? scroller.scrollTop : 0;
+        applyView('detail');
+        if (scroller) scroller.scrollTop = 0;
+        if (typeof history !== 'undefined' && history.pushState) {
+            try { history.pushState({ mcFiles: 'detail' }, ''); state.viewPushed = true; } catch (e) { state.viewPushed = false; }
+        }
+        var back = getEl('filesBackBtn');
+        if (back && back.focus) back.focus();
+    }
+
+    // viaHistory: the browser/Android back already popped our entry. Otherwise a button, or the transfer went away.
+    function closeDetailView(viaHistory) {
+        if (state.view !== 'detail') return;
+        applyView('list');
+        var scroller = pageScroller();
+        if (scroller) scroller.scrollTop = state.listScroll;
+        if (!viaHistory && state.viewPushed && typeof history !== 'undefined' && history.back) {
+            state.viewPushed = false;
+            state.ignorePop = true;
+            history.back();
+        }
+        state.viewPushed = false;
+        scrollSelectedIntoView();
+    }
+
+    function onPopState() {
+        if (state.ignorePop) { state.ignorePop = false; return; }
+        if (state.view === 'detail') closeDetailView(true);
     }
 
     function selectAttachment(id) {
@@ -1891,6 +1964,7 @@
         if (action === 'providers') { openProviderSettings(); return; }
         if (action === 'relay-wizard') { openRelayWizard(); return; }
         if (action === 'refresh') { refresh(); return; }
+        if (action === 'back') { closeDetailView(false); return; }
         if (action === 'purge-received') { purgeReceivedCopies(); return; }
 
         // Attachment + contact + provider actions carry a data-attachment /
@@ -1900,7 +1974,7 @@
         var providerId = modal.getAttribute('data-provider');
 
         if (attachmentId && state.attachments.some(function (a) { return a.id === attachmentId; })) {
-            if (action === 'select') { selectAttachment(attachmentId); return; }
+            if (action === 'select') { selectAttachment(attachmentId); openDetailView(); return; }
             if (action === 'attach-download') { attachmentDownload(attachmentId); return; }
             if (action === 'attach-reject') { attachmentReject(attachmentId); return; }
             if (action === 'attach-save') { attachmentSave(attachmentId); return; }
@@ -2104,6 +2178,8 @@
         state.active = false;
         state.epoch++;
         stopTimer();
+        applyView('list');
+        state.viewPushed = false;
         closeModal(false);
         // In-flight reads are dropped by the epoch bump; submitted commands are left untouched.
         refreshBadge();   // MCA-UX1: the tab dot counts again as soon as Files is left
@@ -3801,6 +3877,7 @@
             document.addEventListener('input', onDocumentInput);
             document.addEventListener('change', onDocumentChange);
             document.addEventListener('visibilitychange', onVisibilityChange);
+            if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('popstate', onPopState);
             // 'toggle' does not bubble, so only the capture phase reaches a
             // delegated listener for the dynamically-rendered <details> below.
             document.addEventListener('toggle', onDetailToggle, true);

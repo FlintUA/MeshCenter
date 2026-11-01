@@ -84,6 +84,8 @@
     "channel_unsupported_notice": "A channel is selected in the sidebar. Channels have no file transfer, so all transfers are shown, not only that channel's.",
     "loading_transfers": "Loading transfers...",
     "detail_title": "Details",
+    "back_to_list": "Back to transfers",
+    "back_to_list_short": "Transfers",
     "select_transfer_hint": "Select a transfer to view its progress and details.",
     "not_ready": "MCAttach service is not ready",
     "no_contacts": "No known contacts yet.",

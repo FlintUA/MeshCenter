@@ -14404,14 +14404,14 @@ async function loadSystemInfo() {
         if (ramEl) {
             const ramPercent = Number(cpuHistoryData?.ram_percent);
             ramEl.textContent = data.ram_used_mb !== null && data.ram_total_mb !== null
-                ? `${data.ram_used_mb} / ${data.ram_total_mb} MB${Number.isFinite(ramPercent) ? ` (${ramPercent.toFixed(0)}%)` : ''}`
+                ? `${data.ram_used_mb} / ${data.ram_total_mb} ${window.MCSize ? window.MCSize.unit(2) : 'MB'}${Number.isFinite(ramPercent) ? ` (${ramPercent.toFixed(0)}%)` : ''}`
                 : '--';
         }
 
         const diskEl = document.getElementById('systemDisk');
         if (diskEl) {
             diskEl.textContent = data.disk_used_gb !== null && data.disk_total_gb !== null
-                ? `${data.disk_used_gb} / ${data.disk_total_gb} GB`
+                ? `${data.disk_used_gb} / ${data.disk_total_gb} ${window.MCSize ? window.MCSize.unit(3) : 'GB'}`
                 : '--';
         }
 

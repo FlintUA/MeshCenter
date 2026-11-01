@@ -1138,6 +1138,51 @@ async function test_transfer_row_aria_pressed() {
     console.log('PASS: test_transfer_row_aria_pressed');
 }
 
+// ---- phone: master/detail (one pane at a time) ------------------------------------------------------------------------
+async function test_phone_files_is_master_detail() {
+    const build = (phone) => {
+        const sandbox = buildSandbox({
+            fetchImpl: defaultRoutes(async (url) => {
+                if (url.startsWith('/api/attachments?')) {
+                    return json(200, { ok: true, attachments: [attachment('a1', 'sent', 'SENT'), attachment('a2', 'received', 'AVAILABLE')], total: 2 });
+                }
+                if (url === '/api/attachments/a1') return json(200, { ok: true, attachment: attachment('a1', 'sent', 'SENT'), timeline: [] });
+                if (url === '/api/attachments/a2') return json(200, { ok: true, attachment: attachment('a2', 'received', 'AVAILABLE'), timeline: [] });
+                return undefined;
+            }),
+        });
+        sandbox.window.MCMobileLayout = { isMobile: () => phone };
+        return sandbox;
+    };
+    // the markup carries data-view="list"; the fake DOM has no markup, so no attribute reads as the list
+    const view = (sandbox) => sandbox._document.getElementById('filesLayout').getAttribute('data-view') || 'list';
+    const listed = (sandbox) => waitFor(() => (sandbox._document.elements.get('filesArchiveList')?.innerHTML || '').includes('report.pdf'));
+
+    const phone = build(true);
+    activate(phone);
+    await listed(phone);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(view(phone), 'list', 'opening Files shows the list; the automatic first selection never opens Details');
+
+    dispatch(phone, { 'data-files-action': 'select', 'data-attachment': 'a2' });
+    assert.equal(view(phone), 'detail', 'tapping a transfer shows Details in place of the list');
+    dispatch(phone, { 'data-files-action': 'back' });
+    assert.equal(view(phone), 'list', 'the back button returns to the list');
+
+    phone.window.MeshCenterFiles.selectTransfer('a1');
+    assert.equal(view(phone), 'detail', 'a chat notification opens Details directly');
+    phone.window.MeshCenterFiles.deactivate();
+    assert.equal(view(phone), 'list', 'leaving the Files tab resets to the list');
+
+    const wide = build(false);
+    activate(wide);
+    await listed(wide);
+    dispatch(wide, { 'data-files-action': 'select', 'data-attachment': 'a2' });
+    assert.notEqual(view(wide), 'detail', 'tablet and desktop keep both panes side by side: no view switch');
+
+    console.log('PASS: test_phone_files_is_master_detail');
+}
+
 // ---- R7: custom TTL, MIME feedback, list-all-providers, provider freshness
 
 async function test_send_dialog_renders_custom_ttl_input() {
@@ -3033,6 +3078,7 @@ async function main() {
     await test_modal_accessibility_and_escape();
     await test_filter_select_all_six_values_issue_correct_api_request();
     await test_transfer_row_aria_pressed();
+    await test_phone_files_is_master_detail();
     await test_send_dialog_renders_custom_ttl_input();
     await test_send_file_feedback_shows_mime();
     await test_send_lists_all_providers_with_reason();

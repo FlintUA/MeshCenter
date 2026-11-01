@@ -340,6 +340,7 @@
             t.ignored = Boolean(n.ignored);
             t.favorite = Boolean(n.favorite);
             t.last_seen = n.last_seen;
+            t.mc = Number(n.mc_last_seen) > 0;               // FX1 Phase C: seen sending a MeshCenter control frame
         });
 
         // Pass 2b: ensure the local node is present even when the node list

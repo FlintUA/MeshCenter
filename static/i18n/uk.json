@@ -1962,7 +1962,12 @@
     "change_reference_point": "Змінити опорну точку",
     "reference_cleared": "Опорну точку скинуто",
     "coordinates_label": "Координати",
-    "show_more": "Показати ще {count} (приховано {hidden})"
+    "show_more": "Показати ще {count} (приховано {hidden})",
+    "filter_mc_only": "Лише MeshCenter",
+    "header_mc": "MeshCenter",
+    "header_mc_aria": "{count} помічені з MeshCenter. Натисніть, щоб показати лише їх.",
+    "mc_badge_title": "Помічений з MeshCenter. Вперше {first}, востаннє {last}",
+    "mc_seen_row": "MeshCenter: вперше {first}, востаннє {last}"
   },
   "activity": {
     "card_title": "Активність",
@@ -2360,7 +2365,9 @@
     "selected": "Вибрано: {name}",
     "more_nokey": "Ще вузлів без ключа: {count} · показати",
     "hide_nokey": "Сховати вузли без ключа",
-    "none_with_key": "Немає контактів з ключем. Знайдено вузлів без ключа: {count}, запросіть ключ."
+    "none_with_key": "Немає контактів з ключем. Знайдено вузлів без ключа: {count}, запросіть ключ.",
+    "mc_only": "Лише MeshCenter",
+    "mc_badge": "Помічений з MeshCenter"
   },
   "vault": {
     "card_title": "Сховище MCAttach",

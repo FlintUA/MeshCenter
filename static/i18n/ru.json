@@ -1962,7 +1962,12 @@
     "change_reference_point": "Изменить опорную точку",
     "reference_cleared": "Опорная точка сброшена",
     "coordinates_label": "Координаты",
-    "show_more": "Показать ещё {count} (скрыто {hidden})"
+    "show_more": "Показать ещё {count} (скрыто {hidden})",
+    "filter_mc_only": "Только MeshCenter",
+    "header_mc": "MeshCenter",
+    "header_mc_aria": "{count} замечены с MeshCenter. Нажмите, чтобы показать только их.",
+    "mc_badge_title": "Замечен с MeshCenter. Впервые {first}, в последний раз {last}",
+    "mc_seen_row": "MeshCenter: впервые {first}, в последний раз {last}"
   },
   "activity": {
     "card_title": "Активность",
@@ -2360,7 +2365,9 @@
     "selected": "Выбрано: {name}",
     "more_nokey": "Ещё узлов без ключа: {count} · показать",
     "hide_nokey": "Скрыть узлы без ключа",
-    "none_with_key": "Нет контактов с ключом. Найдено узлов без ключа: {count}, запросите ключ."
+    "none_with_key": "Нет контактов с ключом. Найдено узлов без ключа: {count}, запросите ключ.",
+    "mc_only": "Только MeshCenter",
+    "mc_badge": "Замечен с MeshCenter"
   },
   "vault": {
     "card_title": "Хранилище MCAttach",

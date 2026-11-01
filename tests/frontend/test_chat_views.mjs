@@ -598,7 +598,7 @@ test('header counts: not-ignored nodes only, online at the 2 h edge, filtered fl
     assert.deepEqual([counts.total, counts.online, counts.direct, counts.filtered], [3, 1, 0, false]);
     const some = V.nodeHeaderCounts(list, 1, NOW_S);
     assert.deepEqual([some.shown, some.total, some.filtered], [1, 3, true]);
-    assert.deepEqual({ ...V.nodeHeaderCounts(null, undefined, NOW_S) }, { total: 0, shown: 0, filtered: false, online: 0, direct: 0 });
+    assert.deepEqual({ ...V.nodeHeaderCounts(null, undefined, NOW_S) }, { total: 0, shown: 0, filtered: false, online: 0, direct: 0, mc: 0 });
 });
 
 // ---- NL1: the header form is measured fresh every time (it must never stick) ----
@@ -698,4 +698,39 @@ test('a raw MCAttach frame is never previewed as text', () => {
     assert.equal(V.previewText('MCA1:AAAAbbbb'), '\u{1F4CE}');
     assert.equal(V.previewText('hello\nworld'), 'hello \u00b7 world', 'ordinary text is unchanged');
     assert.equal(V.previewText('see MCA1: in the middle'), 'see MCA1: in the middle', 'only a leading frame counts');
+});
+
+
+// ---- FX1 Phase C: passive MeshCenter marking ----
+
+test('a node is a MeshCenter node only when it has a real mc_last_seen', () => {
+    assert.equal(V.isMeshCenterNode({ mc_last_seen: 1793000000 }), true);
+    for (const bad of [{}, null, undefined, { mc_last_seen: null }, { mc_last_seen: 0 }, { mc_last_seen: 'x' }, { mc_last_seen: -5 }]) {
+        assert.equal(V.isMeshCenterNode(bad), false, JSON.stringify(bad));
+    }
+});
+
+test('the MeshCenter only filter keeps the marked nodes, composes with the others and is counted as a filter', () => {
+    const a = node('!aa000001', { mc_last_seen: NOW_S - 30, mc_first_seen: NOW_S - 3600, last_seen: NOW_S });
+    const b = node('!aa000002', { last_seen: NOW_S });
+    const c = node('!aa000003', { mc_last_seen: NOW_S - 99999, favorite: true, last_seen: NOW_S - 90000 });
+    const ctx = { now: NOW_S };
+    const kept = (state) => [a, b, c].filter((n) => V.nodePassesFilters(n, state, ctx)).map((n) => n.node_id);
+    assert.deepEqual(kept({}), ['!aa000001', '!aa000002', '!aa000003']);
+    assert.deepEqual(kept({ mcOnly: true }), ['!aa000001', '!aa000003']);
+    assert.deepEqual(kept({ mcOnly: true, hideOffline: true }), ['!aa000001'], 'it composes with the other filters');
+    assert.deepEqual(kept({ mcOnly: true, favoritesOnly: true }), ['!aa000003']);
+    assert.equal(V.activeFilterCount({ mcOnly: true }), 1);
+    assert.equal(V.normalizeNodeFilters({ mcOnly: 'yes' }).mcOnly, false, 'only a real true counts');
+    assert.equal(V.normalizeNodeFilters(null).mcOnly, false, 'off by default');
+});
+
+test('the Nodes header counts the MeshCenter nodes (not the ignored ones) whatever the filters say', () => {
+    const list = [
+        node('!bb000001', { mc_last_seen: NOW_S, last_seen: NOW_S }),
+        node('!bb000002', { mc_last_seen: NOW_S, last_seen: NOW_S, ignored: true }),
+        node('!bb000003', { last_seen: NOW_S }),
+    ];
+    assert.equal(V.nodeHeaderCounts(list, 3, NOW_S).mc, 1);
+    assert.equal(V.nodeHeaderCounts(list, 1, NOW_S).mc, 1, 'the number does not change with the shown count');
 });

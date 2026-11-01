@@ -7540,3 +7540,54 @@ html[data-theme="dark"] .dock-vault-chip.is-locked, html[data-theme="dark"] .doc
     .files-list.is-chat .files-card { max-width: 94%; }
     .files-footer-btn { min-height: 44px; }
 }
+
+
+/* ===== FX1 Phase C: passive MeshCenter marking ===== */
+.node-mc-badge {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+    margin-left: 6px;
+    padding: 0 5px;
+    border-radius: 6px;
+    background: var(--mc-primary-soft, #e3efff);
+    border: 1px solid var(--mc-accent, #1769d2);
+    color: var(--mc-accent, #1769d2);
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 1.5;
+    letter-spacing: 0.02em;
+    vertical-align: middle;
+}
+.node-mc-row { display: flex; align-items: center; gap: 6px; margin: 4px 0 0; font-size: 12px; color: var(--mc-muted, #5c7290); }
+.node-mc-row .node-mc-badge { margin-left: 0; }
+.nodes-pill-mc-glyph { font-size: 9px; font-weight: 800; letter-spacing: 0.02em; }
+.rp-mc {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 0 5px;
+    border-radius: 6px;
+    border: 1px solid var(--mc-accent, #1769d2);
+    color: var(--mc-accent, #1769d2);
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 1.5;
+    vertical-align: middle;
+}
+.rp-mctoggle {
+    flex: 0 0 auto;
+    min-width: 36px;
+    height: 36px;
+    padding: 0 8px;
+    border: 1px solid var(--mc-border);
+    border-radius: 8px;
+    background: var(--mc-bg-panel);
+    color: var(--mc-text-secondary, #667085);
+    font-size: 12px;
+    font-weight: 800;
+    cursor: pointer;
+}
+.rp-mctoggle[aria-pressed="true"] { color: var(--mc-accent, #1769d2); border-color: var(--mc-accent, #1769d2); background: var(--mc-primary-soft, #e3efff); }
+@media (pointer: coarse), (max-width: 768px) {
+    .rp-mctoggle { min-width: 44px; height: 44px; }
+}

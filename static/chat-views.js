@@ -90,10 +90,11 @@
         directOnly: false,
         hideInfrastructure: false,
         knownKeyOnly: false,
+        mcOnly: false,
     });
 
     const FILTER_FLAGS = ['favoritesOnly', 'ignoredOnly', 'hideOffline', 'directOnly',
-        'hideInfrastructure', 'knownKeyOnly'];
+        'hideInfrastructure', 'knownKeyOnly', 'mcOnly'];
 
     function normalizeNodeFilters(raw) {
         const out = Object.assign({}, DEFAULT_NODE_FILTERS);
@@ -135,6 +136,13 @@
         return nodeHops(node) === 0 && withinDay(nodeLastSeen(node));
     }
 
+    // FX1 Phase C: a node that was seen sending a MeshCenter control frame (passive marking on the node, `mc_last_seen`, epoch
+    // seconds; nothing is ever broadcast for it). Advisory: the key exchange is still the only trust.
+    function isMeshCenterNode(node) {
+        const seen = Number(node && node.mc_last_seen);
+        return Number.isFinite(seen) && seen > 0;
+    }
+
     function isOnline(node, now) {
         const seen = nodeLastSeen(node);
         const current = Number(now);
@@ -147,13 +155,15 @@
         const list = (Array.isArray(nodes) ? nodes : []).filter(function (n) { return n && !n.ignored; });
         let online = 0;
         let direct = 0;
+        let mc = 0;
         list.forEach(function (n) {
             if (isOnline(n, now)) online += 1;
             if (isHeardDirectly(n, now)) direct += 1;
+            if (isMeshCenterNode(n)) mc += 1;
         });
         const total = list.length;
         const shownCount = Number.isFinite(Number(shown)) ? Number(shown) : total;
-        return { total: total, shown: shownCount, filtered: shownCount !== total, online: online, direct: direct };
+        return { total: total, shown: shownCount, filtered: shownCount !== total, online: online, direct: direct, mc: mc };
     }
 
     // NL1: the Nodes header always MEASURES the full labels, whatever form it shows now (a decision never feeds the next
@@ -195,6 +205,7 @@
         if (s.directOnly && !isHeardDirectly(node, ctx.now)) return false;
         if (s.hideInfrastructure && isInfrastructureRole(node.role)) return false;
         if (s.knownKeyOnly && !(typeof ctx.hasKnownKey === 'function' && ctx.hasKnownKey(node))) return false;
+        if (s.mcOnly && !isMeshCenterNode(node)) return false;
         return true;
     }
 
@@ -799,6 +810,7 @@
         fitNodesHeaderRow: fitNodesHeaderRow,
         DIRECT_WITHIN_SECONDS: DIRECT_WITHIN_SECONDS,
         nodePassesFilters: nodePassesFilters,
+        isMeshCenterNode: isMeshCenterNode,
         sortNodes: sortNodes,
         filterAndSortNodes: filterAndSortNodes,
         phoneNodeWindow: phoneNodeWindow,

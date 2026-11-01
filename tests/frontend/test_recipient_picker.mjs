@@ -248,4 +248,29 @@ const people = [
     }
 }
 
+// ---------------------------------------------------------------- FX1 Phase C: MeshCenter only
+{
+    const mcPeople = [
+        contact('!aa000001', 'Echo', { mc: true }),
+        contact('!aa000002', 'Plain'),
+        contact('!aa000003', 'Elektro', { mc: true, favorite: true }),
+        contact('!aa000004', 'NoKey', { mc: true, can_send: false }),
+    ];
+    assert.deepEqual(ids(P.build(mcPeople, {}).rows).sort(), ['!aa000001', '!aa000002', '!aa000003'], 'everyone sendable by default');
+    const only = P.build(mcPeople, { mcOnly: true });
+    assert.deepEqual(ids(only.rows).sort(), ['!aa000001', '!aa000003'], 'MeshCenter only keeps the marked nodes');
+    assert.deepEqual(ids(P.build(mcPeople, { mcOnly: true, favoritesOnly: true }).rows), ['!aa000003'], 'it composes with Favorites only');
+    assert.equal(only.total, 4, 'the N of M still counts every contact');
+    const model = P.createModel({});
+    model.setContacts(mcPeople);
+    assert.equal(model.mcOnly, false, 'off by default');
+    model.setFavoritesOnly(false);          // the picker defaults to favorites when there are some
+    model.setMcOnly(true);
+    assert.deepEqual(ids(model.view().rows).sort(), ['!aa000001', '!aa000003']);
+    const src = read('recipient-picker.js');
+    assert.ok(src.includes('class="rp-mctoggle" data-rp-mc aria-pressed='), 'a real toggle button (aria-pressed)');
+    assert.ok(src.includes("mcToggle.addEventListener('click'"), 'wired');
+    assert.ok(src.includes('class="rp-mc"'), 'the row carries the MC mark');
+}
+
 console.log('test_recipient_picker.mjs: ok');

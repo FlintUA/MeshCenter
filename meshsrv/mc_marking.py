@@ -11,7 +11,10 @@ understand a file transfer", and is what the "MeshCenter only" filter and the MC
 """
 from __future__ import annotations
 
-from typing import Optional
+import os
+import pathlib
+import sqlite3
+from typing import Dict, Optional, Tuple
 
 from meshsrv.attachments import codec
 
@@ -53,3 +56,75 @@ def mc_fields(node: dict) -> dict:
 
 def is_meshcenter_node(node: Optional[dict]) -> bool:
     return bool(node) and mc_fields(node)["mc_last_seen"] is not None
+
+
+# ---- back-fill from what MCAttach already knows --------------------------------------------------------------------------
+#
+# A node with a key binding (any trust state: the binding exists because a KEY_ANNOUNCE was received from it) is MeshCenter
+# by definition, and so is a node that sent an OFFER or acknowledged one. Before this marking existed none of that reached
+# the node list, so at startup the marks are filled from the MCAttach database (read only). It only ever moves a mark
+# forward in knowledge: `mc_first_seen` becomes the earliest time known, `mc_last_seen` the latest, so running it again, or
+# after live frames were noted, changes nothing that is already right.
+
+_TIMES_SQL = (
+    # (address, first, last) per source of "a MeshCenter frame came from this address"
+    "SELECT transport_address, bound_at, MAX(bound_at, COALESCE(pending_detected_at, 0)) FROM mca_recipient_bindings",
+    "SELECT reply_route_id, MIN(created_at), MAX(created_at) FROM attachments "
+    "WHERE direction = 'received' AND reply_route_id IS NOT NULL GROUP BY reply_route_id",
+    "SELECT route_id, MIN(ack_at), MAX(ack_at) FROM attachment_deliveries WHERE ack_at IS NOT NULL GROUP BY route_id",
+)
+
+
+def known_frame_times(conn: sqlite3.Connection) -> Dict[str, Tuple[float, float]]:
+    """address -> (earliest, latest) time a MeshCenter frame is known to have come from it, from the MCAttach tables."""
+    found: Dict[str, Tuple[float, float]] = {}
+    for sql in _TIMES_SQL:
+        try:
+            rows = conn.execute(sql).fetchall()
+        except sqlite3.Error:
+            continue                                   # a table an older schema does not have: that source adds nothing
+        for address, first, last in rows:
+            if not isinstance(address, str) or not isinstance(first, (int, float)) or not isinstance(last, (int, float)):
+                continue
+            if first <= 0 or last <= 0:
+                continue
+            previous = found.get(address)
+            found[address] = (min(first, previous[0]), max(last, previous[1])) if previous else (float(first), float(last))
+    return found
+
+
+def backfill_from_times(nodes: dict, times: Dict[str, Tuple[float, float]], now: float) -> int:
+    """Mark every node of `nodes` that appears in `times`; returns how many node records changed. A node the list does not
+    know is skipped (there is nothing to show it on); a time that is unknown becomes `now`."""
+    changed = 0
+    for address, (first, last) in times.items():
+        node = nodes.get(address)
+        if node is None:
+            continue
+        old_first, old_last = node.get("mc_first_seen"), node.get("mc_last_seen")
+        have = isinstance(old_first, (int, float)) and old_first > 0 and isinstance(old_last, (int, float)) and old_last > 0
+        new_first = min(first, old_first) if have else (first or now)
+        new_last = max(last, old_last) if have else (last or now)
+        if have and (new_first, new_last) == (old_first, old_last):
+            continue
+        node["mc_first_seen"], node["mc_last_seen"] = float(new_first), float(new_last)
+        changed += 1
+    return changed
+
+
+def backfill_from_database(nodes: dict, db_path: str, now: float) -> int:
+    """Open the MCAttach database READ ONLY (a second connection never writes and never touches the worker's), fill the marks.
+    Returns the number of node records changed; 0 when there is no database yet. Never raises."""
+    if not db_path or not os.path.isfile(db_path):
+        return 0
+    try:
+        uri = pathlib.Path(db_path).resolve().as_uri() + "?mode=ro"
+        conn = sqlite3.connect(uri, uri=True, timeout=5)
+    except sqlite3.Error:
+        return 0
+    try:
+        return backfill_from_times(nodes, known_frame_times(conn), now)
+    except sqlite3.Error:
+        return 0
+    finally:
+        conn.close()

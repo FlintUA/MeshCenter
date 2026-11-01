@@ -5228,6 +5228,23 @@ def _note_meshcenter_frame(text, node_id):
         print(f"[MC] marking failed: {error}", flush=True)
 
 
+def backfill_meshcenter_marks():
+    """FX1 Phase C: at startup, mark the nodes MCAttach already knows as MeshCenter (a key binding in any trust state, an
+    OFFER received, an ACK received) from its database, read only. Idempotent; never raises."""
+    try:
+        data_dir = mca_runtime.get_data_dir()
+        if not data_dir:
+            return
+        db_path = os.path.join(data_dir, "mca", "attachments.db")
+        with state_lock:
+            changed = mc_marking.backfill_from_database(nodes, db_path, time.time())
+        if changed:
+            save_nodes()
+            print(f"[MC] marked {changed} known MeshCenter node(s) from MCAttach", flush=True)
+    except Exception as error:  # noqa: BLE001
+        print(f"[MC] back-fill failed: {error}", flush=True)
+
+
 def _dispatch_mca_text(text, node_id, packet_id, channel_index):
     _note_meshcenter_frame(text, node_id)
     mca_runtime.handle_incoming_meshtastic_text(
@@ -10159,6 +10176,7 @@ def start_runtime():
         )
     except Exception as e:
         print(f"[MCA] failed to start AttachmentsService: {e}", flush=True)
+    backfill_meshcenter_marks()
 
     # radio_health_worker runs for EVERY transport once identity matches.
     # It used to live in the serial-only group below on the reasoning that

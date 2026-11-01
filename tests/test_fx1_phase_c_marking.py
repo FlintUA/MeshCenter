@@ -120,4 +120,133 @@ def test_marking_never_sends_anything():
             imported.update(a.name.split(".")[0] for a in node.names)
         elif isinstance(node, ast.ImportFrom):
             imported.add((node.module or "").split(".")[0] + "." + (node.module or "").split(".")[1] if node.module and node.module.startswith("meshsrv") and len(node.module.split(".")) > 1 else (node.module or ""))
-    assert imported <= {"__future__", "typing", "meshsrv.attachments"}, imported
+    assert imported <= {"__future__", "os", "pathlib", "sqlite3", "typing", "meshsrv.attachments"}, imported   # files and the database only
+
+
+# ---- back-fill from what MCAttach already knows -----------------------------------------------------------------------------
+
+
+def _db(tmp_path):
+    from meshsrv.attachments.db import migrations
+
+    path = tmp_path / "attachments.db"
+    conn = migrations.open_attachments_db(path)
+    return path, conn
+
+
+def _bind(conn, address, bound_at, *, pending_at=None, confirmed=True):
+    conn.execute(
+        "INSERT INTO mca_recipient_bindings (id, workspace_id, adapter_id, transport_address, principal_id, sender_key_id, public_identity, "
+        "key_epoch, bound_at, tofu_confirmed_at, pending_detected_at) VALUES (?, 'local', 'meshtastic_text', ?, 'p', 'k', 'ab', 0, ?, ?, ?)",
+        (uuid.uuid4().hex, address, bound_at, bound_at if confirmed else None, pending_at),
+    )
+
+
+def _received(conn, address, created_at):
+    conn.execute(
+        "INSERT INTO attachments (id, workspace_id, transfer_id, direction, principal_id, state, created_at, hard_expires_at, "
+        "download_grace_seconds, reply_route_id) VALUES (?, 'local', ?, 'received', 'p', 'AVAILABLE', ?, ?, 3600, ?)",
+        (uuid.uuid4().hex, uuid.uuid4().hex, created_at, created_at + 100, address),
+    )
+
+
+def _acked(conn, address, ack_at):
+    attachment_id = uuid.uuid4().hex
+    conn.execute(
+        "INSERT INTO attachments (id, workspace_id, transfer_id, direction, principal_id, state, created_at, hard_expires_at, "
+        "download_grace_seconds) VALUES (?, 'local', ?, 'sent', 'p', 'DOWNLOADED', 1, 2, 3600)",
+        (attachment_id, uuid.uuid4().hex),
+    )
+    conn.execute(
+        "INSERT INTO attachment_deliveries (id, attachment_id, adapter_id, connector_profile_id, route_type, route_id, wire_format, "
+        "idempotency_key, state, sent_at, ack_at) VALUES (?, ?, 'a', 'c', 'DIRECT', ?, 'text', ?, 'ACKED', 1, ?)",
+        (uuid.uuid4().hex, attachment_id, address, uuid.uuid4().hex, ack_at),
+    )
+
+
+def test_a_node_with_a_key_binding_is_marked_from_the_database_in_any_trust_state(tmp_path):
+    path, conn = _db(tmp_path)
+    _bind(conn, "!aa000001", 1000)                                          # trusted
+    _bind(conn, "!aa000002", 2000, confirmed=False)                         # announced, never confirmed
+    _bind(conn, "!aa000003", 3000, pending_at=3500)                         # a changed key is waiting
+    conn.commit()
+    conn.close()
+    nodes = {a: {"node_id": a} for a in ("!aa000001", "!aa000002", "!aa000003", "!aa000004")}
+    assert mc_marking.backfill_from_database(nodes, str(path), 9999.0) == 3
+    assert (nodes["!aa000001"]["mc_first_seen"], nodes["!aa000001"]["mc_last_seen"]) == (1000.0, 1000.0)
+    assert (nodes["!aa000002"]["mc_first_seen"], nodes["!aa000002"]["mc_last_seen"]) == (2000.0, 2000.0), "an unconfirmed key counts too"
+    assert (nodes["!aa000003"]["mc_first_seen"], nodes["!aa000003"]["mc_last_seen"]) == (3000.0, 3500.0), "the pending key announce is a later frame"
+    assert "mc_last_seen" not in nodes["!aa000004"], "a node with no MCA trace stays unmarked"
+
+
+def test_first_is_the_earliest_known_and_last_the_latest_across_bindings_offers_and_acks(tmp_path):
+    path, conn = _db(tmp_path)
+    _bind(conn, "!bb000001", 5000)
+    _received(conn, "!bb000001", 4000)           # an offer from before the binding
+    _received(conn, "!bb000001", 8000)
+    _acked(conn, "!bb000001", 9000)              # the recipient acknowledged a file of ours
+    _received(conn, "!bb000002", 7000)           # an offer from a node with no binding (the key is still unknown) is a frame too
+    conn.commit()
+    conn.close()
+    nodes = {"!bb000001": {"node_id": "!bb000001"}, "!bb000002": {"node_id": "!bb000002"}}
+    mc_marking.backfill_from_database(nodes, str(path), 99999.0)
+    assert (nodes["!bb000001"]["mc_first_seen"], nodes["!bb000001"]["mc_last_seen"]) == (4000.0, 9000.0)
+    assert (nodes["!bb000002"]["mc_first_seen"], nodes["!bb000002"]["mc_last_seen"]) == (7000.0, 7000.0)
+
+
+def test_the_backfill_is_idempotent_and_never_moves_a_live_mark_backwards(tmp_path):
+    path, conn = _db(tmp_path)
+    _bind(conn, "!cc000001", 1000)
+    _received(conn, "!cc000001", 2000)
+    conn.commit()
+    conn.close()
+    nodes = {"!cc000001": {"node_id": "!cc000001", "mc_first_seen": 1500.0, "mc_last_seen": 7000.0}}      # a live frame after the DB
+    assert mc_marking.backfill_from_database(nodes, str(path), 1.0) == 1
+    assert (nodes["!cc000001"]["mc_first_seen"], nodes["!cc000001"]["mc_last_seen"]) == (1000.0, 7000.0), "earliest first, latest last"
+    assert mc_marking.backfill_from_database(nodes, str(path), 2.0) == 0, "a second run changes nothing"
+    assert mc_marking.backfill_from_database(nodes, str(path), 3.0) == 0
+
+
+def test_the_backfill_only_reads_never_writes_and_survives_a_missing_or_broken_database(tmp_path):
+    path, conn = _db(tmp_path)
+    _bind(conn, "!dd000001", 1000)
+    conn.commit()
+    conn.close()
+    before = path.read_bytes()
+    mc_marking.backfill_from_database({"!dd000001": {}}, str(path), 1.0)
+    assert path.read_bytes() == before, "the database file is untouched"
+    assert mc_marking.backfill_from_database({"!dd000001": {}}, str(tmp_path / "nothing.db"), 1.0) == 0
+    assert mc_marking.backfill_from_database({"!dd000001": {}}, "", 1.0) == 0
+    junk = tmp_path / "junk.db"
+    junk.write_bytes(b"not a database at all")
+    assert mc_marking.backfill_from_database({"!dd000001": {}}, str(junk), 1.0) == 0
+
+
+def test_an_unknown_time_becomes_now_and_unknown_nodes_are_skipped():
+    nodes = {"!ee000001": {}}
+    assert mc_marking.backfill_from_times(nodes, {"!ee000001": (0, 0), "!ffffffff": (5.0, 6.0)}, 42.0) == 1, "the unknown node is skipped"
+    assert (nodes["!ee000001"]["mc_first_seen"], nodes["!ee000001"]["mc_last_seen"]) == (42.0, 42.0)
+
+
+def test_the_server_backfills_at_startup_and_saves_once(clean_nodes, monkeypatch, tmp_path):
+    server = clean_nodes
+    data_dir = tmp_path / "data"
+    (data_dir / "mca").mkdir(parents=True)
+    from meshsrv.attachments.db import migrations
+
+    conn = migrations.open_attachments_db(data_dir / "mca" / "attachments.db")
+    _bind(conn, "!ab000001", 1234)
+    conn.commit()
+    conn.close()
+    server.nodes["!ab000001"] = {"node_id": "!ab000001", "name": "Echo"}
+    server.nodes["!ab000002"] = {"node_id": "!ab000002", "name": "Plain"}
+    saves = []
+    monkeypatch.setattr(server, "save_nodes", lambda: saves.append(1))
+    monkeypatch.setattr(server.mca_runtime, "get_data_dir", lambda: str(data_dir))
+    server.backfill_meshcenter_marks()
+    assert server.nodes["!ab000001"]["mc_first_seen"] == 1234.0 and "mc_last_seen" not in server.nodes["!ab000002"]
+    assert saves == [1]
+    server.backfill_meshcenter_marks()
+    assert saves == [1], "a second start changes nothing and writes nothing"
+    monkeypatch.setattr(server.mca_runtime, "get_data_dir", lambda: None)
+    server.backfill_meshcenter_marks()                                     # no runtime yet: nothing happens, nothing raises

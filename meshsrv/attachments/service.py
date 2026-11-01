@@ -2060,7 +2060,9 @@ class AttachmentsService:
         if row is None:
             return None
         content = {key: row[key] for key in row.keys()}
-        content["file_name"] = codec_of(self._conn).open("attachments", "file_name", attachment_id, row["file_name"])
+        # display read: None while the vault is locked, so a delete (which needs no key and stays available locked, ADR-0013
+        # Decision 6) does not fail on a name it never uses
+        content["file_name"] = codec_of(self._conn).open_display("attachments", "file_name", attachment_id, row["file_name"])
         return content
 
     def _resolve_content_path(self, paths, saved_path) -> Optional[Path]:
@@ -2124,11 +2126,22 @@ class AttachmentsService:
         if source is None or not source.is_file():
             return CommandOutcome.failed("content_missing")
 
-        safe_name = (
-            sanitize_display_name(row["file_name"])[:MAX_SOURCE_NAME_CODE_POINTS].strip(".")
-            or "attachment"
-        )
-        dest = self._workspace_manager.unique_file_name(self._principal.principal_id, safe_name)
+        if self._workspace_manager.codec.active:
+            # MCA-VAULT: "Save to Files" stays encrypted, as a MOVE inside the vault. The library file is `<attachment id>.mcv`
+            # (the migration's own layout; the display name lives encrypted in the database), the bytes are not touched:
+            # the same key and the same associated data (the attachment id) verify them in either folder. Nothing is
+            # decrypted, nothing is written in plain, and no name reaches the file system.
+            if not source.name.endswith(".mcv"):
+                return CommandOutcome.failed("vault_corrupt")       # a plain cache file next to an enabled vault
+            dest = Path(paths.files) / (attachment_id + ".mcv")
+        else:
+            if source.name.endswith(".mcv"):
+                return CommandOutcome.failed("vault_not_available")
+            safe_name = (
+                sanitize_display_name(row["file_name"])[:MAX_SOURCE_NAME_CODE_POINTS].strip(".")
+                or "attachment"
+            )
+            dest = self._workspace_manager.unique_file_name(self._principal.principal_id, safe_name)
         source.replace(dest)
         self._conn.execute(
             "UPDATE attachments SET saved_path = ? WHERE id = ?", (str(dest), attachment_id)

@@ -3724,18 +3724,19 @@ def _enable_body(**kw):
 
 
 @pytest.fixture
-def allowed(monkeypatch):
-    monkeypatch.setenv("MESHCENTER_MCA_VAULT_EXPERIMENTAL", "1")
+def allowed():
+    """Kept as a no-op name: enabling no longer needs a flag (PR 4c removed MESHCENTER_MCA_VAULT_EXPERIMENTAL)."""
+    return None
 
 
-def test_enable_is_refused_unless_the_experimental_flag_is_set(monkeypatch, tmp_path):
+def test_enable_needs_no_flag_and_the_status_has_no_enable_allowed_field(monkeypatch, tmp_path):
     monkeypatch.delenv("MESHCENTER_MCA_VAULT_EXPERIMENTAL", raising=False)
     _with_vault(monkeypatch, tmp_path)
     facade = _FakeFacade()
     c = _client(monkeypatch, facade)
     resp = c.post("/api/mca/vault/enable", json=_enable_body())
-    assert resp.status_code == 409 and resp.get_json()["error_code"] == "vault_not_ready" and facade.submitted == []
-    assert c.get("/api/mca/vault").get_json()["enable_allowed"] is False
+    assert resp.status_code == 202 and facade.submitted[0].kind == "vault_enable"
+    assert "enable_allowed" not in c.get("/api/mca/vault").get_json()
 
 
 def test_enable_validates_before_anything_is_queued(monkeypatch, tmp_path, allowed):
@@ -3997,3 +3998,198 @@ def test_create_without_a_vault_is_unchanged(monkeypatch, tmp_path):
     resp = _post_create(c)
     assert resp.status_code in (200, 202)
     assert [len(p.name) for p in (tmp_path / "spool").iterdir()] == [32], "the plain, id-named spool file as before"
+
+
+# ---- MCA-VAULT PR 4c: preview and download of an encrypted file ------------------------------------------------------------
+
+def _vault_content(monkeypatch, vault_dir, tmp_path, *, mime, file_name, data, locator):
+    """An unlocked vault, an `<id>.mcv` written through its codec and a facade that serves it."""
+    from meshsrv.attachments.vault.codec import VaultCodec
+    workspace, _ = vault_dir
+    rt, _clock = _with_vault(monkeypatch, workspace)
+    rt.unlock(passphrase=_VAULT_PASS)
+    codec_obj = VaultCodec(rt)
+    stored = codec_obj.write_content(tmp_path / ATTACHMENT_ID, data, ATTACHMENT_ID)
+    facade = _FakeFacade(
+        snapshot=_snapshot([_attachment(
+            direction="received", state="AVAILABLE", file_name=file_name, mime_type=mime, plain_size=len(data),
+            descriptor=_descriptor(mime_type=mime, locator=locator, plain_size=len(data)),
+        )]),
+        content_files={locator: stored},
+    )
+    facade.content_codec = lambda: codec_obj
+    return rt, facade, codec_obj, stored
+
+
+def _flip(path, offset_from_end=None, offset=None):
+    data = bytearray(path.read_bytes())
+    data[(len(data) - offset_from_end) if offset is None else offset] ^= 0x01
+    path.write_bytes(bytes(data))
+
+
+def test_a_preview_of_an_encrypted_image_is_served_after_full_verification(monkeypatch, vault_dir, tmp_path):
+    from _vault_spy import MARKER, no_plaintext_writes
+    data = b"\xff\xd8\xff\xe0" + MARKER * 6000
+    rt, facade, codec_obj, stored = _vault_content(monkeypatch, vault_dir, tmp_path, mime="image/jpeg", file_name="photo.jpg", data=data, locator="cache/incoming/x.mcv")
+    c = _client(monkeypatch, facade)
+    before = sorted(p.name for p in tmp_path.iterdir())
+    with no_plaintext_writes():
+        resp = c.get(f"/api/attachments/{ATTACHMENT_ID}/content")
+    assert resp.status_code == 200 and resp.data == data and resp.mimetype == "image/jpeg"
+    assert resp.headers["X-Content-Type-Options"] == "nosniff" and resp.headers["Cache-Control"] == "no-store"
+    assert resp.headers["Content-Security-Policy"] == "sandbox" and resp.headers["Accept-Ranges"] == "none"
+    assert "inline" in resp.headers["Content-Disposition"] and "photo.jpg" in resp.headers["Content-Disposition"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == before, "no decrypted temp file, nothing written"
+
+
+@pytest.mark.parametrize("where", ["last_byte", "middle", "truncated", "trailing"])
+def test_a_damaged_encrypted_preview_never_reaches_the_browser_as_a_partial_picture(monkeypatch, vault_dir, tmp_path, where):
+    from _vault_spy import MARKER
+    data = b"\xff\xd8\xff\xe0" + MARKER * 8000
+    rt, facade, codec_obj, stored = _vault_content(monkeypatch, vault_dir, tmp_path, mime="image/jpeg", file_name="photo.jpg", data=data, locator="cache/incoming/x.mcv")
+    raw = stored.read_bytes()
+    if where == "last_byte":
+        _flip(stored, offset_from_end=1)
+    elif where == "middle":
+        _flip(stored, offset=len(raw) // 2)
+    elif where == "truncated":
+        stored.write_bytes(raw[:len(raw) - 70000])
+    else:
+        stored.write_bytes(raw + b"x")
+    c = _client(monkeypatch, facade)
+    resp = c.get(f"/api/attachments/{ATTACHMENT_ID}/content")
+    assert resp.status_code == 500 and resp.get_json()["error_code"] == "vault_corrupt"
+    assert MARKER not in resp.data and not resp.data.startswith(b"\xff\xd8"), "not one byte of the plaintext was sent"
+
+
+def test_a_download_of_an_encrypted_file_streams_with_the_exact_length(monkeypatch, vault_dir, tmp_path):
+    from _vault_spy import MARKER, no_plaintext_writes
+    data = MARKER * 20000                                                          # 600 KB, ten chunks
+    rt, facade, codec_obj, stored = _vault_content(monkeypatch, vault_dir, tmp_path, mime="application/pdf", file_name="report.pdf", data=data, locator="files/x.mcv")
+    c = _client(monkeypatch, facade)
+    with no_plaintext_writes():
+        resp = c.get(f"/api/attachments/{ATTACHMENT_ID}/content")
+    assert resp.status_code == 200 and resp.data == data
+    assert resp.mimetype == "application/octet-stream" and resp.headers["Content-Length"] == str(len(data))
+    assert "attachment" in resp.headers["Content-Disposition"] and "report.pdf" in resp.headers["Content-Disposition"]
+    assert resp.headers["Accept-Ranges"] == "none" and resp.headers["Cache-Control"] == "no-store"
+
+
+def test_a_stream_error_aborts_the_response_instead_of_ending_it_cleanly(monkeypatch, vault_dir, tmp_path):
+    """The owner's rule for 'Download to device': on any stream error the response is ABORTED (the body raises, the connection
+    is cut, the browser marks the download failed); it is never finished cleanly, so a truncated file cannot look complete."""
+    from meshsrv.attachments.vault.errors import VaultError as _VaultError
+    from _vault_spy import MARKER
+    data = MARKER * 20000
+    rt, facade, codec_obj, stored = _vault_content(monkeypatch, vault_dir, tmp_path, mime="application/pdf", file_name="report.pdf", data=data, locator="files/x.mcv")
+    _flip(stored, offset=200000)                                                   # a chunk in the middle fails to authenticate
+    c = _client(monkeypatch, facade)
+    resp = c.get(f"/api/attachments/{ATTACHMENT_ID}/content", buffered=False)       # headers and the first chunks are out
+    assert resp.status_code == 200 and resp.headers["Content-Length"] == str(len(data))
+    received = bytearray()
+    with pytest.raises(_VaultError) as info:
+        for part in resp.response:
+            received.extend(part)
+    assert info.value.code == "vault_corrupt"
+    assert 0 < len(received) < len(data), "some chunks were delivered, never the whole file"
+
+
+def test_a_truncated_download_is_aborted_not_ended(monkeypatch, vault_dir, tmp_path):
+    from meshsrv.attachments.vault.errors import VaultError as _VaultError
+    from _vault_spy import MARKER
+    data = MARKER * 20000
+    rt, facade, codec_obj, stored = _vault_content(monkeypatch, vault_dir, tmp_path, mime="application/pdf", file_name="report.pdf", data=data, locator="files/x.mcv")
+    raw = stored.read_bytes()
+    stored.write_bytes(raw[:200000])                                               # the file was cut: no final chunk
+    c = _client(monkeypatch, facade)
+    with pytest.raises(_VaultError):
+        c.get(f"/api/attachments/{ATTACHMENT_ID}/content").data
+
+
+def test_the_first_chunk_is_verified_before_any_header_is_sent(monkeypatch, vault_dir, tmp_path):
+    from _vault_spy import MARKER
+    rt, facade, codec_obj, stored = _vault_content(monkeypatch, vault_dir, tmp_path, mime="application/pdf", file_name="report.pdf", data=MARKER * 20000, locator="files/x.mcv")
+    _flip(stored, offset=100)                                                      # inside the first chunk
+    c = _client(monkeypatch, facade)
+    resp = c.get(f"/api/attachments/{ATTACHMENT_ID}/content")
+    assert resp.status_code == 500 and resp.get_json()["error_code"] == "vault_corrupt" and "Content-Disposition" not in resp.headers
+
+
+def test_locking_the_vault_aborts_a_running_download_at_the_next_chunk(monkeypatch, vault_dir, tmp_path):
+    from meshsrv.attachments.vault.errors import VaultError as _VaultError
+    from _vault_spy import MARKER
+    rt, facade, codec_obj, stored = _vault_content(monkeypatch, vault_dir, tmp_path, mime="application/pdf", file_name="report.pdf", data=MARKER * 20000, locator="files/x.mcv")
+    stream = codec_obj.iter_content(stored, ATTACHMENT_ID)
+    assert len(next(stream)) > 0
+    rt.lock()                                                                      # Lock now
+    with pytest.raises(_VaultError) as info:
+        next(stream)
+    assert info.value.code == "vault_locked"
+
+
+def test_the_content_route_answers_423_while_locked_and_never_serves_ciphertext(monkeypatch, vault_dir, tmp_path):
+    from _vault_spy import MARKER
+    rt, facade, codec_obj, stored = _vault_content(monkeypatch, vault_dir, tmp_path, mime="image/jpeg", file_name="photo.jpg", data=b"\xff\xd8\xff" + MARKER * 100, locator="files/x.mcv")
+    rt.lock()
+    c = _client(monkeypatch, facade)
+    resp = c.get(f"/api/attachments/{ATTACHMENT_ID}/content")
+    assert resp.status_code == 423 and resp.get_json()["error_code"] == "vault_locked"
+    assert stored.read_bytes()[:4] not in resp.data
+
+
+def test_an_encrypted_file_without_an_active_vault_is_never_served_as_content(monkeypatch, tmp_path):
+    data = b"ciphertext-looking"
+    f = tmp_path / "x.mcv"
+    f.write_bytes(data)
+    facade = _FakeFacade(
+        snapshot=_snapshot([_attachment(direction="received", state="AVAILABLE", file_name="photo.jpg", mime_type="image/jpeg", plain_size=len(data),
+                                        descriptor=_descriptor(mime_type="image/jpeg", locator="files/x.mcv", plain_size=len(data)))]),
+        content_files={"files/x.mcv": f})
+    c = _client(monkeypatch, facade)
+    resp = c.get(f"/api/attachments/{ATTACHMENT_ID}/content")
+    assert resp.status_code == 409 and resp.get_json()["error_code"] == "vault_not_available" and data not in resp.data
+
+
+def test_a_plain_file_next_to_an_enabled_vault_is_refused_not_served(monkeypatch, vault_dir, tmp_path):
+    from meshsrv.attachments.vault.codec import VaultCodec
+    workspace, _ = vault_dir
+    rt, _clock = _with_vault(monkeypatch, workspace)
+    rt.unlock(passphrase=_VAULT_PASS)
+    codec_obj = VaultCodec(rt)
+    plain = tmp_path / "plain.pdf"
+    plain.write_bytes(b"%PDF plain leftover")
+    facade = _FakeFacade(
+        snapshot=_snapshot([_attachment(direction="received", state="AVAILABLE", file_name="a.pdf", mime_type="application/pdf", plain_size=19,
+                                        descriptor=_descriptor(mime_type="application/pdf", locator="files/plain.pdf", plain_size=19))]),
+        content_files={"files/plain.pdf": plain})
+    facade.content_codec = lambda: codec_obj
+    c = _client(monkeypatch, facade)
+    resp = c.get(f"/api/attachments/{ATTACHMENT_ID}/content")
+    assert resp.status_code == 500 and resp.get_json()["error_code"] == "vault_corrupt" and b"plain leftover" not in resp.data
+
+
+def test_a_download_abort_is_visible_on_a_real_connection(monkeypatch, vault_dir, tmp_path):
+    """On a real HTTP connection a stream error leaves the client with fewer bytes than the Content-Length it was promised:
+    http.client raises IncompleteRead instead of delivering a short file as if it were whole."""
+    import http.client
+    import threading
+    from werkzeug.serving import make_server
+    from _vault_spy import MARKER
+    data = MARKER * 20000
+    rt, facade, codec_obj, stored = _vault_content(monkeypatch, vault_dir, tmp_path, mime="application/pdf", file_name="report.pdf", data=data, locator="files/x.mcv")
+    _flip(stored, offset=200000)
+    c = _client(monkeypatch, facade)
+    server = make_server("127.0.0.1", 0, c.application, threaded=True)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=10)
+        conn.request("GET", f"/api/attachments/{ATTACHMENT_ID}/content")
+        response = conn.getresponse()
+        assert response.status == 200 and int(response.getheader("Content-Length")) == len(data)
+        with pytest.raises(http.client.IncompleteRead) as info:
+            response.read()
+        assert len(info.value.partial) < len(data), "the browser would report a failed download"
+    finally:
+        server.shutdown()
+        thread.join(5)

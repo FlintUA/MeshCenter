@@ -288,7 +288,6 @@ def run_command(state, kind, payload):
 
 
 def test_vault_enable_then_disable_through_the_worker_commands(tmp_path, monkeypatch):
-    monkeypatch.setenv("MESHCENTER_MCA_VAULT_EXPERIMENTAL", "1")
     lines = []
     mca_runtime.set_vault_log(lambda level, title, details: lines.append((level, title, details)))
     try:
@@ -328,7 +327,6 @@ def test_vault_enable_then_disable_through_the_worker_commands(tmp_path, monkeyp
 
 
 def test_enable_command_failures_clean_up_and_report_a_stable_code(tmp_path, monkeypatch):
-    monkeypatch.setenv("MESHCENTER_MCA_VAULT_EXPERIMENTAL", "1")
     try:
         state, paths = plain_state(tmp_path, "fail")
         state.vault._free_ram = lambda: 4 * 1024 ** 3
@@ -347,7 +345,6 @@ def test_enable_command_failures_clean_up_and_report_a_stable_code(tmp_path, mon
 
 
 def test_an_interrupted_enable_is_migrating_and_locked_until_resumed(tmp_path, monkeypatch):
-    monkeypatch.setenv("MESHCENTER_MCA_VAULT_EXPERIMENTAL", "1")
     try:
         state, paths = plain_state(tmp_path, "resume")
         vault = state.vault
@@ -388,7 +385,6 @@ def update_service_vault_enabled(data_dir):
 
 
 def test_the_worker_refuses_a_migration_for_memory_before_touching_anything(tmp_path, monkeypatch):
-    monkeypatch.setenv("MESHCENTER_MCA_VAULT_EXPERIMENTAL", "1")
     try:
         state, paths = plain_state(tmp_path, "lowmem")
         state.vault._free_ram = lambda: 30 * 1024 * 1024
@@ -412,7 +408,6 @@ def _tree(root):
 def test_an_interrupted_migration_that_cannot_resume_for_memory_stays_locked_with_a_clear_status(tmp_path, monkeypatch):
     """After a restart in the middle of an enable on a node with too little free memory: locked, a status that says
     "migration pending, not enough memory", no automatic retry, no partial access, nothing touched."""
-    monkeypatch.setenv("MESHCENTER_MCA_VAULT_EXPERIMENTAL", "1")
     try:
         state, paths = plain_state(tmp_path, "lowresume")
         vault = state.vault
@@ -481,7 +476,6 @@ def test_only_the_users_resume_request_ever_starts_a_resume():
 def test_a_vault_that_locks_during_a_step_makes_the_worker_wait_without_failing_or_storming(tmp_path, monkeypatch):
     """vault_locked from a transfer step is "wait until unlocked": the row is left exactly as it was (no FAILED), the tick stops
     advancing rows (they all need the same key), and there is one System Log line for the whole lock period, not one per tick."""
-    monkeypatch.setenv("MESHCENTER_MCA_VAULT_EXPERIMENTAL", "1")
     lines = []
     mca_runtime.set_vault_log(lambda level, title, details: lines.append((level, title, details)))
     try:
@@ -511,7 +505,6 @@ def test_a_vault_that_locks_during_a_step_makes_the_worker_wait_without_failing_
 
 
 def test_a_corrupt_value_in_a_step_is_an_error_but_not_a_wait(tmp_path, monkeypatch):
-    monkeypatch.setenv("MESHCENTER_MCA_VAULT_EXPERIMENTAL", "1")
     try:
         state, paths = plain_state(tmp_path, "corruptstep")
         service = state.service
@@ -541,7 +534,6 @@ def test_spool_names_of_encrypted_files_are_classified_for_the_orphan_sweep():
 
 def test_the_orphan_sweep_keeps_a_referenced_mcv_and_removes_an_old_unreferenced_one_and_a_part_file(tmp_path, monkeypatch):
     import os
-    monkeypatch.setenv("MESHCENTER_MCA_VAULT_EXPERIMENTAL", "1")
     try:
         state, paths = plain_state(tmp_path, "sweep")
         now = 1_700_000_000.0
@@ -555,5 +547,130 @@ def test_the_orphan_sweep_keeps_a_referenced_mcv_and_removes_an_old_unreferenced
         state.service._recover_orphaned_spool()
         left = sorted(p.name for p in paths.spool_outgoing.iterdir())
         assert left == [referenced + ".mcv", "keepme.txt"], left
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+# ---- MCA-VAULT PR 4c: Save to Files, delete, purge and disable under the vault (real service, real workspace) ----------------
+
+def _received_row(state, paths, rid, name, content, *, created_at=1):
+    """A received, AVAILABLE attachment exactly as the receiver leaves it under the vault: `<id>.mcv` in the cache, the name sealed."""
+    codec = state.workspace_manager.codec
+    cache = codec.write_content(paths.cache_incoming / rid, content, rid)
+    state.conn.execute(
+        "INSERT INTO attachments (id, workspace_id, transfer_id, direction, principal_id, state, file_name, mime_type, plain_size, plain_sha256, "
+        "saved_path, draft_comment, created_at, hard_expires_at, download_grace_seconds) VALUES (?, ?, ?, 'received', ?, 'AVAILABLE', ?, 'application/pdf', ?, NULL, ?, NULL, ?, ?, 3600)",
+        (rid, state.principal.workspace_id, rid[:8] + "00" * 12, state.principal.principal_id,
+         state.conn.codec.seal("attachments", "file_name", rid, name), len(content), str(cache), created_at, 4_000_000_000))
+    state.conn.commit()
+    return cache
+
+
+def _whole_tree(root):
+    out = {}
+    for base, _dirs, files in os.walk(str(root)):
+        for name in files:
+            out[os.path.join(base, name)] = Path(base, name).read_bytes()
+    return out
+
+
+def test_save_to_files_is_a_move_inside_the_vault_and_delete_and_purge_work_even_locked(tmp_path):
+    from _vault_spy import MARKER
+    try:
+        state, paths = plain_state(tmp_path, "ops")
+        vault = state.vault
+        vault._free_ram = lambda: 4 * 1024 ** 3
+        vault.put_handoff("t1", passphrase.normalize(PASS))
+        assert run_command(state, "vault_enable", {"handoff": "t1", "backup": False}).status == "succeeded"
+        codec = state.workspace_manager.codec
+        content = MARKER * 3000
+        keep, old = "d1" * 16, "e2" * 16
+        _received_row(state, paths, keep, "annual-secret-report.pdf", content)
+        _received_row(state, paths, old, "old-secret-scan.pdf", content)
+        state.service._refresh_snapshot()
+
+        # Save to Files: a move, encrypted before and after; the library file is named by the id, never by the name
+        saved = run_command(state, "attachment_save", {"attachment_id": keep})
+        assert saved.status == "succeeded", saved
+        target = paths.files / (keep + ".mcv")
+        assert target.exists() and not (paths.cache_incoming / (keep + ".mcv")).exists()
+        assert state.conn.execute("SELECT saved_path FROM attachments WHERE id = ?", (keep,)).fetchone()[0] == str(target)
+        stored_name = state.conn.execute("SELECT file_name FROM attachments WHERE id = ?", (keep,)).fetchone()[0]
+        assert stored_name.startswith("v1:") and "annual" not in stored_name
+        with codec.open_content(target, keep) as handle:
+            assert handle.read() == content, "the same bytes verify in the library"
+        again = run_command(state, "attachment_save", {"attachment_id": keep})
+        assert again.status == "succeeded" and [p.name for p in paths.files.iterdir()].count(keep + ".mcv") == 1, "a re-save changes nothing"
+
+        # a plain cache file next to an enabled vault is refused, not moved
+        plain_id = "f3" * 16
+        _received_row(state, paths, plain_id, "x.pdf", b"x")
+        (paths.cache_incoming / (plain_id + ".mcv")).unlink()
+        (paths.cache_incoming / plain_id).write_bytes(b"plain leftover")
+        state.conn.execute("UPDATE attachments SET saved_path = ? WHERE id = ?", (str(paths.cache_incoming / plain_id), plain_id))
+        state.conn.commit()
+        refused = run_command(state, "attachment_save", {"attachment_id": plain_id})
+        assert refused.status == "failed" and refused.error_code == "vault_corrupt" and (paths.cache_incoming / plain_id).exists()
+        (paths.cache_incoming / plain_id).unlink()
+        state.conn.execute("DELETE FROM attachments WHERE id = ?", (plain_id,))
+        state.conn.commit()
+
+        # cleanup needs no key: it stays available while locked
+        vault.lock()
+        deleted = run_command(state, "attachment_delete_local_content", {"attachment_id": keep})
+        assert deleted.status == "succeeded" and not target.exists()
+        assert state.conn.execute("SELECT saved_path FROM attachments WHERE id = ?", (keep,)).fetchone()[0] is None
+        purged = run_command(state, "attachment_purge_received_cache", {"older_than_days": 1})
+        assert purged.status == "succeeded" and not (paths.cache_incoming / (old + ".mcv")).exists()
+        # Save needs the key (the API refuses it with 423; the worker refuses it too)
+        assert run_command(state, "attachment_save", {"attachment_id": old}).error_code == "vault_locked"
+
+        # the leak scan over the whole tree and the raw database file: no plaintext, no name
+        state.conn.commit()
+        blobs = list(_whole_tree(tmp_path / "ops").items())
+        for name, data in blobs:
+            assert MARKER not in data, name
+            for needle in (b"annual-secret-report", b"old-secret-scan"):
+                assert needle not in data, (needle, name)
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_a_disable_after_save_restores_the_saved_file_under_its_display_name(tmp_path):
+    from _vault_spy import MARKER
+    try:
+        state, paths = plain_state(tmp_path, "roundtrip")
+        vault = state.vault
+        vault._free_ram = lambda: 4 * 1024 ** 3
+        vault.put_handoff("t2", passphrase.normalize(PASS))
+        assert run_command(state, "vault_enable", {"handoff": "t2", "backup": False}).status == "succeeded"
+        content = MARKER * 3000
+        rid = "a7" * 16
+        _received_row(state, paths, rid, "board-minutes.pdf", content)
+        state.service._refresh_snapshot()
+        assert run_command(state, "attachment_save", {"attachment_id": rid}).status == "succeeded"
+        result = run_command(state, "vault_disable", {"backup": False})
+        assert result.status == "succeeded", result
+        restored = paths.files / "board-minutes.pdf"
+        assert restored.read_bytes() == content, "Save to Files under the vault comes back as the plain file it always was"
+        assert tuple(state.conn.execute("SELECT saved_path, file_name FROM attachments WHERE id = ?", (rid,)).fetchone()) == (str(restored), "board-minutes.pdf")
+        assert not any(p.name.endswith(".mcv") for p in paths.files.iterdir())
+    finally:
+        mca_runtime.reset_state_for_tests()
+
+
+def test_without_a_vault_save_to_files_is_exactly_what_it_was(tmp_path):
+    try:
+        state, paths = plain_state(tmp_path, "plain")
+        cache = paths.cache_incoming / ("c9" * 16)
+        cache.write_bytes(b"plain content")
+        state.conn.execute(
+            "INSERT INTO attachments (id, workspace_id, transfer_id, direction, principal_id, state, file_name, mime_type, plain_size, plain_sha256, "
+            "saved_path, draft_comment, created_at, hard_expires_at, download_grace_seconds) VALUES (?, ?, ?, 'received', ?, 'AVAILABLE', 'notes.txt', 'text/plain', 13, NULL, ?, NULL, 1, 4000000000, 3600)",
+            ("c9" * 16, state.principal.workspace_id, "c9" * 16, state.principal.principal_id, str(cache)))
+        state.conn.commit()
+        state.service._refresh_snapshot()
+        assert run_command(state, "attachment_save", {"attachment_id": "c9" * 16}).status == "succeeded"
+        assert (paths.files / "notes.txt").read_bytes() == b"plain content" and not cache.exists()
     finally:
         mca_runtime.reset_state_for_tests()

@@ -286,7 +286,6 @@
       "vault_not_enabled": "The vault is not enabled",
       "vault_busy": "MCAttach is busy. Try again in a moment",
       "passphrase_required": "Enter the passphrase or the recovery key",
-      "vault_not_ready": "Encrypted file operations are not available yet",
       "passphrase_too_weak": "The passphrase is too weak: use at least 12 characters",
       "transfers_in_progress": "Transfers are still in progress. Try again when they have finished",
       "insufficient_space": "Not enough free disk space to enable the vault",

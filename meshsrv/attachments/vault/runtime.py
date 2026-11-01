@@ -43,16 +43,6 @@ STATE_DISABLED, STATE_LOCKED, STATE_UNLOCKED, STATE_MIGRATING = "disabled", "loc
 MEMINFO_PATH = "/proc/meminfo"
 
 
-EXPERIMENTAL_ENV = "MESHCENTER_MCA_VAULT_EXPERIMENTAL"
-
-
-def enable_allowed() -> bool:
-    """Until the encrypted file operations of PR 4 exist (receive, send, preview, download under the vault) the
-    migration is available only where this variable is set to 1: the live round on a copy, and the tests. With it
-    unset an enable is refused, so no node can end up with an encrypted workspace its service cannot read yet."""
-    return os.environ.get(EXPERIMENTAL_ENV, "") == "1"
-
-
 def free_ram_bytes(meminfo_path: Optional[str] = None) -> Optional[int]:
     """MemAvailable in bytes (what the kernel estimates can be given to a new allocation without swapping: free pages
     plus the reclaimable page cache), NOT MemFree, which on a Pi is always small because the kernel uses RAM for cache.

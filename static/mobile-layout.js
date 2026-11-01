@@ -226,11 +226,11 @@
     }
 
     function scrollWorkspaceToTop() {
-        ['mediaGalleryContent', 'devicesDashboard', 'filesLayout', 'videoView'].forEach(function (id) {
+        ['mediaGalleryContent', 'devicesDashboard', 'filesArchiveList', 'videoView'].forEach(function (id) {
             var element = document.getElementById(id);
             if (element) element.scrollTop = 0;
         });
-        document.querySelectorAll('.devices-panel, .files-panel, .video-panel, .files-archive').forEach(function (element) { element.scrollTop = 0; });
+        document.querySelectorAll('.devices-panel, .files-panel, .video-panel, .files-list').forEach(function (element) { element.scrollTop = 0; });
     }
 
     function toast(key, fallback) {

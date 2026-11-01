@@ -2283,12 +2283,13 @@ class AttachmentsService:
         )
 
     def _command_delete_local_content(self, command: Command) -> CommandOutcome:
-        """`attachment_delete_local_content` (§7.3/§8): delete the `files/` copy
-        of a saved attachment, flipping `saved` false while keeping the
-        attachment row and its full history intact. Precondition is `saved=true`
-        (§7.3) - derived here, never trusted from the snapshot, so a row that
-        raced to `saved=false` (or was never saved) fails `not_saved` rather
-        than deleting something it does not have. The `files/` file is unlinked
+        """`attachment_delete_local_content` (§7.3/§8): delete the local copy
+        of a received attachment (the `files/` copy, or the cache copy of one
+        that was never saved), keeping the attachment row and its full history
+        intact. The precondition (a content locator inside `files/` or the
+        cache) is derived here, never trusted from the snapshot, so a row that
+        raced to "no copy" fails `not_saved` rather than deleting something it
+        does not have. The `files/` file is unlinked
         first (`missing_ok` - an already-gone copy is clean), then `saved_path`
         is cleared to NULL and committed, so `saved` can never report false
         while the file still exists on disk (an unlink failure leaves the row
@@ -2298,11 +2299,14 @@ class AttachmentsService:
         if row is None:
             return CommandOutcome.failed("attachment_not_found")
 
+        # FX1: a received file is deleted whether it sits in files/ (saved) or still in the cache (never saved): the Files list
+        # has one "Delete" for every received file. A sent row's copy is the sender's spool: not deleted here.
+        if row["direction"] != "received":
+            return CommandOutcome.failed("invalid_state_transition")
         paths = self._workspace_manager.paths(self._principal.principal_id)
         saved_path = row["saved_path"]
-        saved = make_locator(paths, saved_path) is not None and _is_inside_files(paths, saved_path)
-        if not saved:
-            return CommandOutcome.failed("not_saved")
+        if make_locator(paths, saved_path) is None:
+            return CommandOutcome.failed("not_saved")                # there is no copy on this node to delete
 
         path = self._resolve_content_path(paths, saved_path)
         if path is not None:
@@ -2857,7 +2861,7 @@ class AttachmentsService:
             service_key_fingerprint=service_key_fingerprint,
             protocol_version=None,
             max_ciphertext_bytes=info.limits.max_ciphertext_bytes,
-            min_ttl_seconds=None,
+            min_ttl_seconds=info.limits.min_hard_ttl_seconds,       # FX1: the relay's published minimum, when it has one
             max_ttl_seconds=info.limits.max_hard_ttl_seconds,
             expires_at=self._now() + PROBE_TTL_SECONDS,
             status=PROBE_STATUS_PROBED,

@@ -435,3 +435,38 @@ def test_create_upload_is_not_retried_on_429():
         _create_session(client, plan)
     assert exc_info.value.status_code == 503
     assert session.calls == 1
+
+
+# ---- FX1: the relay's published minimum TTL ---------------------------------------------------------------------------------
+
+def test_get_info_reads_the_published_minimum_ttl(relay_client):
+    info = relay_client.get_info()
+    assert info.limits.min_hard_ttl_seconds == 3600, "the mock publishes its minimum like the updated relay does"
+
+
+def test_an_older_relay_without_a_published_minimum_gives_none():
+    body = {
+        "ok": True, "protocol": "MCA/1", "relay_version": "0.1.0", "base_url": BASE_URL, "provider_id": "AAAAAAAAAAA",
+        "service_key": {"type": "Ed25519", "public_key": "A" * 43},
+        "limits": {"max_ciphertext_bytes": 6291456, "max_manifest_bytes": 262144, "max_chunk_bytes": 300000, "max_chunks": 64,
+                   "max_recipients": 32, "default_hard_ttl_seconds": 259200, "max_hard_ttl_seconds": 259200, "default_download_grace_seconds": 3600},
+        "capabilities": {"chunked_upload": True, "receipt_completion": True, "sender_revoke": True, "anonymous_upload": False,
+                         "download_authorization": "transfer_capability"},
+    }
+    client = RelayClient(BASE_URL, session=_ScriptedSession([_FakeResponse(200, body)]), max_retries=0, sleep=lambda _s: None)
+    assert client.get_info().limits.min_hard_ttl_seconds is None
+
+
+def test_a_published_minimum_that_is_not_a_positive_integer_is_ignored():
+    for bad in (0, -5, "3600", 1.5, True, None):
+        body = {
+            "ok": True, "protocol": "MCA/1", "relay_version": "0.1.0", "base_url": BASE_URL, "provider_id": "AAAAAAAAAAA",
+            "service_key": {"type": "Ed25519", "public_key": "A" * 43},
+            "limits": {"max_ciphertext_bytes": 6291456, "max_manifest_bytes": 262144, "max_chunk_bytes": 300000, "max_chunks": 64,
+                       "max_recipients": 32, "default_hard_ttl_seconds": 259200, "max_hard_ttl_seconds": 259200,
+                       "default_download_grace_seconds": 3600, "min_hard_ttl_seconds": bad},
+            "capabilities": {"chunked_upload": True, "receipt_completion": True, "sender_revoke": True, "anonymous_upload": False,
+                             "download_authorization": "transfer_capability"},
+        }
+        client = RelayClient(BASE_URL, session=_ScriptedSession([_FakeResponse(200, body)]), max_retries=0, sleep=lambda _s: None)
+        assert client.get_info().limits.min_hard_ttl_seconds is None, bad

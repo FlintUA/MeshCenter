@@ -4681,13 +4681,12 @@ html[data-theme="dark"] #notificationsCard {
 [data-theme="dark"] .notifications-divider { color: #9eb3c8; }
 
 /* ===== Files workspace (MCAttach) =======================================
-   The Files main tab: three-pane layout (contacts | archive | detail) plus
+   The Files main tab: one-column list (FX1) plus
    modal dialogs for send and Relay-provider settings. Follows the same
    --mc-* token discipline as the node-manager/devices workspaces: light
    values as bare :root fallbacks, dark values under [data-theme="dark"]. */
 
 .files-view.workspace-view {
-    container: filesview / inline-size;
     flex: 1 1 auto;
     min-width: 0;
     min-height: 0;
@@ -4732,241 +4731,10 @@ html[data-theme="dark"] #notificationsCard {
     flex: 0 0 auto;
 }
 
-.files-layout {
-    display: grid;
-    /* PR 5: two panes only - Transfers (flexible) + Details (fixed band). The
-       separate Contacts pane is gone; the right-side target list is the global
-       sidebar. */
-    grid-template-columns: minmax(0, 1fr) minmax(320px, 400px);
-    gap: 0;
-    flex: 1 1 auto;
-    min-height: 0;
-}
-
-.files-archive,
-.files-detail {
-    min-width: 0;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-}
-
-.files-detail { border-left: 1px solid var(--mc-border, #d8e1ec); }
-
-.files-pane-title {
-    flex: 0 0 auto;
-    padding: 10px 14px;
-    font-size: var(--mc-body-size, 13px);
-    font-weight: 700;
-    color: var(--mc-muted, #5c7290);
-    border-bottom: 1px solid var(--mc-border, #d8e1ec);
-}
-
-.files-archive-list,
-.files-detail-body {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow-y: auto;
-    padding: 10px;
-}
-
 .files-empty {
     padding: 16px 10px;
     color: var(--mc-muted, #5c7290);
-    font-size: var(--mc-body-size, 13px);
-    text-align: center;
-}
-
-/* transfer archive */
-
-/* PR 5: the six filter buttons became one native <select> (same six values +
-   FILTER_API), with a visible label and an aria-label for ATs. */
-.files-filter-row {
-    flex: 0 0 auto;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px 10px;
-    padding: 8px 10px;
-    box-sizing: border-box;
-    min-width: 0;
-    border-bottom: 1px solid var(--mc-border, #d8e1ec);
-}
-.files-filter-label {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    flex: 0 0 auto;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--mc-muted, #5c7290);
-    white-space: nowrap;
-}
-.files-filter-select {
-    flex: 0 0 auto;
-    min-width: 120px;
-    padding: 6px 8px;
-    border: 1px solid var(--mc-border, #d8e1ec);
-    border-radius: 8px;
-    background: var(--mc-surface, #fff);
-    color: var(--mc-text, #1f2f45);
-    font: inherit;
     font-size: 13px;
-}
-.files-filter-select:focus-visible {
-    outline: 2px solid var(--mc-accent, #2f7bb5);
-    outline-offset: 1px;
-}
-.files-search {
-    /* label + select + search in one row; the search takes what is left and never runs past the pane, a narrow pane wraps it to a line of its own */
-    flex: 1 1 140px;
-    min-width: 0;
-    box-sizing: border-box;
-    padding: 6px 8px;
-    border: 1px solid var(--mc-border, #d8e1ec);
-    border-radius: 8px;
-    background: var(--mc-surface, #fff);
-    color: var(--mc-text, #1f2f45);
-    font: inherit;
-    font-size: 13px;
-}
-.files-channel-notice {
-    flex: 0 0 auto;
-    margin: 8px 10px 0;
-    padding: 8px 10px;
-    border: 1px solid var(--mc-warn, #e0a83a);
-    border-radius: 8px;
-    background: var(--mc-warn-soft, #fff7e6);
-    color: var(--mc-warn-text, #7a5a12);
-    font-size: 12px;
-}
-
-.files-transfer-item {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 4px 10px;
-    width: 100%;
-    max-width: 100%;
-    padding: 9px 10px;
-    margin-bottom: 6px;
-    text-align: left;
-    border: 1px solid var(--mc-border, #d8e1ec);
-    border-radius: 10px;
-    background: var(--mc-surface, #fff);
-    cursor: pointer;
-}
-.files-transfer-item:hover { border-color: var(--mc-border-hover, #9fb6d0); }
-.files-transfer-item.is-selected { border-color: var(--mc-accent, #1769d2); background: var(--mc-primary-soft, #edf5ff); }
-.files-transfer-icon { flex: 0 0 auto; }
-.files-transfer-dir { flex: 0 0 auto; color: var(--mc-muted, #5c7290); }
-.files-transfer-main {
-    display: flex;
-    flex-direction: column;
-    flex: 1 1 160px;
-    min-width: 0;
-    max-width: 100%;
-    gap: 2px;
-}
-.files-transfer-name {
-    display: block;
-    min-width: 0;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-weight: 600;
-    color: var(--mc-text, #1f2f45);
-    font-size: var(--mc-body-size, 13px);
-}
-.files-transfer-sub {
-    display: block;
-    min-width: 0;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 11px;
-    color: var(--mc-muted, #5c7290);
-}
-/* PR post-simplification regression fix: provider/state/size/date/expiry are
-   grouped into one wrapping row so they never fight the file name for width
-   on narrow panels - see MCAttach_UI_Regressions_PostSimplification.md step 1. */
-.files-transfer-meta {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 4px 10px;
-    flex: 1 0 100%;
-    min-width: 0;
-}
-.files-transfer-provider { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--mc-muted, #5c7290); }
-.files-transfer-state { flex: 0 0 auto; font-size: 11px; }
-.files-transfer-size,
-.files-transfer-date,
-.files-transfer-expiry { flex: 0 0 auto; font-size: 11px; color: var(--mc-muted, #5c7290); }
-
-/* detail */
-
-.files-detail-head {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 10px;
-    padding-bottom: 10px;
-    border-bottom: 1px solid var(--mc-border, #d8e1ec);
-}
-.files-detail-name {
-    font-weight: 700;
-    color: var(--mc-text, #1f2f45);
-    font-size: 14px;
-    word-break: break-word;
-}
-/* Step 5: the always-visible plain-language error - never inside a
-   collapsed <details> section, regardless of detail level (see
-   detailMarkup()'s own comment on the "never hide real errors" rule). */
-.files-detail-error {
-    margin-top: 10px;
-    padding: 8px 10px;
-    border-radius: 8px;
-    font-size: var(--mc-body-size, 13px);
-    color: var(--mc-danger, #e6505d);
-    background: var(--mc-danger-soft, #fdecee);
-}
-/* Step 6 regression fix: a calm, non-alarming counterpart to the error box
-   above - for a state that can genuinely take a while but isn't confirmed
-   to be a failure (e.g. WAITING_PROVIDER with no error_code yet). */
-.files-detail-info {
-    margin-top: 10px;
-    padding: 8px 10px;
-    border-radius: 8px;
-    font-size: var(--mc-body-size, 13px);
-    color: var(--mc-muted, #5c7290);
-    background: var(--mc-surface-alt, #f2f5f9);
-}
-.files-detail-table { margin-top: 10px; }
-.files-detail-row {
-    display: flex;
-    justify-content: space-between;
-    gap: 10px;
-    padding: 5px 0;
-    font-size: var(--mc-body-size, 13px);
-}
-.files-detail-label { color: var(--mc-muted, #5c7290); flex: 0 0 auto; }
-.files-detail-value { color: var(--mc-text, #1f2f45); text-align: right; word-break: break-word; }
-.files-detail-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
-.files-detail-timeline {
-    margin-top: 14px;
-    padding-top: 10px;
-    border-top: 1px solid var(--mc-border, #d8e1ec);
-}
-.files-timeline-event { display: flex; gap: 8px; padding: 3px 0; font-size: 12px; }
-.files-timeline-time { flex: 0 0 auto; color: var(--mc-muted, #5c7290); }
-.files-timeline-text { color: var(--mc-text, #1f2f45); }
-.files-detail-empty {
-    padding: 24px 12px;
-    color: var(--mc-muted, #5c7290);
     text-align: center;
 }
 
@@ -5172,7 +4940,6 @@ html[data-theme="dark"] #notificationsCard {
 [data-theme="dark"] .files-header.mc-workspace-header {
     background: var(--mc-workspace-header-bg, linear-gradient(180deg, #1a2b3d 0%, #172638 100%));
 }
-[data-theme="dark"] .files-transfer-item,
 [data-theme="dark"] .files-provider-item {
     background: #172638;
     border-color: #2a3f54;
@@ -6870,20 +6637,6 @@ body.media-lightbox-open {
 }
 .main-tab-badge[hidden] { display: none; }
 
-.files-summary-sep { color: var(--mc-muted, #5c7290); }
-
-.files-storage {
-    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
-    margin: 0 0 8px; font-size: 12px; color: var(--mc-muted, #5c7290);
-}
-.files-storage:empty { display: none; }
-.files-storage-btn {
-    min-height: 32px; padding: 4px 10px; border-radius: 8px; font-size: 12px; cursor: pointer;
-    border: 1px solid var(--mc-border, #c9d6e5); background: var(--mc-surface, #fff); color: var(--mc-text, #1d2b3a);
-}
-.files-storage-btn:hover:not(:disabled) { border-color: var(--mc-danger, #d64545); color: var(--mc-danger, #d64545); }
-.files-storage-btn:disabled { opacity: 0.5; cursor: default; }
-.files-storage-hint { flex: 1 1 100%; font-size: 11px; opacity: 0.85; }
 
 .page-version-notice {
     position: fixed; left: 50%; top: 10px; transform: translateX(-50%); z-index: 100000;
@@ -7007,20 +6760,27 @@ body.media-lightbox-open {
     color: var(--mc-danger, #b42318);
 }
 
-.rp-favs {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-height: 36px;
-    font-size: 13px;
+.rp-favtoggle {
+    flex: 0 0 auto;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 1px solid var(--mc-border);
+    border-radius: 8px;
+    background: var(--mc-bg-panel);
+    color: var(--mc-text-secondary, #667085);
+    font-size: 20px;
+    line-height: 1;
     cursor: pointer;
 }
 
-.rp-favs-box {
-    width: 20px;
-    height: 20px;
-    margin: 0;
-    accent-color: var(--mc-accent, #1f6feb);
+.rp-favtoggle[aria-pressed="true"] {
+    color: #d9a01f;
+    border-color: #d9a01f;
+}
+
+@media (pointer: coarse), (max-width: 768px) {
+    .rp-favtoggle { width: 44px; height: 44px; }
 }
 
 .rp-list {
@@ -7205,7 +6965,8 @@ body.media-lightbox-open {
 .files-modal .files-send-readiness,
 .files-modal .files-send-readiness-check,
 .files-modal .files-send-file-feedback,
-.files-modal .files-send-expiry-summary {
+.files-modal .files-send-expiry-summary,
+.files-modal .files-send-hint {
     margin-top: 4px;
     font-size: 12px;
     font-weight: 400;
@@ -7217,6 +6978,25 @@ body.media-lightbox-open {
     margin: 0 0 10px;
 }
 
+.files-modal .files-send-hint:empty {
+    display: none;
+}
+
+.files-ttl-custom {
+    display: flex;
+    gap: 8px;
+    margin-top: 6px;
+}
+
+.files-ttl-custom[hidden] {
+    display: none;
+}
+
+.files-ttl-custom input {
+    flex: 1 1 90px;
+    min-width: 0;
+}
+
 .files-modal .files-send-readiness-check .files-status-ok {
     color: var(--mc-success, #1a7f37);
 }
@@ -7225,24 +7005,7 @@ body.media-lightbox-open {
     color: var(--mc-warn-text, #7a5a12);
 }
 
-/* the Files tab: the lines above and below the list use the normal small text style */
-.files-summary {
-    padding: 0 12px;
-    margin: 6px 0;
-    font-size: 12px;
-    line-height: 1.4;
-    color: var(--mc-muted, #5c7290);
-}
 
-.files-storage {
-    padding: 0 12px;
-    margin: 10px 0 8px;
-}
-
-/* the phone's way back from Details to the transfers (the side-by-side layout never needs it) */
-.files-back-btn {
-    display: none;
-}
 
 /* ===== MCAttach vault UI (static/vault-ui.js): dock chip, banners, the unlock dialog / bottom sheet, the System card ===== */
 .dock-vault-chip {
@@ -7392,4 +7155,221 @@ html[data-theme="dark"] .dock-vault-chip.is-locked, html[data-theme="dark"] .doc
     .mc-vault-key { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .dock-vault-chip { min-width: 36px; min-height: 36px; padding: 2px 8px; justify-content: center; }
     .dock-vault-label { display: none; }
+}
+
+/* ===== Files (FX1 Phase A): one column of cards ===================================================================== */
+.files-panel.mc-workspace-panel { overflow: hidden; }
+
+.files-vault-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 12px;
+    padding: 6px 14px;
+    font-size: 12px;
+    color: var(--mc-muted, #5c7290);
+    border-bottom: 1px solid var(--mc-border, #d8e1ec);
+}
+.files-vault-line[hidden] { display: none; }
+.files-vault-line.is-locked { color: var(--mc-warn-text, #7a5a12); background: var(--mc-warn-soft, #fff7e6); }
+.files-vault-line .vault-banner-btn { min-height: 28px; padding: 2px 10px; }
+
+.files-toolbar {
+    flex: 0 0 auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 10px;
+    padding: 10px 12px;
+    box-sizing: border-box;
+    border-bottom: 1px solid var(--mc-border, #d8e1ec);
+}
+.files-segments {
+    display: inline-flex;
+    border: 1px solid var(--mc-border, #c9d6e5);
+    border-radius: 10px;
+    overflow: hidden;
+    flex: 0 0 auto;
+}
+.files-segment {
+    min-height: 36px;
+    padding: 4px 12px;
+    border: 0;
+    border-right: 1px solid var(--mc-border, #c9d6e5);
+    background: var(--mc-surface, #fff);
+    color: var(--mc-text, #1f2f45);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+}
+.files-segment:last-child { border-right: 0; }
+.files-segment[aria-pressed="true"] {
+    background: var(--mc-primary-soft, #e3efff);
+    color: var(--mc-accent, #1769d2);
+    font-weight: 700;
+}
+.files-segment-count { display: inline-block; min-width: 1.4em; padding: 0 4px; border-radius: 9px; background: rgba(120, 140, 170, 0.18); font-size: 11px; text-align: center; }
+.files-toolbar .files-search {
+    flex: 1 1 100%;
+    order: 3;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 6px 10px;
+    border: 1px solid var(--mc-border, #d8e1ec);
+    border-radius: 8px;
+    background: var(--mc-surface, #fff);
+    color: var(--mc-text, #1f2f45);
+    font: inherit;
+    font-size: 13px;
+}
+.files-select-btn {
+    flex: 0 0 auto;
+    margin-left: auto;
+    min-height: 36px;
+    padding: 4px 12px;
+    border: 1px solid var(--mc-border, #c9d6e5);
+    border-radius: 8px;
+    background: var(--mc-surface, #fff);
+    color: var(--mc-text, #1f2f45);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+}
+.files-select-btn[aria-pressed="true"] { background: var(--mc-primary-soft, #e3efff); border-color: var(--mc-accent, #1769d2); color: var(--mc-accent, #1769d2); }
+
+.files-bulkbar {
+    flex: 0 0 auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--mc-primary-soft, #e3efff);
+    border-bottom: 1px solid var(--mc-border, #d8e1ec);
+}
+.files-bulkbar[hidden] { display: none; }
+.files-bulk-count { flex: 1 1 auto; font-size: 13px; font-weight: 600; }
+
+.files-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 4px 12px 12px;
+}
+.files-list.is-chat { display: flex; flex-direction: column; }
+.files-day { margin: 14px 2px 6px; font-size: 12px; font-weight: 700; color: var(--mc-muted, #5c7290); }
+.files-list.is-chat .files-day { align-self: center; padding: 2px 10px; border-radius: 10px; background: rgba(120, 140, 170, 0.16); }
+
+.files-card {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin: 0 0 8px;
+    padding: 10px 12px 10px 12px;
+    border: 1px solid var(--mc-border, #d8e1ec);
+    border-left-width: 5px;
+    border-radius: 10px;
+    background: var(--mc-card-bg, #fff);
+    box-sizing: border-box;
+    min-width: 0;
+}
+.files-card.is-incoming { border-left-color: var(--mc-success, #1a7f37); }
+.files-card.is-sent { border-left-color: var(--mc-accent, #1769d2); }
+.files-list.is-chat .files-card { width: fit-content; max-width: min(86%, 560px); min-width: min(100%, 260px); }
+.files-list.is-chat .files-card.is-sent { margin-left: auto; }
+.files-list.is-chat .files-card.is-incoming { margin-right: auto; }
+.files-card.is-focus { animation: filesFocus 1.6s ease-out 1; }
+@keyframes filesFocus { 0% { box-shadow: 0 0 0 3px var(--mc-accent, #1769d2); } 100% { box-shadow: 0 0 0 0 transparent; } }
+.files-card.is-checked { outline: 2px solid var(--mc-accent, #1769d2); outline-offset: -1px; }
+
+.files-check { display: none; flex: 0 0 auto; align-items: center; justify-content: center; width: 28px; min-height: 44px; }
+.files-check input { width: 20px; height: 20px; }
+.files-list.is-selecting .files-check { display: flex; }
+
+.files-card-thumb {
+    flex: 0 0 56px;
+    width: 56px;
+    height: 56px;
+    border-radius: 8px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(120, 140, 170, 0.16);
+    font-size: 26px;
+}
+.files-card-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.files-card-body { flex: 1 1 auto; min-width: 0; }
+.files-card-who { font-size: 12px; font-weight: 700; }
+.files-card.is-incoming .files-card-who { color: var(--mc-success, #1a7f37); }
+.files-card.is-sent .files-card-who { color: var(--mc-accent, #1769d2); }
+.files-card-name { margin: 2px 0; font-size: 14px; font-weight: 700; overflow-wrap: anywhere; color: var(--mc-text, #1f2f45); }
+.files-card-meta { font-size: 12px; color: var(--mc-muted, #5c7290); }
+.files-card-comment {
+    margin-top: 6px;
+    font-size: 12px;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    cursor: pointer;
+}
+.files-card-comment.is-open { display: block; }
+.files-card-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 8px; }
+.files-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 10px;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.5;
+}
+.files-chip.is-ok { color: var(--mc-success, #1a7f37); }
+.files-chip.is-wait { color: var(--mc-warn-text, #7a5a12); }
+.files-chip.is-bad { color: var(--mc-danger, #c33a3a); }
+.files-chip.is-progress { color: var(--mc-accent, #1769d2); }
+.files-card-note { font-size: 12px; color: var(--mc-muted, #5c7290); }
+.files-progress { flex: 1 1 100%; height: 4px; border-radius: 2px; overflow: hidden; background: var(--mc-border, #d8e1ec); }
+.files-progress > span { display: block; height: 100%; width: 35%; background: var(--mc-accent, #1769d2); animation: filesSlide 1.3s ease-in-out infinite; }
+@keyframes filesSlide { 0% { transform: translateX(-100%); } 100% { transform: translateX(300%); } }
+@media (prefers-reduced-motion: reduce) { .files-progress > span { animation: none; width: 100%; opacity: 0.5; } }
+.files-card-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.files-card-more { margin-top: 8px; font-size: 12px; }
+.files-card-more > summary { cursor: pointer; color: var(--mc-muted, #5c7290); padding: 4px 0; }
+.files-card-more .files-detail-table { margin-top: 6px; }
+.files-detail-row { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; font-size: 12px; border-bottom: 1px dashed var(--mc-border, #d8e1ec); }
+.files-detail-label { color: var(--mc-muted, #5c7290); flex: 0 0 auto; }
+.files-detail-value { text-align: right; overflow-wrap: anywhere; }
+.files-timeline-event { display: flex; gap: 8px; padding: 3px 0; font-size: 12px; }
+.files-timeline-time { flex: 0 0 auto; color: var(--mc-muted, #5c7290); }
+
+.files-footer {
+    flex: 0 0 auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 12px;
+    padding: 8px 14px;
+    font-size: 12px;
+    color: var(--mc-muted, #5c7290);
+    border-top: 1px solid var(--mc-border, #d8e1ec);
+}
+.files-footer:empty { display: none; }
+.files-footer-btn { border: 0; background: transparent; color: var(--mc-accent, #1769d2); font: inherit; font-size: 12px; text-decoration: underline; cursor: pointer; padding: 6px 0; }
+.files-footer-btn:disabled { opacity: 0.5; cursor: default; text-decoration: none; }
+
+@media (max-width: 768px) {
+    .files-segment { min-height: 44px; }
+    .files-select-btn { min-height: 44px; }
+    .files-toolbar .files-search { flex: 1 1 100%; order: 3; min-height: 44px; font-size: 16px; }
+    .files-card-actions .files-action-btn, .files-bulkbar .files-action-btn { min-height: 44px; }
+    .files-card-thumb { flex-basis: 48px; width: 48px; height: 48px; }
+    .files-list.is-chat .files-card { max-width: 94%; }
+    .files-footer-btn { min-height: 44px; }
 }

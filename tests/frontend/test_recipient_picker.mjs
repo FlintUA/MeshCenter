@@ -169,10 +169,11 @@ const people = [
     const on = P.createModel({ favoritesOnly: P.readPrefs({ send_recipients: { favorites_only_desktop: true } }).favoritesOnly });
     on.setContacts(plain(echo).map((c) => ({ ...c, favorite: false })));
     assert.equal(on.favoritesOnly, true, 'stored true: stays on, even with no favorite left (the user chose it)');
-    // the wiring never writes a choice the user did not make: only the checkbox saves
+    // the wiring never writes a choice the user did not make: only the star toggle saves
     const src = read('recipient-picker.js');
-    assert.equal((src.match(/savePrefs\(patch\);/g) || []).length, 1, 'the favorites field is written in one place only: the checkbox handler');
-    assert.ok(src.includes("favs.addEventListener('change'"), 'and that is a change of the checkbox');
+    assert.equal((src.match(/savePrefs\(patch\);/g) || []).length, 1, 'the favorites field is written in one place only: the star toggle handler');
+    assert.ok(src.includes("favs.addEventListener('click'"), 'and that is a click on the star toggle');
+    assert.ok(src.includes('class="rp-favtoggle" data-rp-favs aria-pressed='), 'a real toggle button (aria-pressed), not a checkbox');
 }
 
 // ---------------------------------------------------------------- recents

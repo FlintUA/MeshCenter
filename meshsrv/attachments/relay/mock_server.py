@@ -463,6 +463,7 @@ class MockRelayStore:
                 "max_chunks": self._limits["max_chunks"],
                 "max_recipients": self._limits["max_receipts"],
                 "default_hard_ttl_seconds": self._limits["default_hard_ttl_seconds"],
+                "min_hard_ttl_seconds": self._limits["min_hard_ttl_seconds"],
                 "max_hard_ttl_seconds": self._limits["max_hard_ttl_seconds"],
                 "default_download_grace_seconds": self._limits["default_grace_seconds"],
             },

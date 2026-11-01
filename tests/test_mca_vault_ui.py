@@ -73,7 +73,7 @@ def test_markup_has_the_chip_banner_card_and_notices():
     assert 'id="updatesRollbackVaultNote"' in html
     files = _read("static/files.js")
     assert 'id="filesSendVaultNotice" data-vault-notice' in files, "the Send dialog offers Unlock"
-    assert "a.locked" in files and "lockedDetailMarkup" in files, "locked rows and details show a placeholder, never a name"
+    assert "a.locked" in files and "vault.locked_name" in files, "locked cards show a placeholder, never a name"
     assert "window.MCVault.noteLocked()" in files, "a 423 vault_locked from any request makes the chip catch up"
 
 

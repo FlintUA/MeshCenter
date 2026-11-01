@@ -3363,7 +3363,17 @@ def test_delete_local_content_accepted_when_saved(monkeypatch):
     _assert_202_accepted(resp.get_json(), facade, "attachment_delete_local_content")
 
 
-def test_delete_local_content_rejected_when_not_saved(monkeypatch):
+def test_delete_local_content_accepted_for_a_cache_copy_that_was_never_saved(monkeypatch):
+    facade = _FakeFacade(snapshot=_snapshot([_attachment(
+        direction="received", state=receiver.AVAILABLE, saved=False, descriptor=_descriptor(locator="cache/incoming/" + ATTACHMENT_ID),
+    )]))
+    c = _client(monkeypatch, facade)
+    resp = c.delete(_DELETE_LOCAL_PATH)
+    assert resp.status_code == 202
+    _assert_202_accepted(resp.get_json(), facade, "attachment_delete_local_content")
+
+
+def test_delete_local_content_rejected_when_there_is_no_copy(monkeypatch):
     facade = _FakeFacade(snapshot=_snapshot([_attachment(
         direction="received", state=receiver.AVAILABLE, saved=False,
     )]))

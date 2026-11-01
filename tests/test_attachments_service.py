@@ -3126,16 +3126,37 @@ def test_command_delete_local_content_unlinks_files_copy_and_flips_saved(
     assert receiver.get_state(conn, attachment_id) == receiver.AVAILABLE  # history kept
 
 
-def test_command_delete_local_content_not_saved(conn, wsm, principal, service):
-    """A row whose content is still only in cache/incoming (never saved) fails
-    not_saved - there is no files/ copy to delete."""
+def test_command_delete_local_content_deletes_a_cache_copy_that_was_never_saved(conn, wsm, principal, service):
+    """FX1: the Files list has one Delete for every received file: a copy that sits only in cache/incoming goes too."""
     attachment_id = "44" * 16
     _seed_received_available(conn, principal, wsm, attachment_id=attachment_id, file_name="photo.jpg")
+    assert (wsm.paths(principal.principal_id).cache_incoming / attachment_id).exists()
 
     outcome = service._dispatcher.dispatch(_delete_local_content_command(attachment_id))
 
+    assert outcome.error_code is None
+    assert not (wsm.paths(principal.principal_id).cache_incoming / attachment_id).exists()
+    assert _saved_path_of(conn, attachment_id) is None
+    assert receiver.get_state(conn, attachment_id) == receiver.AVAILABLE  # history kept
+
+
+def test_command_delete_local_content_with_no_copy_fails_not_saved(conn, wsm, principal, service):
+    attachment_id = "45" * 16
+    _seed_received_available(conn, principal, wsm, attachment_id=attachment_id, file_name="photo.jpg")
+    assert service._dispatcher.dispatch(_delete_local_content_command(attachment_id)).error_code is None
+    outcome = service._dispatcher.dispatch(_delete_local_content_command(attachment_id))    # the copy is already gone
     assert outcome.error_code == "not_saved"
-    assert (wsm.paths(principal.principal_id).cache_incoming / attachment_id).exists()  # cache untouched
+
+
+def test_command_delete_local_content_never_touches_a_sent_row(conn, wsm, principal, service):
+    attachment_id = "46" * 16
+    conn.execute(
+        "INSERT INTO attachments (id, workspace_id, transfer_id, direction, principal_id, state, file_name, mime_type, plain_size, "
+        "created_at, hard_expires_at, download_grace_seconds) VALUES (?, ?, ?, 'sent', ?, 'SENT', NULL, 'image/jpeg', 1, 1, 2, 3600)",
+        (attachment_id, principal.workspace_id, "00" * 16, principal.principal_id))
+    conn.commit()
+    outcome = service._dispatcher.dispatch(_delete_local_content_command(attachment_id))
+    assert outcome.error_code == "invalid_state_transition"
 
 
 def test_command_delete_local_content_missing_file_is_clean(conn, wsm, principal, service):

@@ -75,6 +75,7 @@
     }
 
     function formatBytes(bytes) {
+        if (root && root.MCSize) return root.MCSize.format(bytes, { compact: true });
         const n = Number(bytes);
         if (!Number.isFinite(n) || n < 0) return '-';
         if (n < 1024) return n + ' B';

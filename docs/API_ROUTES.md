@@ -60,7 +60,7 @@ Auth/CSRF columns mirror `api/api_auth.py`'s own `_enforce_auth()`/`_enforce_csr
 | `/api/chats` | GET | `api/api_chat.py:460` (`api_chats`) | required | exempt |
 | `/api/cleanup_nodes` | POST | `server.py:8733` (`api_cleanup_nodes`) | required | required |
 | `/api/clear_chat` | POST | `server.py:8976` (`api_clear_chat`) | required | required |
-| `/api/delete_all_dm` | POST | `server.py:9455` (`api_delete_all_dm`) | required | required |
+| `/api/delete_all_dm` | POST | `server.py:9456` (`api_delete_all_dm`) | required | required |
 | `/api/delete_chat` | POST | `server.py:9018` (`api_delete_chat`) | required | required |
 | `/api/devices` | GET | `server.py:8600` (`api_profile_devices`) | required | exempt |
 | `/api/devices/cameras` | GET | `api/api_camera_manager.py:55` (`api_devices_cameras`) | required | exempt |
@@ -136,8 +136,8 @@ Auth/CSRF columns mirror `api/api_auth.py`'s own `_enforce_auth()`/`_enforce_csr
 | `/api/nodes/<node_id>/icon` | DELETE | `api/api_node_icons.py:85` (`delete_node_icon`) | required | required |
 | `/api/nodes/<node_id>/icon` | GET | `api/api_node_icons.py:27` (`get_node_icon`) | required | exempt |
 | `/api/nodes/<node_id>/icon` | POST | `api/api_node_icons.py:44` (`upload_node_icon`) | required | required |
-| `/api/nodes_export` | GET | `server.py:9323` (`api_nodes_export`) | required | exempt |
-| `/api/nodes_import` | POST | `server.py:9340` (`api_nodes_import`) | required | required |
+| `/api/nodes_export` | GET | `server.py:9324` (`api_nodes_export`) | required | exempt |
+| `/api/nodes_import` | POST | `server.py:9341` (`api_nodes_import`) | required | required |
 | `/api/nodes_management` | GET | `server.py:9308` (`api_nodes_management`) | required | exempt |
 | `/api/notifications` | DELETE | `api/api_system.py:524` (`api_clear_notifications`) | required | required |
 | `/api/notifications` | GET | `api/api_system.py:487` (`api_get_notifications`) | required | exempt |
@@ -152,10 +152,10 @@ Auth/CSRF columns mirror `api/api_auth.py`'s own `_enforce_auth()`/`_enforce_csr
 | `/api/radio_connection/reconnect` | POST | `server.py:8844` (`api_radio_connection_reconnect`) | required | required |
 | `/api/radio_connection/release` | POST | `server.py:8784` (`api_radio_connection_release`) | required | required |
 | `/api/radio_connection/status` | GET | `server.py:8746` (`api_radio_connection_status`) | required | exempt |
-| `/api/radio_health` | GET | `server.py:9564` (`api_radio_health`) | required | exempt |
+| `/api/radio_health` | GET | `server.py:9565` (`api_radio_health`) | required | exempt |
 | `/api/rescan_nodes` | POST | `server.py:8923` (`api_rescan_nodes`) | required | required |
 | `/api/restart_listener` | POST | `server.py:8882` (`api_restart_listener`) | required | required |
-| `/api/restore_deleted_dm` | POST | `server.py:9536` (`api_restore_deleted_dm`) | required | required |
+| `/api/restore_deleted_dm` | POST | `server.py:9537` (`api_restore_deleted_dm`) | required | required |
 | `/api/schedules` | GET | `api/api_system.py:531` (`api_get_schedules`) | required | exempt |
 | `/api/schedules` | POST | `api/api_system.py:537` (`api_create_schedule`) | required | required |
 | `/api/schedules/<sid>` | DELETE | `api/api_system.py:577` (`api_delete_schedule`) | required | required |
@@ -166,9 +166,9 @@ Auth/CSRF columns mirror `api/api_auth.py`'s own `_enforce_auth()`/`_enforce_csr
 | `/api/send` | POST | `api/api_chat.py:630` (`api_send`) | required | required |
 | `/api/send/retry` | POST | `api/api_chat.py:779` (`api_send_retry`) | required | required |
 | `/api/sensors` | GET | `server.py:7502` (`api_sensors`) | required | exempt |
-| `/api/settings` | GET | `api/api_settings.py:719` (`api_get_settings`) | required | exempt |
-| `/api/settings` | POST | `api/api_settings.py:750` (`api_update_settings`) | required | required |
-| `/api/settings/reference-location-name` | POST | `api/api_settings.py:731` (`api_reference_location_name`) | required | required |
+| `/api/settings` | GET | `api/api_settings.py:753` (`api_get_settings`) | required | exempt |
+| `/api/settings` | POST | `api/api_settings.py:784` (`api_update_settings`) | required | required |
+| `/api/settings/reference-location-name` | POST | `api/api_settings.py:765` (`api_reference_location_name`) | required | required |
 | `/api/system/action` | POST | `api/api_system.py:86` (`api_system_action`) | required | required |
 | `/api/system/cpu-history` | GET | `system/cpu_history.py:183` (`api_system_cpu_history`) | required | exempt |
 | `/api/system/info` | GET | `api/api_system.py:131` (`api_system_info`) | required | exempt |

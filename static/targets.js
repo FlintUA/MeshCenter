@@ -293,6 +293,7 @@
                 hasBinding: true,
                 ignored: false,
                 favorite: false,
+                short_name: '',
                 last_seen: null,
                 // capability fields filled in pass 3
                 key_request_state: 'idle',
@@ -323,6 +324,7 @@
                     hasBinding: false,
                     ignored: false,
                     favorite: false,
+                    short_name: '',
                     last_seen: null,
                     key_request_state: 'idle',
                     can_send_file: false,
@@ -333,6 +335,7 @@
             }
             var t = byNodeId[id];
             if (n.name) t.display_name = n.name;
+            t.short_name = n.short_name ? String(n.short_name) : '';
             if (t.source === 'mca_only') t.source = 'node_and_mca';
             t.ignored = Boolean(n.ignored);
             t.favorite = Boolean(n.favorite);

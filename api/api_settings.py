@@ -69,6 +69,14 @@ DEFAULT_SETTINGS = {
         "filter_mobile": "",
     },
 
+    "send_recipients": {
+        # The recipient picker (UX5): "Favorites only" per kind of device (null = not chosen yet, the picker decides), and the
+        # recently used recipients (node ids, newest first). Preferences, not content.
+        "favorites_only_desktop": None,
+        "favorites_only_mobile": None,
+        "recent": [],
+    },
+
     "timers": {
         # Legacy/global fallback used until a radio-specific preference exists.
         "notify_enabled": False,
@@ -173,6 +181,8 @@ def _normalize_coordinate(value, minimum, maximum):
 
 SUPPORTED_LANGUAGES = ("auto", "en", "de", "ru", "uk")
 MEDIA_SORTS = ("date_desc", "date_asc", "name", "size", "camera")
+RECIPIENT_ID_RE = re.compile(r"^![0-9a-f]{8}$")
+RECIPIENT_RECENT_MAX = 8          # must match RECENT_MAX in static/recipient-picker.js
 MEDIA_FILTER_MAX_CHARS = 80      # must match FILTER_MAX in static/media-views.js
 MEDIA_VIEWS = ("large", "small", "list")
 
@@ -484,6 +494,24 @@ def normalize_settings(settings):
     media_filter_desktop = _media_filter("filter_desktop")
     media_filter_mobile = _media_filter("filter_mobile")
 
+    # ---------------- Recipient picker preferences (UX5) ----------------
+
+    send_recipients_raw = settings.get("send_recipients", {})
+    if not isinstance(send_recipients_raw, dict):
+        send_recipients_raw = {}
+
+    def _optional_bool(value):
+        return value if isinstance(value, bool) else None
+
+    recent_recipients = []
+    raw_recent = send_recipients_raw.get("recent", [])
+    if isinstance(raw_recent, list):
+        for item in raw_recent:
+            if isinstance(item, str) and RECIPIENT_ID_RE.match(item.lower()) and item.lower() not in recent_recipients:
+                recent_recipients.append(item.lower())
+            if len(recent_recipients) >= RECIPIENT_RECENT_MAX:
+                break
+
     # ---------------- Timer form defaults ----------------
 
     timer_settings = settings.get("timers", {})
@@ -639,6 +667,12 @@ def normalize_settings(settings):
             "view_mobile": media_view_mobile,
             "filter_desktop": media_filter_desktop,
             "filter_mobile": media_filter_mobile,
+        },
+
+        "send_recipients": {
+            "favorites_only_desktop": _optional_bool(send_recipients_raw.get("favorites_only_desktop")),
+            "favorites_only_mobile": _optional_bool(send_recipients_raw.get("favorites_only_mobile")),
+            "recent": recent_recipients,
         },
 
         "timers": {

@@ -257,6 +257,10 @@
         selectedId: null,
         pendingSelectId: null,    // a transfer to select as soon as the list has it (MCA-UX1)
         scrollToSelected: false,
+        view: 'list',             // phone only: 'list' or 'detail', one pane at a time (the CSS reads data-view)
+        ignorePop: false,         // the popstate we caused ourselves with history.back()
+        viewPushed: false,        // a history entry stands for the open Details view
+        listScroll: 0,            // the page scroll to return to when going back to the list
         storage: null,            // {count, bytes}: the received copies in cache/incoming (MCA-UX1)
 
         sendSignature: null,      // semantic send-form signature (C7 idempotency)
@@ -361,7 +365,9 @@
         });
     }
 
+    // the shared formatter (static/format-size.js): localized units, the same everywhere in the UI
     function fmtBytes(n) {
+        if (typeof window !== 'undefined' && window.MCSize) return window.MCSize.format(n);
         if (n === null || n === undefined) return '-';
         if (n < 1024) return n + ' B';
         if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
@@ -624,6 +630,8 @@
                 key_epoch: t.key_epoch,
                 pending_key_epoch: t.pending_key_epoch,
                 name: t.display_name || '',
+                short_name: t.short_name || '',
+                favorite: t.favorite === true,
                 hasBinding: t.hasBinding,
             };
         });
@@ -731,12 +739,15 @@
                 nextId = state.pendingSelectId;   // MCA-UX1: opened from a chat bubble
                 state.pendingSelectId = null;
                 state.scrollToSelected = true;
+                openDetailView();
             }
             if (!nextId || !state.attachments.some(function (a) { return a.id === nextId; })) {
                 nextId = state.attachments.length ? state.attachments[0].id : null;
             }
             if (nextId !== state.selectedId) {
                 invalidateDetail();
+                // the open transfer is gone (deleted, filtered out): back to the list, not to another transfer's details
+                if (state.view === 'detail' && !state.scrollToSelected) closeDetailView(false);
             }
             state.selectedId = nextId;
 
@@ -929,7 +940,7 @@
     // ---- rendering: detail + action matrix (C4/C6) -------------------------
 
     function scrollSelectedIntoView() {
-        var el = typeof document !== 'undefined' ? document.querySelector('.files-transfer-item.is-selected') : null;
+        var el = typeof document !== 'undefined' && typeof document.querySelector === 'function' ? document.querySelector('.files-transfer-item.is-selected') : null;
         if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
     }
 
@@ -940,6 +951,7 @@
         if (!id) return;
         if (state.attachments.some(function (a) { return a.id === id; })) {
             selectAttachment(id);
+            openDetailView();
             scrollSelectedIntoView();
             return;
         }
@@ -1089,6 +1101,69 @@
         }).catch(function () {
             toast(t('files.error.network_error', 'Network error'), 'error');
         });
+    }
+
+    // ---- phone: master/detail. One pane at a time (data-view on #filesLayout); wide screens ignore it ------------------
+    // Compact = the Files panel is too narrow for two panes: a phone, or a desktop whose sidebars leave a narrow centre column.
+    // FILES_COMPACT_MAX must match the @container filesview (max-width: 700px) rule in static/ui-kit.css.
+    var FILES_COMPACT_MAX = 700;
+
+    function isPhoneLayout() {
+        var m = typeof window !== 'undefined' ? window.MCMobileLayout : null;
+        if (m && typeof m.isMobile === 'function' && m.isMobile()) return true;
+        var view = getEl('filesView');
+        var width = view && view.clientWidth;
+        if (width > 0) {
+            var style = typeof getComputedStyle === 'function' ? getComputedStyle(view) : null;
+            var pad = style ? (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0) : 0;
+            return width - pad <= FILES_COMPACT_MAX;
+        }
+        return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 768px)').matches;
+    }
+
+    function pageScroller() {
+        var layout = getEl('filesLayout');
+        return layout && layout.parentNode ? layout.parentNode : null;
+    }
+
+    function applyView(view) {
+        state.view = view;
+        var layout = getEl('filesLayout');
+        if (layout && layout.setAttribute) layout.setAttribute('data-view', view);
+    }
+
+    // Only a person's own choice opens Details (a tap on a row, a chat notification); the automatic first selection never does.
+    function openDetailView() {
+        if (!isPhoneLayout() || state.view === 'detail') return;
+        var scroller = pageScroller();
+        state.listScroll = scroller ? scroller.scrollTop : 0;
+        applyView('detail');
+        if (scroller) scroller.scrollTop = 0;
+        if (typeof history !== 'undefined' && history.pushState) {
+            try { history.pushState({ mcFiles: 'detail' }, ''); state.viewPushed = true; } catch (e) { state.viewPushed = false; }
+        }
+        var back = getEl('filesBackBtn');
+        if (back && back.focus) back.focus();
+    }
+
+    // viaHistory: the browser/Android back already popped our entry. Otherwise a button, or the transfer went away.
+    function closeDetailView(viaHistory) {
+        if (state.view !== 'detail') return;
+        applyView('list');
+        var scroller = pageScroller();
+        if (scroller) scroller.scrollTop = state.listScroll;
+        if (!viaHistory && state.viewPushed && typeof history !== 'undefined' && history.back) {
+            state.viewPushed = false;
+            state.ignorePop = true;
+            history.back();
+        }
+        state.viewPushed = false;
+        scrollSelectedIntoView();
+    }
+
+    function onPopState() {
+        if (state.ignorePop) { state.ignorePop = false; return; }
+        if (state.view === 'detail') closeDetailView(true);
     }
 
     function selectAttachment(id) {
@@ -1889,6 +1964,7 @@
         if (action === 'providers') { openProviderSettings(); return; }
         if (action === 'relay-wizard') { openRelayWizard(); return; }
         if (action === 'refresh') { refresh(); return; }
+        if (action === 'back') { closeDetailView(false); return; }
         if (action === 'purge-received') { purgeReceivedCopies(); return; }
 
         // Attachment + contact + provider actions carry a data-attachment /
@@ -1898,7 +1974,7 @@
         var providerId = modal.getAttribute('data-provider');
 
         if (attachmentId && state.attachments.some(function (a) { return a.id === attachmentId; })) {
-            if (action === 'select') { selectAttachment(attachmentId); return; }
+            if (action === 'select') { selectAttachment(attachmentId); openDetailView(); return; }
             if (action === 'attach-download') { attachmentDownload(attachmentId); return; }
             if (action === 'attach-reject') { attachmentReject(attachmentId); return; }
             if (action === 'attach-save') { attachmentSave(attachmentId); return; }
@@ -1968,6 +2044,7 @@
         if (!target || !target.id) return;
         if (target.id === 'filesSearch') {
             state.search = target.value || '';
+            refreshChannelNotice();
             renderTransfers();
             renderSummaries();
             return;
@@ -2001,6 +2078,7 @@
     function setFilter(filter) {
         if (!FILTER_API[filter]) return;
         state.filter = filter;
+        refreshChannelNotice();
         var sel = getEl('filesFilterSelect');
         if (sel && sel.value !== filter) sel.value = filter;
         loadTransfers();
@@ -2009,12 +2087,22 @@
     // A channel selection shows a compact unsupported-transfer notice above the
     // transfer list (channels are navigation-only and never file recipients);
     // any node or no selection hides it.
+    //
+    // UX5: it explains one thing, that the list is NOT narrowed to the selected channel. It shows only while the list is
+    // shown plain (filter "All", nothing typed in the search); once the user narrows the list themselves it has nothing left to
+    // explain, and showing it above a "Sent" list only looked like an error.
     function renderChannelNotice(sel) {
         var notice = getEl('filesChannelNotice');
         if (!notice) return;
-        var isChannel = Boolean(sel && sel.kind === 'channel');
+        var plainList = state.filter === 'all' && !state.search;
+        var isChannel = Boolean(sel && sel.kind === 'channel') && plainList;
         if (notice.hidden !== undefined) notice.hidden = !isChannel;
         else notice.style.display = isChannel ? '' : 'none';
+    }
+
+    function refreshChannelNotice() {
+        var store = (typeof window !== 'undefined') ? window.MeshCenterTargets : null;
+        renderChannelNotice(store && typeof store.selected === 'function' ? store.selected() : null);
     }
 
     // PR 4 Finding 1: the shared store's selection is the single source of
@@ -2090,6 +2178,8 @@
         state.active = false;
         state.epoch++;
         stopTimer();
+        applyView('list');
+        state.viewPushed = false;
         closeModal(false);
         // In-flight reads are dropped by the epoch bump; submitted commands are left untouched.
         refreshBadge();   // MCA-UX1: the tab dot counts again as soon as Files is left
@@ -2133,10 +2223,12 @@
                     '</div>' +
                     '<div class="files-modal-body">' +
                         '<div class="files-send-status" id="filesSendStatus" aria-live="polite"></div>' +
-                        '<label class="files-field">' +
+                        '<div class="files-field">' +
                             '<span class="files-field-label">' + esc(t('files.send_recipient', 'Recipient')) + '</span>' +
-                            '<select id="filesSendRecipient"></select>' +
-                        '</label>' +
+                            // UX5: one searchable picker (static/recipient-picker.js); the hidden input keeps the chosen id
+                            '<div class="rp" id="filesSendRecipientPicker"></div>' +
+                            '<input type="hidden" id="filesSendRecipient" value="" />' +
+                        '</div>' +
                         '<div class="files-provider-probe" id="filesSendKeyStatus" aria-live="polite"></div>' +
                         '<label class="files-field">' +
                             '<span class="files-field-label">' + esc(t('files.send_provider', 'Relay provider')) + '</span>' +
@@ -2172,7 +2264,7 @@
                     '</div>' +
                 '</div>' +
             '</div>';
-        var el = openModalHtml(html, function () { state.sendInFlight = false; state.sendPictures = null; });
+        var el = openModalHtml(html, function () { state.sendInFlight = false; state.sendPictures = null; state.sendPicker = null; state.sendPickerHost = null; });
         el.className = 'files-dialog-root is-send';
         // G2.1/G2.3: never render the cached provider list as actionable, and
         // never check readiness against it, before the fresh provider projection
@@ -2260,6 +2352,7 @@
         var comment = commentEl && commentEl.value.trim() ? commentEl.value.trim() : null;
         var items = pics.items.slice();
         var onDone = pics.onDone;
+        var usedRecipient = recipient.value;
         var submit = getEl('filesSendSubmit');
         state.sendInFlight = true;
         if (submit) submit.disabled = true;
@@ -2308,6 +2401,7 @@
                 if (result.failed) toast(text + ' ' + result.firstError, result.queued ? 'warning' : 'error');
                 else toast(text, 'success');
                 if (result.queued) {
+                    noteRecipientUsed(usedRecipient);
                     if (onDone) { try { onDone(result); } catch (_) { /* the gallery's own business */ } }
                     return refreshTransfers().then(function () { closeModal(false); });
                 }
@@ -2394,47 +2488,75 @@
         return state.contacts.filter(function (c) { return c.can_send_file === true; });
     }
 
+    // UX5: the contacts as the picker wants them (the local node is already excluded by syncContactsFromStore)
+    function recipientPickerContacts() {
+        return state.contacts.map(function (c) {
+            return {
+                id: c.contact_id,
+                short_name: c.short_name || '',
+                name: c.name || '',
+                favorite: c.favorite === true,
+                can_send: c.can_send_file === true,
+                can_request_key: c.can_request_key === true,
+                status: c.status,
+                reason: c.file_unavailable_reason,
+                key_request_state: c.key_request_state,
+            };
+        });
+    }
+
+    // "Key unknown, request the key" for a node without a key; another reason (a key to confirm, a changed key) keeps its
+    // own label - those are handled on the node's card, never from here
+    function recipientReasonLabel(c) {
+        if (c.reason === 'key_unknown' || !c.reason) {
+            if (c.key_request_state === 'queued' || c.key_request_state === 'waiting_response') {
+                return t('recipient.key_waiting', 'Key requested, waiting for the answer');
+            }
+            return t('recipient.key_unknown', 'Key unknown, request the key');
+        }
+        return fileUnavailableReasonLabel(c.reason);
+    }
+
+    // the picker told us the recipient: keep it in the hidden field the send form reads, then refresh what depends on it
+    function onSendRecipientPicked(id) {
+        var hidden = getEl('filesSendRecipient');
+        if (hidden) hidden.value = id || '';
+        renderSendKeyStatus();
+        renderSendSubmit();
+    }
+
+    // Only a contact that can be sent to is ever chosen (a node without a key is shown, disabled, in its own group, with a
+    // "Request key" action). PR 4 Finding 1 still holds: the shared store's selection pre-selects a recipient only when it is a
+    // valid, still-sendable node; a channel or an invalid/disappeared node pre-selects nothing, never a different contact.
     function renderSendRecipients() {
-        var sel = getEl('filesSendRecipient');
-        if (!sel) return;
-        if (!state.contacts.length) {
-            sel.innerHTML = '<option value="">' + esc(t('files.no_contacts', 'No known contacts yet.')) + '</option>';
-            return;
+        var host = getEl('filesSendRecipientPicker');
+        var picker = (typeof window !== 'undefined') ? window.MCRecipientPicker : null;
+        if (!host || !picker) return;
+        var first = !state.sendPicker || state.sendPickerHost !== host;
+        if (first) {
+            state.sendPickerHost = host;
+            state.sendPicker = picker.mount(host, {
+                id: 'filesSend',
+                t: function (key, params, fallback) { return params ? tparams(key, params, fallback) : t(key, fallback); },
+                reasonLabel: recipientReasonLabel,
+                requestKeyAttr: 'data-files-action="send-request-key"',
+                onChange: onSendRecipientPicked,
+            });
         }
-        var trusted = state.contacts.filter(function (c) { return c.can_send_file === true; });
-        // PR 4 Finding 1: pre-select a recipient from the shared store's
-        // selection - but only a valid, still-sendable node. A channel
-        // selection, or a selected node that is no longer a trusted contact
-        // (invalid/disappeared), yields `null`: the select shows an explicit
-        // empty placeholder rather than silently falling back to the first
-        // (different) trusted contact.
-        var preselect = sendRecipientPreselection();
-        var options = state.contacts.map(function (c) {
-            var name = c.name || c.contact_id;
-            var label = name + ' (' + c.contact_id + ')';
-            if (c.can_send_file === true) {
-                return '<option value="' + esc(c.contact_id) + '">' + esc(label) + '</option>';
+        state.sendPicker.setContacts(recipientPickerContacts());
+        if (first) {
+            var preselect = sendRecipientPreselection();
+            if (preselect) {
+                state.sendPicker.setSelected(preselect);
+                onSendRecipientPicked(state.sendPicker.getSelected());
             }
-            var reason = fileUnavailableReasonLabel(c.file_unavailable_reason);
-            // gallery G2: a contact that only lacks a key can be chosen, which shows Connect securely under the list
-            if (state.sendPictures && c.status === 'key_unknown') {
-                return '<option value="' + esc(c.contact_id) + '">' + esc(label + ' - ' + reason) + '</option>';
-            }
-            return '<option value="' + esc(c.contact_id) + '" disabled>' + esc(label + ' - ' + reason) + '</option>';
-        }).join('');
-        if (!trusted.length || preselect === null) {
-            var placeholder = trusted.length
-                ? t('files.send_choose_recipient', 'Choose a trusted contact')
-                : t('files.no_trusted_contacts', 'No trusted contacts');
-            options = '<option value="">' + esc(placeholder) + '</option>' + options;
         }
-        sel.innerHTML = options;
-        if (preselect === null) {
-            sel.value = '';         // an invalid/disappeared selection → explicit empty, no fallback
-        } else if (preselect) {
-            sel.value = preselect;  // a valid node selection → pre-select it
-        }
-        // (preselect === '') leaves the browser default (first option) untouched.
+    }
+
+    // a send went to this recipient: it becomes the first of the recently used
+    function noteRecipientUsed(id) {
+        var picker = (typeof window !== 'undefined') ? window.MCRecipientPicker : null;
+        if (picker && id) { try { picker.noteUsed(id); } catch (_) { /* just not remembered */ } }
     }
 
     // PR 4 Finding 1: resolve the shared store's selection to a pre-selected
@@ -2604,14 +2726,10 @@
         // R7: Relay state and upload readiness are rendered as SEPARATE facts -
         // the relay's reachability/identity is independent of whether uploads
         // are configured/allowed for this profile.
+        // UX5: the upload readiness is stated ONCE, by the authoritative check line right under this one
+        // (renderSendReadinessCheck); repeating it here printed "Upload: ready" twice
         var relay = filesRelayStateLabel(p.state);
-        var ready = uploadReadyProvider(p);
-        var readiness = ready
-            ? t('files.upload_ready', 'Upload: ready')
-            : t('files.upload_not_ready', 'Upload: not ready') + ' - ' + providerNotReadyLabel(p);
-        el.innerHTML =
-            '<span>' + esc(t('files.relay_state_label', 'Relay state') + ': ' + relay) + '</span>' +
-            ' · <span>' + esc(readiness) + '</span>';
+        el.innerHTML = '<span>' + esc(t('files.relay_state_label', 'Relay state') + ': ' + relay) + '</span>';
     }
 
     function renderSendFileFeedback() {
@@ -2954,6 +3072,7 @@
             return api('/api/attachments', { method: 'POST', body: form }).then(function (r2) {
                 if (r2.status === 202 && r2.data && r2.data.ok && r2.data.command_id) {
                     var attachmentId = r2.data.attachment_id || null;
+                    noteRecipientUsed(recipient.value);
                     trackCommand(r2.data.command_id, {
                         resourceKey: 'create',
                         queued: t('files.sending', 'Sending file…'),
@@ -3758,6 +3877,7 @@
             document.addEventListener('input', onDocumentInput);
             document.addEventListener('change', onDocumentChange);
             document.addEventListener('visibilitychange', onVisibilityChange);
+            if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('popstate', onPopState);
             // 'toggle' does not bubble, so only the capture phase reaches a
             // delegated listener for the dynamically-rendered <details> below.
             document.addEventListener('toggle', onDetailToggle, true);

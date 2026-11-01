@@ -570,6 +570,7 @@ function buildSandbox({ fetchImpl, loadStore = true }) {
     // store-absent fallback path (final correction, Finding 1).
     if (loadStore) {
         vm.runInContext(targetsSource, sandbox, { filename: 'targets.js' });
+        vm.runInContext(readFileSync(path.join(staticDir, 'recipient-picker.js'), 'utf8'), sandbox, { filename: 'recipient-picker.js' });
         vm.runInContext(filesSource, sandbox, { filename: 'files.js' });
     }
     vm.runInContext(viewsSource, sandbox, { filename: 'chat-views.js' });
@@ -1843,6 +1844,46 @@ async function test_no_duplicate_node_details_or_actions_menu() {
 
 // ---- runner ------------------------------------------------------------------
 
+async function test_nodes_empty_state_shows_only_when_the_whole_filtered_list_is_empty() {
+    // UX5 (found on a phone): with a filter that matches nodes ("fli") the list still ended with "No nodes found". The line of an
+    // earlier EMPTY render (say "flix") is not a node card, so the keyed reconcile never removed it. It must show only when
+    // the whole filtered list is empty, and be gone as soon as there are nodes to show, whichever groups the matches are in.
+    const sandbox = buildSandbox({ fetchImpl: defaultRoutes() });
+    const doc = sandbox._document;
+    const withFavorite = (node, favorite) => Object.assign(node, { favorite });
+    seedNodeCache(sandbox, [
+        withFavorite(makeDisplayNode('!aaaaaaaa', 'Flint Base'), true),      // a favorites group match
+        withFavorite(makeDisplayNode('!bbbbbbbb', 'Flicker'), false),        // an "others" group match
+        withFavorite(makeDisplayNode('!cccccccc', 'Bob'), false),            // no match
+    ]);
+    const nodesList = doc.getElementById('nodesList');
+    const emptyState = () => nodesList.children.filter((c) => c.classList && c.classList.contains('nodes-empty-state'));
+    const setSearch = (term) => vm.runInContext('nodeSearchTerm = ' + JSON.stringify(term) + ';', sandbox);
+
+    // an earlier empty render left its line in the list (as the real render does with innerHTML)
+    const stale = doc.createElement('div');
+    stale.classList.add('loading');
+    stale.classList.add('nodes-empty-state');
+    nodesList.appendChild(stale);
+    assert.equal(emptyState().length, 1, 'sanity: the stale empty-state line is in the list');
+
+    setSearch('fli');                                  // matches in both groups
+    sandbox.renderSidebarNodeCards();
+    assert.equal(emptyState().length, 0, 'matches exist: no "No nodes found" line stays at the end of the list');
+
+    // matches in ONE group only, with the empty-state line there again
+    nodesList.appendChild(stale);
+    setSearch('flint');
+    sandbox.renderSidebarNodeCards();
+    assert.equal(emptyState().length, 0, 'matches in one group only: still no empty-state line');
+
+    // nothing matches anywhere: the line is the list's content (the source marks it so the next render can remove it)
+    const source = readFileSync(path.join(staticDir, 'chat.js'), 'utf8');
+    assert.ok(source.includes('class="loading nodes-empty-state"'), 'the empty state carries the marker class');
+    assert.ok(source.indexOf("child.classList.contains('nodes-empty-state')") > source.indexOf('filteredNodes.length === 0'), 'and is removed on the non-empty path');
+    console.log('PASS: test_nodes_empty_state_shows_only_when_the_whole_filtered_list_is_empty');
+}
+
 async function main() {
     await test_open_chat_node_pushes_selection_to_store();
     await test_open_chat_channel_pushes_selection_to_store();
@@ -1877,6 +1918,7 @@ async function main() {
     await test_position_node_detail_slot_collapses_on_channel_deselect_reactivate();
     await test_position_node_detail_slot_removes_slot_without_rendered_card();
     await test_render_sidebar_node_cards_rebuild_preserves_slot_and_detail_card();
+    await test_nodes_empty_state_shows_only_when_the_whole_filtered_list_is_empty();
     await test_load_messages_rebuild_preserves_slot_and_detail_card();
     await test_node_actions_menu_owned_inside_slot_and_opens();
     await test_node_actions_menu_survives_and_opens_after_rebuild();

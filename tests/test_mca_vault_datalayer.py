@@ -393,7 +393,9 @@ def test_only_the_known_modules_touch_the_encrypted_columns_and_each_uses_the_co
             touching.append(relative)
         if "codec_of" in text:
             using_codec.append(relative)
-    assert set(touching) <= {"receiver.py", "sender.py", "service.py", "snapshots.py"}, touching
+    # storage_merge.py (FX1 Phase B) reads `file_name` raw only on its plain-file branch (no vault: the value is plain); with
+    # the vault on it moves `<id>.mcv` by the attachment id and never looks at a name
+    assert set(touching) <= {"receiver.py", "sender.py", "service.py", "snapshots.py", "storage_merge.py"}, touching
     assert {"receiver.py", "sender.py", "service.py", "snapshots.py"} <= set(using_codec)
 
 

@@ -223,6 +223,7 @@
         openMore: {},             // id -> true: the "More details" of this card is open (survives a poll re-render)
         openComment: {},          // id -> true: the full comment is shown
         openCard: {},             // id -> true: the phone card is expanded (actions and details shown)
+        sorts: { desktop: 'newest', phone: 'newest' },   // FX1: the remembered sort, per kind of device (settings.files.sort_*)
         searchOpen: false,        // phone: the search field replaces the toolbar
         moreOpen: false,          // phone: the more menu is open
         moreExtra: {},            // id -> timeline / deliveries html fetched when "More details" was first opened
@@ -762,13 +763,16 @@
     var REASON_BY_CODE = {
         recipient_not_trusted: 'key_not_trusted', no_recipients: 'no_recipient', source_file_missing: 'source_missing',
         disk_low_block: 'disk_low', recipient_provider_unknown: 'recipient_relay',
-        mime_not_allowed: 'type_not_allowed', extension_not_allowed: 'type_not_allowed',
+        mime_not_allowed: 'type_not_allowed', extension_not_allowed: 'type_not_allowed', type_mismatch: 'type_mismatch',
+        empty_file: 'empty_file',
         pending_offer_signature_invalid: 'sender_unverified', provider_missing: 'no_relay',
         chunk_fetch_failed: 'download_failed',
         descriptor_signature_invalid: 'damaged', manifest_invalid: 'damaged', header_size_mismatch: 'damaged',
         chunk_digest_mismatch: 'damaged', chunk_aead_failed: 'damaged', plaintext_digest_mismatch: 'damaged',
     };
     var REASON_LABELS = {
+        empty_file: 'the file is empty',
+        type_mismatch: 'the file is not the type it claims to be',
         key_not_trusted: "the contact's key is not trusted", no_recipient: 'there is no recipient', source_missing: 'the file is no longer on this node',
         disk_low: 'not enough free space on this node', recipient_relay: 'the recipient does not use this relay',
         type_not_allowed: 'this file type is not accepted', sender_unverified: 'the sender could not be verified',
@@ -903,7 +907,70 @@
         try { return new Date(epochSeconds * 1000).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; }
     }
 
-    // newest first, or oldest first like a messenger when one contact is selected
+    // ---- sorting (FX1 Phase B): newest first by default, everywhere (also with one contact selected) -----------------------
+    var SORTS = ['newest', 'oldest', 'name', 'size'];
+
+    function sortKey() { return isPhone() ? 'phone' : 'desktop'; }
+    function currentSort() { var s = state.sorts[sortKey()]; return SORTS.indexOf(s) !== -1 ? s : 'newest'; }
+
+    function nameOf(a) { return a.locked ? '' : String(a.file_name || '').toLowerCase(); }
+
+    function sortAttachments(list, sort) {
+        var copy = list.slice();
+        var byTime = function (a, b) { return (b.created_at || 0) - (a.created_at || 0); };
+        copy.sort(function (a, b) {
+            if (sort === 'oldest') return (a.created_at || 0) - (b.created_at || 0);
+            if (sort === 'name') {
+                var an = nameOf(a), bn = nameOf(b);
+                if (an !== bn) return an < bn ? -1 : 1;
+                return byTime(a, b);
+            }
+            if (sort === 'size') {
+                var diff = (b.plain_size || 0) - (a.plain_size || 0);
+                return diff !== 0 ? diff : byTime(a, b);
+            }
+            return byTime(a, b);
+        });
+        return copy;
+    }
+
+    // date groups follow the order for newest / oldest; for name and size there are none (one list, no headers)
+    function groupItems(list, sort) {
+        if (sort === 'name' || sort === 'size') return [{ key: 0, label: '', items: sortAttachments(list, sort) }];
+        return groupByDay(list, sort === 'oldest');
+    }
+
+    function readSortFromSettings() {
+        var f = (typeof appSettings !== 'undefined' && appSettings && appSettings.files) ? appSettings.files : {};
+        ['desktop', 'phone'].forEach(function (kind) {
+            var v = f['sort_' + kind];
+            if (SORTS.indexOf(v) !== -1) state.sorts[kind] = v;
+        });
+    }
+
+    function renderSortControls() {
+        var sort = currentSort();
+        var select = getEl('filesSortSelect');
+        if (select && select.value !== sort) select.value = sort;
+        var items = document.querySelectorAll ? document.querySelectorAll('.files-sort-item') : [];
+        for (var i = 0; i < items.length; i++) {
+            items[i].setAttribute('aria-checked', items[i].getAttribute('data-sort') === sort ? 'true' : 'false');
+        }
+    }
+
+    function setSort(sort) {
+        if (SORTS.indexOf(sort) === -1) return;
+        var kind = sortKey();
+        state.sorts[kind] = sort;
+        renderTransfers();
+        var body = { files: {} };
+        body.files['sort_' + kind] = sort;
+        api('/api/settings', { method: 'POST', body: JSON.stringify(body) }).then(function (r) {
+            if (r.status === 200 && r.data && r.data.ok && typeof appSettings !== 'undefined') appSettings = r.data.settings;
+        }).catch(function () { /* the choice stays for this session; the next change saves again */ });
+    }
+
+    // the list is already in the order the sort asks for (`ascending` only picks the direction of the day groups)
     function groupByDay(list, ascending) {
         var sorted = list.slice().sort(function (a, b) { return ascending ? a.created_at - b.created_at : b.created_at - a.created_at; });
         var groups = [];
@@ -1005,6 +1072,10 @@
         var busy = status.busy ? '<div class="files-progress" role="progressbar" aria-label="' + esc(status.text) + '"><span></span></div>' : '';
         var note = status.retrying ? '<span class="files-card-note">' + esc(t('files.note_retrying', 'trying again automatically')) + '</span>' : '';
         if (valid) note += '<span class="files-card-note">' + esc(valid) + '</span>';
+        if (a.state === 'WAITING_CONSENT' && a.error_code === 'auto_accept_quota') {
+            // not a failure: a trusted contact sent a lot today, so this one waits for a person
+            note += '<span class="files-card-note">' + esc(t('files.note_auto_quota', 'Not downloaded automatically: this contact sent a lot today. Press Download to accept it.')) + '</span>';
+        }
         if (a.state === 'WAITING_KEY') {
             note += '<span class="files-card-note">' + esc(t('files.note_confirm_key', "Confirm this contact's key in the node list to receive the file.")) + '</span>';
         }
@@ -1039,7 +1110,38 @@
         list.innerHTML = '<div class="files-empty">' + esc(message) + '</div>';
     }
 
+    // FX1 Phase B: when a contact is selected in the sidebar the list (and its counters) are for that contact only. That was
+    // invisible; the chip says so and the x shows all files again.
+    function filterContactName() {
+        if (!state.counterparty) return '';
+        var contact = findContact(state.counterparty);
+        return (contact && (contact.name || contact.contact_id)) || state.counterparty;
+    }
+
+    function renderFilterChip() {
+        var chip = getEl('filesFilterChip');
+        var name = filterContactName();
+        if (chip) {
+            if (chip.hidden !== undefined) chip.hidden = !name; else chip.style.display = name ? '' : 'none';
+            var text = getEl('filesFilterChipText');
+            if (text) text.textContent = name ? tparams('files.filter_only', { name: name }, 'Only: ' + name) : '';
+        }
+        var hint = name ? tparams('files.counts_for_contact', { name: name }, 'Counts for ' + name + ' only') : '';
+        ['incoming', 'sent', 'all'].forEach(function (seg) {
+            var btn = getEl('filesSeg_' + seg);
+            if (!btn) return;
+            if (hint) btn.setAttribute('title', hint); else if (btn.removeAttribute) btn.removeAttribute('title');
+        });
+    }
+
+    function clearContactFilter() {
+        var store = (typeof window !== 'undefined') ? window.MeshCenterTargets : null;
+        if (store && typeof store.clearSelection === 'function') { store.clearSelection(); return; }
+        if (state.counterparty) { state.counterparty = ''; loadTransfers(); }
+    }
+
     function renderSegments() {
+        renderFilterChip();
         var counts = segmentCounts(state.attachments);
         ['incoming', 'sent', 'all'].forEach(function (seg) {
             var count = getEl('filesCount_' + seg);
@@ -1109,21 +1211,20 @@
             renderBulkBar();
             return;
         }
-        var html = groupByDay(items, chat).map(function (g) {
-            return '<div class="files-day">' + esc(g.label) + '</div>' + g.items.map(cardHtml).join('');
+        var html = groupItems(items, currentSort()).map(function (g) {
+            return (g.label ? '<div class="files-day">' + esc(g.label) + '</div>' : '') + g.items.map(cardHtml).join('');
         }).join('');
         // a poll must not throw away the scroll position the user is looking at
         var top = list.scrollTop;
         list.innerHTML = html;
-        if (chat && state.chatScrolledFor !== state.counterparty) {
+        // newest first everywhere now (the messenger layout too), so a conversation opens at the top, not the bottom
+        if (state.chatScrolledFor !== state.counterparty) {
             state.chatScrolledFor = state.counterparty;
-            list.scrollTop = list.scrollHeight;
-        } else if (!chat) {
-            state.chatScrolledFor = '';
-            list.scrollTop = top;
+            list.scrollTop = 0;
         } else {
             list.scrollTop = top;
         }
+        renderSortControls();
         renderBulkBar();
         if (state.focusId) { var f = state.focusId; state.focusId = ''; focusCard(f); }
     }
@@ -1957,6 +2058,8 @@
         if (action === 'relay-wizard') { openRelayWizard(); return; }
         if (action === 'refresh') { state.moreOpen = false; renderToolbar(); refresh(); return; }
         if (action === 'segment') { setSegment(modal.getAttribute('data-segment')); return; }
+        if (action === 'sort') { state.moreOpen = false; renderToolbar(); setSort(modal.getAttribute('data-sort')); return; }
+        if (action === 'clear-contact') { clearContactFilter(); return; }
         if (action === 'select-mode') { state.moreOpen = false; setSelectMode(!state.selectMode); return; }
         if (action === 'search-open') { state.moreOpen = false; setSearchOpen(true); return; }
         if (action === 'search-close') { setSearchOpen(false); return; }
@@ -2063,6 +2166,8 @@
     // useful 'input' event; this routes the send form's dynamic feedback.
     function onDocumentChange(e) {
         var target = e.target;
+        if (target && target.getAttribute && target.getAttribute('data-files-setting')) { onFilesSettingChange(target); return; }
+        if (target && target.id === 'filesSortSelect') { setSort(target.value); return; }
         if (target && target.getAttribute && target.getAttribute('data-files-check')) { toggleChecked(target.getAttribute('data-files-check'), Boolean(target.checked)); return; }
         if (!target || !target.id) return;
         if (target.id === 'filesSendExpiry') { renderSendCustomTtl(); renderSendSubmit(); refreshSendReadiness(); return; }
@@ -2123,6 +2228,7 @@
         state.epoch++;
         state.active = true;
         state.segment = readSegment();
+        readSortFromSettings();
         state.visible = !(typeof document !== 'undefined' && document.hidden);
         // PR 4 Finding 1: subscribe to the shared target store once, so the
         // counterparty filter always mirrors the store's selection (node clicks
@@ -2710,13 +2816,11 @@
         var input = getEl('filesSendFile');
         var f = input && input.files && input.files.length ? input.files[0] : null;
         if (!f) { el.innerHTML = ''; renderSendSubmit(); return; }
-        // F1: an allowlisted extension or MIME is allowed; anything else is
-        // rejected locally (immediate, localized feedback). A stale rejection
-        // clears the moment an allowed file is selected - the server's magic-byte
-        // sniffing stays the real authority.
+        // FX1 Phase B: any file type can be sent; only an empty file is refused here (immediate, localized feedback). The
+        // server derives the type from the content and stays the authority.
         if (!fileTypeAllowed(f)) {
             el.innerHTML = '<span class="files-status-error">' +
-                esc(t('files.err_mime', 'File type is not allowed')) + '</span>';
+                esc(t('files.err_empty_file', 'This file is empty')) + '</span>';
             renderSendSubmit();
             return;
         }
@@ -2725,7 +2829,7 @@
         var known = EXTENSION_MIME[ext] || (ALLOWED_MIME[f.type] ? f.type : '');
         var typeLine = known
             ? tparams('files.send_file_type', { type: known }, 'Type: ' + known)
-            : t('files.send_file_type_unknown', 'Type: unrecognized');
+            : t('files.send_file_type_unknown', 'Type: other file');
         el.innerHTML =
             '<span>' + esc(typeLine) + '</span>' +
             ' · <span>' + esc(tparams('files.send_file_size', { size: fmtBytes(f.size) }, 'Size: ' + fmtBytes(f.size))) + '</span>';
@@ -3054,7 +3158,7 @@
             return;
         }
         if (!fileTypeAllowed(file)) {
-            if (feedback) feedback.textContent = t('files.err_mime', 'File type is not allowed');
+            if (feedback) feedback.textContent = t('files.err_empty_file', 'This file is empty');
             return;
         }
 
@@ -3150,15 +3254,11 @@
         });
     }
 
+    // FX1 Phase B: every file type can be sent (the allowlist is gone); an empty file has nothing to send. The type shown and
+    // stored is derived from the CONTENT on the node, never from the name or the browser's claim.
     function fileTypeAllowed(file) {
         if (!file) return false;
-        var name = (file.name || '').toLowerCase();
-        var ext = name.indexOf('.') !== -1 ? name.split('.').pop() : '';
-        // F1: a recognized allowlisted extension OR a browser-supplied allowlisted
-        // MIME (even extensionless) is allowed. When both are absent/unrecognized
-        // the file is rejected locally - the server's magic-byte sniffing remains
-        // authoritative, so this is a client-side gate, never a guarantee.
-        return Boolean(EXTENSION_MIME[ext] || ALLOWED_MIME[file.type]);
+        return !(typeof file.size === 'number' && file.size === 0);
     }
 
     // ---- provider settings (C8) --------------------------------------------
@@ -3288,12 +3388,24 @@
 
     // ---- provider editing (R5) ----------------------------------------------
 
+    // The user's own TTL limit (null = none). An older server that does not send the split falls back to the single value.
+    function ownTtl(p, which) {
+        var own = p['user_' + which + '_ttl_seconds'];
+        var value = own !== undefined ? own : p[which + '_ttl_seconds'];
+        return (value === null || value === undefined) ? null : value;
+    }
+
     function providerEditFields(id) {
         var p = providerById(id);
         if (!p) return '';
-        var minTtl = (p.min_ttl_seconds === null || p.min_ttl_seconds === undefined) ? '' : String(p.min_ttl_seconds);
-        var maxTtl = (p.max_ttl_seconds === null || p.max_ttl_seconds === undefined) ? '' : String(p.max_ttl_seconds);
+        // FX1 Phase B: the fields hold the user's OWN limits; the relay's published limit is the placeholder (the stricter applies)
+        var ownMin = ownTtl(p, 'min');
+        var ownMax = ownTtl(p, 'max');
+        var minTtl = ownMin === null ? '' : String(ownMin);
+        var maxTtl = ownMax === null ? '' : String(ownMax);
         var ttlPlaceholder = t('files.provider_ttl_unset', 'Unset');
+        var relayMin = (p.relay_min_ttl_seconds === null || p.relay_min_ttl_seconds === undefined) ? '' : String(p.relay_min_ttl_seconds);
+        var relayMax = (p.relay_max_ttl_seconds === null || p.relay_max_ttl_seconds === undefined) ? '' : String(p.relay_max_ttl_seconds);
         return (
             '<div class="files-edit-field">' +
                 '<label for="filesEditName-' + esc(id) + '">' + esc(t('files.provider_display_name', 'Display name')) + '</label>' +
@@ -3313,11 +3425,11 @@
             '</div>' +
             '<div class="files-edit-field">' +
                 '<label for="filesEditMinTtl-' + esc(id) + '">' + esc(t('files.provider_ttl_min', 'Min TTL (seconds)')) + '</label>' +
-                '<input type="number" id="filesEditMinTtl-' + esc(id) + '" min="1" step="1" value="' + esc(minTtl) + '" placeholder="' + esc(ttlPlaceholder) + '" autocomplete="off" />' +
+                '<input type="number" id="filesEditMinTtl-' + esc(id) + '" min="1" step="1" value="' + esc(minTtl) + '" placeholder="' + esc(relayMin ? relayMin : ttlPlaceholder) + '" autocomplete="off" />' +
             '</div>' +
             '<div class="files-edit-field">' +
                 '<label for="filesEditMaxTtl-' + esc(id) + '">' + esc(t('files.provider_ttl_max', 'Max TTL (seconds)')) + '</label>' +
-                '<input type="number" id="filesEditMaxTtl-' + esc(id) + '" min="1" step="1" value="' + esc(maxTtl) + '" placeholder="' + esc(ttlPlaceholder) + '" autocomplete="off" />' +
+                '<input type="number" id="filesEditMaxTtl-' + esc(id) + '" min="1" step="1" value="' + esc(maxTtl) + '" placeholder="' + esc(relayMax ? relayMax : ttlPlaceholder) + '" autocomplete="off" />' +
             '</div>'
         );
     }
@@ -3405,8 +3517,8 @@
         if (uploadEl && !!uploadEl.checked !== !!p.upload_allowed) body.upload_allowed = !!uploadEl.checked;
         if (downloadEl && !!downloadEl.checked !== !!p.download_allowed) body.download_allowed = !!downloadEl.checked;
 
-        var oldMin = (p.min_ttl_seconds === null || p.min_ttl_seconds === undefined) ? null : p.min_ttl_seconds;
-        var oldMax = (p.max_ttl_seconds === null || p.max_ttl_seconds === undefined) ? null : p.max_ttl_seconds;
+        var oldMin = ownTtl(p, 'min');
+        var oldMax = ownTtl(p, 'max');
         if (minPresent) {
             if (minVal !== oldMin) body.min_ttl_seconds = minVal;
         } else if (oldMin !== null) {
@@ -3995,6 +4107,58 @@
         }, 500);
     }
 
+    function currentFilesSettings() {
+        var s = (typeof appSettings !== 'undefined' && appSettings && appSettings.files) ? appSettings.files : {};
+        return { auto_accept: s.auto_accept !== false, auto_cleanup_days: Number(s.auto_cleanup_days) || 0 };
+    }
+
+    function cleanupOptionLabel(days) {
+        return Number(days) === 0 ? t('settings.files_cleanup_never', 'Never') : plural('files.cleanup_days', Number(days), '{count} day', '{count} days');
+    }
+
+    function syncFilesSettings() {
+        var current = currentFilesSettings();
+        var accept = getEl('filesAutoAccept');
+        if (accept) accept.checked = current.auto_accept;
+        var cleanup = getEl('filesAutoCleanup');
+        if (cleanup) {
+            var options = cleanup.querySelectorAll ? cleanup.querySelectorAll('option') : [];
+            for (var i = 0; i < options.length; i++) options[i].textContent = cleanupOptionLabel(options[i].value);
+            cleanup.value = String(current.auto_cleanup_days);
+        }
+    }
+
+    function saveFilesSetting(name, value) {
+        var body = { files: {} };
+        body.files[name] = value;
+        return api('/api/settings', { method: 'POST', body: JSON.stringify(body) }).then(function (r) {
+            if (r.status === 200 && r.data && r.data.ok) {
+                if (typeof appSettings !== 'undefined') appSettings = r.data.settings;
+            } else {
+                toast(t('files.settings_save_failed', 'Could not save the setting'), 'error');
+            }
+            syncFilesSettings();
+        }).catch(function () { toast(t('files.settings_save_failed', 'Could not save the setting'), 'error'); syncFilesSettings(); });
+    }
+
+    function onFilesSettingChange(target) {
+        var name = target.getAttribute('data-files-setting');
+        if (name === 'auto_accept') { saveFilesSetting(name, Boolean(target.checked)); return; }
+        if (name !== 'auto_cleanup_days') return;
+        var days = parseInt(target.value, 10) || 0;
+        if (days === 0) { saveFilesSetting(name, 0); return; }
+        // turning on an automatic deletion is a decision: say what will happen, once
+        var dialog = (typeof window !== 'undefined') ? window.MCDialog : null;
+        var asked = (dialog && dialog.confirm) ? dialog.confirm({
+            title: t('files.cleanup_confirm_title', 'Delete old received files automatically?'),
+            message: plural('files.cleanup_confirm_body', days,
+                'Received files older than {count} day will be deleted from this node, about once an hour. The entries stay in the history.',
+                'Received files older than {count} days will be deleted from this node, about once an hour. The entries stay in the history.'),
+            confirmLabel: t('files.cleanup_confirm', 'Turn on'), cancelLabel: t('dialog.cancel', 'Cancel'), danger: true,
+        }) : Promise.resolve(false);
+        asked.then(function (yes) { if (yes) saveFilesSetting(name, days); else syncFilesSettings(); });
+    }
+
     // the node card's quick links (chat.js) ask for "received" / "sent" / "all"
     function setFilterCompat(direction) {
         setSegment(direction === 'received' ? 'incoming' : (direction === 'sent' ? 'sent' : 'all'));
@@ -4006,6 +4170,8 @@
         plainStatus: plainStatus,
         isExecutableName: isExecutableName,
         setSegment: setSegment,
+        syncSettings: syncFilesSettings,
+        currentSort: currentSort,
         activate: activate,
         deactivate: deactivate,
         refresh: refresh,

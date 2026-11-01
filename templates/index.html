@@ -7,14 +7,14 @@
     <meta name="csrf-token" content="{{ csrf_token }}">
     <meta name="runtime-capabilities" content="{{ runtime_capabilities }}">
     <!-- csrf.js must stay the FIRST script, in <head>, without defer/async: it wraps window.fetch, so no API request can run before the wrapper exists (tests/test_csrf_script_order.py) -->
-    <script src="{{ url_for('static', filename='csrf.js') }}?v=20261101-fx1c"></script>
+    <script src="{{ url_for('static', filename='csrf.js') }}?v=20261101-fxb4"></script>
     <title>MeshCenter</title>
     <!-- MeshCenter build: stage2c7-4-unified-popovers-20260725 -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part1.css') }}?v=20261101-fx1c">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part2.css') }}?v=20261101-fx1c">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part3.css') }}?v=20261101-fx1c">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part4.css') }}?v=20261101-fx1c">
-    <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=20261101-fx1c">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part1.css') }}?v=20261101-fxb4">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part2.css') }}?v=20261101-fxb4">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part3.css') }}?v=20261101-fxb4">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part4.css') }}?v=20261101-fxb4">
+    <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=20261101-fxb4">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 </head>
@@ -763,15 +763,31 @@
                             <span class="files-search-count files-phone-only" id="filesSearchCount" role="status" aria-live="polite"></span>
                             <button type="button" class="files-tb-btn files-phone-only" id="filesSearchClose" data-files-action="search-close" aria-label="Close search" title="Close search" data-i18n-aria-label="files.search_close" data-i18n-title="files.search_close"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
                         </div>
+                        <label class="files-sort files-desktop-only"><span data-i18n="files.sort_label">Sort by</span>
+                            <select id="filesSortSelect" data-files-sort-select aria-label="Sort by" data-i18n-aria-label="files.sort_label">
+                                <option value="newest" data-i18n="files.sort_newest">Newest first</option>
+                                <option value="oldest" data-i18n="files.sort_oldest">Oldest first</option>
+                                <option value="name" data-i18n="files.sort_name">Name</option>
+                                <option value="size" data-i18n="files.sort_size">Size, largest first</option>
+                            </select></label>
                         <button type="button" class="files-select-btn files-desktop-only" id="filesSelectBtn" data-files-action="select-mode" aria-pressed="false">
                             <span data-i18n="files.select">Select</span></button>
                         <button type="button" class="files-tb-btn files-phone-only" id="filesMoreBtn" data-files-action="more-toggle" aria-haspopup="true" aria-expanded="false" aria-label="More" title="More" data-i18n-aria-label="files.more_menu" data-i18n-title="files.more_menu"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><circle cx="5" cy="12" r="2" fill="currentColor"/><circle cx="12" cy="12" r="2" fill="currentColor"/><circle cx="19" cy="12" r="2" fill="currentColor"/></svg></button>
                         <div class="files-more-menu" id="filesMoreMenu" role="menu" hidden>
                             <button type="button" class="files-more-item" role="menuitem" data-files-action="select-mode" data-i18n="files.select">Select</button>
                             <button type="button" class="files-more-item" role="menuitem" data-files-action="refresh" data-i18n="common.refresh">Refresh</button>
+                            <div class="files-more-heading" data-i18n="files.sort_label">Sort by</div>
+                            <button type="button" class="files-more-item files-sort-item" role="menuitemradio" aria-checked="true" data-files-action="sort" data-sort="newest"><span class="files-sort-tick" aria-hidden="true"></span><span data-i18n="files.sort_newest">Newest first</span></button>
+                            <button type="button" class="files-more-item files-sort-item" role="menuitemradio" aria-checked="false" data-files-action="sort" data-sort="oldest"><span class="files-sort-tick" aria-hidden="true"></span><span data-i18n="files.sort_oldest">Oldest first</span></button>
+                            <button type="button" class="files-more-item files-sort-item" role="menuitemradio" aria-checked="false" data-files-action="sort" data-sort="name"><span class="files-sort-tick" aria-hidden="true"></span><span data-i18n="files.sort_name">Name</span></button>
+                            <button type="button" class="files-more-item files-sort-item" role="menuitemradio" aria-checked="false" data-files-action="sort" data-sort="size"><span class="files-sort-tick" aria-hidden="true"></span><span data-i18n="files.sort_size">Size, largest first</span></button>
                             <div class="files-more-use" id="filesMenuUse"></div>
                             <button type="button" class="files-more-item" role="menuitem" data-files-action="purge-received" id="filesMenuClean" data-i18n="files.clean_up">Clean up...</button>
                         </div>
+                    </div>
+                    <div class="files-filter-chip" id="filesFilterChip" hidden>
+                        <span class="files-filter-chip-text" id="filesFilterChipText"></span>
+                        <button type="button" class="files-filter-chip-x" data-files-action="clear-contact" aria-label="Show all files" title="Show all files" data-i18n-aria-label="files.filter_clear" data-i18n-title="files.filter_clear">&#10005;</button>
                     </div>
                     <div class="files-bulkbar" id="filesBulkBar" hidden>
                         <span class="files-bulk-count" id="filesBulkCount" aria-live="polite"></span>
@@ -1740,6 +1756,26 @@
                                 <button type="button" class="mc-refresh-btn" onclick="window.openFilesRelaySetupWizard()">🧭 <span data-i18n="settings.files_relay_wizard">Set up a Relay</span></button>
                                 <button type="button" class="mc-refresh-btn" onclick="window.openFilesRelayProviders()">🔌 <span data-i18n="settings.files_relay_providers">Relay providers</span></button>
                             </div>
+
+                            <div class="system-row">
+                                <span data-i18n="settings.files_auto_accept">Accept files from trusted contacts automatically</span>
+                                <label class="switch">
+                                    <input type="checkbox" id="filesAutoAccept" data-files-setting="auto_accept">
+                                    <span class="slider round"></span>
+                                </label>
+                            </div>
+                            <div class="settings-card-text" data-i18n="settings.files_auto_accept_hint">Up to 50 MB or 20 files per contact per day. More than that waits for your OK.</div>
+
+                            <div class="system-row">
+                                <label for="filesAutoCleanup" data-i18n="settings.files_auto_cleanup">Delete received files after</label>
+                                <select id="filesAutoCleanup" data-files-setting="auto_cleanup_days">
+                                    <option value="0" data-i18n="settings.files_cleanup_never">Never</option>
+                                    <option value="30">30</option>
+                                    <option value="60">60</option>
+                                    <option value="90">90</option>
+                                    <option value="180">180</option>
+                                </select>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -2508,9 +2544,9 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="/static/chart.umd.min.js"></script>
-<script src="/static/i18n.js?v=20261101-fx1c"></script>
-<script src="/static/format-size.js?v=20261101-fx1c"></script>
-<script src="/static/runtime-caps.js?v=20261101-fx1c"></script>
+<script src="/static/i18n.js?v=20261101-fxb4"></script>
+<script src="/static/format-size.js?v=20261101-fxb4"></script>
+<script src="/static/runtime-caps.js?v=20261101-fxb4"></script>
 <script>
     // Server already resolved "auto" (stored ui.language, or an
     // Accept-Language guess) to a concrete locale for <html lang> above -
@@ -2520,26 +2556,26 @@
     // weather.js is untouched until those call I18N.t()/plural() directly.
     window.I18N.init("{{ ui_language }}").then(() => window.I18N.applyStaticDom());
 </script>
-<script src="{{ url_for('static', filename='app-dialog.js') }}?v=20261101-fx1c"></script>
+<script src="{{ url_for('static', filename='app-dialog.js') }}?v=20261101-fxb4"></script>
 <script src="{{ url_for('static', filename='chat-emoji.js') }}?v=20260821-domain-split"></script>
 <script src="{{ url_for('static', filename='chat-photo.js') }}?v=20260821-domain-split"></script>
-<script src="{{ url_for('static', filename='chat-telemetry.js') }}?v=20261101-fx1c"></script>
-<script src="{{ url_for('static', filename='chat-camera.js') }}?v=20261101-fx1c"></script>
-<script src="{{ url_for('static', filename='camera-ip.js') }}?v=20261101-fx1c"></script>
-<script src="{{ url_for('static', filename='camera-ip-controls.js') }}?v=20261101-fx1c"></script>
-<script src="{{ url_for('static', filename='camera-sources.js') }}?v=20261101-fx1c"></script>
-<script src="{{ url_for('static', filename='camera-diag.js') }}?v=20261101-fx1c"></script>
-<script src="{{ url_for('static', filename='chat-map.js') }}?v=20261101-fx1c"></script>
-<script src="{{ url_for('static', filename='chat-updates-security.js') }}?v=20261101-fx1c"></script>
-<script src="{{ url_for('static', filename='targets.js') }}?v=20261101-fx1c"></script>
-<script src="/static/recipient-picker.js?v=20261101-fx1c"></script>
-<script src="/static/files.js?v=20261101-fx1c"></script>
-<script src="/static/vault-ui.js?v=20261101-fx1c"></script>
-<script src="{{ url_for('static', filename='chat-views.js') }}?v=20261101-fx1c"></script>
-<script src="/static/chat.js?v=20261101-fx1c"></script>
-<script src="/static/mobile-layout.js?v=20261101-fx1c"></script>
-<script src="/static/media-views.js?v=20261101-fx1c"></script>
-<script src="/static/media.js?v=20261101-fx1c"></script>
+<script src="{{ url_for('static', filename='chat-telemetry.js') }}?v=20261101-fxb4"></script>
+<script src="{{ url_for('static', filename='chat-camera.js') }}?v=20261101-fxb4"></script>
+<script src="{{ url_for('static', filename='camera-ip.js') }}?v=20261101-fxb4"></script>
+<script src="{{ url_for('static', filename='camera-ip-controls.js') }}?v=20261101-fxb4"></script>
+<script src="{{ url_for('static', filename='camera-sources.js') }}?v=20261101-fxb4"></script>
+<script src="{{ url_for('static', filename='camera-diag.js') }}?v=20261101-fxb4"></script>
+<script src="{{ url_for('static', filename='chat-map.js') }}?v=20261101-fxb4"></script>
+<script src="{{ url_for('static', filename='chat-updates-security.js') }}?v=20261101-fxb4"></script>
+<script src="{{ url_for('static', filename='targets.js') }}?v=20261101-fxb4"></script>
+<script src="/static/recipient-picker.js?v=20261101-fxb4"></script>
+<script src="/static/files.js?v=20261101-fxb4"></script>
+<script src="/static/vault-ui.js?v=20261101-fxb4"></script>
+<script src="{{ url_for('static', filename='chat-views.js') }}?v=20261101-fxb4"></script>
+<script src="/static/chat.js?v=20261101-fxb4"></script>
+<script src="/static/mobile-layout.js?v=20261101-fxb4"></script>
+<script src="/static/media-views.js?v=20261101-fxb4"></script>
+<script src="/static/media.js?v=20261101-fxb4"></script>
 <script src="/static/weather.js?v=20260815-weather-provider"></script>
 
 <div class="modal-overlay" id="wifiConnectModal" style="display:none;" onclick="closeWifiConnectModal()">

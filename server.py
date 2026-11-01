@@ -10133,6 +10133,7 @@ def start_runtime():
             DATA_DIR, transport_router, MCA_CONTROL_CHANNEL_INDEX,
             contact_exists=lambda contact_id: mca_key_request_retry.node_known(contact_id, list(nodes)),  # a removed node ends its KEY_REQUEST retries
             offer_linked=_link_offer_to_chat,
+            files_settings=lambda: (settings.get("files") if isinstance(settings, dict) else None) or {},
         )
     except Exception as e:
         print(f"[MCA] failed to start AttachmentsService: {e}", flush=True)

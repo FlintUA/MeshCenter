@@ -333,7 +333,7 @@ class _MCARuntimeState:
 
     def ensure_service(
         self, radio_transport: RadioTransport, control_channel_index: Optional[int] = None, contact_exists=None,
-        offer_linked=None,
+        offer_linked=None, files_settings=None,
     ) -> AttachmentsService:
         """ADR-0008 decision 1's five-step startup sequence, steps 2-4
         (step 1, migrate(), already happened in __init__ above). Building
@@ -357,11 +357,11 @@ class _MCARuntimeState:
         radio listener's own hot path.
         """
         with _lock:
-            return self._ensure_service_locked(radio_transport, control_channel_index, contact_exists, offer_linked)
+            return self._ensure_service_locked(radio_transport, control_channel_index, contact_exists, offer_linked, files_settings)
 
     def _ensure_service_locked(
         self, radio_transport: RadioTransport, control_channel_index: Optional[int] = None, contact_exists=None,
-        offer_linked=None,
+        offer_linked=None, files_settings=None,
     ) -> AttachmentsService:
         if self.service is not None:
             return self.service
@@ -382,6 +382,7 @@ class _MCARuntimeState:
             delivery_adapter=adapter,
             contact_exists_fn=contact_exists,
             offer_linked_fn=offer_linked,
+            files_settings_fn=files_settings,
             vault=self.vault,
             # Finding 2 (control-channel correction): thread the configured
             # index into the service so inbound-channel observability can
@@ -471,7 +472,7 @@ def _get_state(data_dir: str) -> "_MCARuntimeState":
 
 def start_attachments_service(
     data_dir: str, radio_transport: RadioTransport, control_channel_index: Optional[int] = None, contact_exists=None,
-    offer_linked=None,
+    offer_linked=None, files_settings=None,
 ) -> None:
     """Called once from server.py's `start_runtime()`, alongside its
     existing `threading.Thread(target=..., daemon=True).start()` calls
@@ -500,7 +501,7 @@ def start_attachments_service(
         unlock_file.maybe_unlock(state.vault, _vault_log)
     except Exception:  # noqa: BLE001 - the unattended unlock is a convenience: it must never keep MCAttach from starting
         logger.exception("MCAttach unlock file: unexpected failure")
-    state.ensure_service(radio_transport, control_channel_index, contact_exists, offer_linked)
+    state.ensure_service(radio_transport, control_channel_index, contact_exists, offer_linked, files_settings)
 
 
 def get_data_dir():

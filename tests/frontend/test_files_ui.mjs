@@ -1049,22 +1049,31 @@ async function test_send_file_feedback_shows_mime() {
     dispatchChange(sandbox, 'filesSendFile');
     assert.match(feedback(), /image\/png/, 'an allowlisted MIME must allow an extensionless file');
 
-    // Unknown extension + unknown MIME -> hard local rejection (F1).
+    // FX1 Phase B: ANY type can be sent - an unknown extension and an unknown MIME are fine
     fileInput.files = [{ name: 'archive.bin', size: 128, type: 'application/octet-stream' }];
     dispatchChange(sandbox, 'filesSendFile');
-    assert.match(feedback(), /File type is not allowed/, 'an unallowlisted type must be rejected with feedback');
+    assert.doesNotMatch(feedback(), /not allowed|empty/, 'any file type can be sent');
+    assert.match(feedback(), /Size/, 'its size is shown');
+    for (const name of ['setup.exe', 'run.sh', 'photo.heic', 'bundle.zip', 'index.html']) {
+        fileInput.files = [{ name, size: 1000, type: '' }];
+        dispatchChange(sandbox, 'filesSendFile');
+        assert.doesNotMatch(feedback(), /not allowed|empty/, name + ' can be sent');
+    }
 
-    // Rejected -> allowed clears the stale error.
+    // only an empty file is refused, and the message clears when a real file is chosen
+    fileInput.files = [{ name: 'nothing.txt', size: 0, type: 'text/plain' }];
+    dispatchChange(sandbox, 'filesSendFile');
+    assert.match(feedback(), /This file is empty/, 'an empty file has nothing to send');
     fileInput.files = [{ name: 'report.pdf', size: 4096, type: 'application/pdf' }];
     dispatchChange(sandbox, 'filesSendFile');
-    assert.doesNotMatch(feedback(), /not allowed/, 'selecting an allowed file must clear a stale rejection');
+    assert.doesNotMatch(feedback(), /empty/, 'selecting a real file must clear a stale message');
 
     console.log('PASS: test_send_file_feedback_shows_mime');
 }
 
 async function test_send_rejects_disallowed_file_blocks_requests() {
-    // F1: a disallowed file is rejected locally before any readiness or create
-    // request is issued.
+    // FX1 Phase B: only an EMPTY file is refused locally, before any readiness or create request is issued; every other
+    // type goes through.
     let readinessCalls = 0;
     const sandbox = buildSandbox({
         fetchImpl: defaultRoutes(async (url) => {
@@ -1076,17 +1085,17 @@ async function test_send_rejects_disallowed_file_blocks_requests() {
         }),
     });
 
-    prepareSendForm(sandbox, { fileName: 'archive.bin', mime: 'application/octet-stream' });
+    prepareSendForm(sandbox, { fileName: 'nothing.txt', mime: 'text/plain', size: 0 });
     dispatch(sandbox, { 'data-files-action': 'send-submit' });
     await new Promise((r) => setTimeout(r, 30));
 
     assert.equal(
         sandbox._document.getElementById('filesSendFileFeedback').textContent,
-        'File type is not allowed',
-        'a disallowed file must be rejected with localized feedback',
+        'This file is empty',
+        'an empty file must be refused with localized feedback',
     );
-    assert.equal(createRequests(sandbox).length, 0, 'a disallowed file must block the create POST');
-    assert.equal(readinessCalls, 0, 'a disallowed file must block the readiness request');
+    assert.equal(createRequests(sandbox).length, 0, 'an empty file must block the create POST');
+    assert.equal(readinessCalls, 0, 'an empty file must block the readiness request');
 
     console.log('PASS: test_send_rejects_disallowed_file_blocks_requests');
 }
@@ -2808,6 +2817,157 @@ async function test_fx1_phone_toolbar_search_more_menu_and_card_expansion() {
     console.log('PASS: test_fx1_phone_toolbar_search_more_menu_and_card_expansion');
 }
 
+async function test_fx1b_a_held_offer_says_why_and_the_files_settings_are_saved() {
+    // a trusted contact over the daily quota: not a failure, the card says why and offers Download
+    const list = [attachment('q1', 'received', 'WAITING_CONSENT', { error_code: 'auto_accept_quota' })];
+    const sandbox = sandboxWithViews(listRoutes(list));
+    activate(sandbox);
+    await waitFor(() => listHtml(sandbox).includes('filesCard-q1'));
+    const html = listHtml(sandbox);
+    assert.match(html, /Not downloaded automatically/, 'the reason is on the card');
+    assert.match(html, /attach-download/, 'with the Download action');
+    assert.doesNotMatch(html, /Not received/, 'it is not shown as a failure');
+    assert.equal(sandbox.window.MeshCenterFiles.plainStatus(list[0]).key, 'waiting_ok');
+
+    // Settings > Files: the toggle saves one files section
+    const settingsSandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => (url === '/api/settings' ? json(200, { ok: true, settings: { files: {} } }) : undefined)),
+    });
+    const posts = () => settingsSandbox._fetchLog
+        .filter((e) => e.url === '/api/settings' && e.options && e.options.method === 'POST')
+        .map((e) => JSON.parse(e.options.body));
+    const change = (target) => { for (const fn of settingsSandbox._document.listeners.change || []) fn({ target }); };
+    const toggle = new FakeElement('input');
+    toggle.setAttribute('data-files-setting', 'auto_accept');
+    toggle.checked = false;
+    change(toggle);
+    await waitFor(() => posts().length === 1);
+    assert.deepEqual(posts()[0], { files: { auto_accept: false } });
+
+    // a cleanup period is a decision: it asks once, Cancel saves nothing
+    const asked = [];
+    settingsSandbox.window.MCDialog = { confirm: async (o) => { asked.push(o); return false; }, prompt: async () => null };
+    const select = new FakeElement('select');
+    select.setAttribute('data-files-setting', 'auto_cleanup_days');
+    select.value = '60';
+    change(select);
+    await waitFor(() => asked.length === 1);
+    await new Promise((r) => setTimeout(r, 30));
+    assert.equal(asked[0].danger, true);
+    assert.equal(posts().length, 1, 'Cancel saves nothing');
+    settingsSandbox.window.MCDialog = { confirm: async () => true, prompt: async () => null };
+    change(select);
+    await waitFor(() => posts().length === 2);
+    assert.deepEqual(posts()[1], { files: { auto_cleanup_days: 60 } });
+    console.log('PASS: test_fx1b_a_held_offer_says_why_and_the_files_settings_are_saved');
+}
+
+async function test_fx1b_the_list_sorts_newest_first_by_default_and_by_choice() {
+    const now = Math.floor(Date.now() / 1000);
+    const day = 86400;
+    const list = [
+        attachment('mid', 'received', 'AVAILABLE', { file_name: 'beta.pdf', plain_size: 500, created_at: now - 60 }),
+        attachment('new', 'sent', 'SENT', { file_name: 'Zulu.txt', plain_size: 100, created_at: now - 30 }),
+        attachment('old', 'received', 'AVAILABLE', { file_name: 'alpha.pdf', plain_size: 9000, created_at: now - 3 * day }),
+        attachment('mid2', 'sent', 'DOWNLOADED', { file_name: 'beta.pdf', plain_size: 500, created_at: now - day - 60 }),
+    ];
+    const posts = [];
+    const sandbox = sandboxWithViews(listRoutes(list, async (url) => (url === '/api/settings' ? json(200, { ok: true, settings: { files: {} } }) : undefined)));
+    activate(sandbox);
+    await waitFor(() => listHtml(sandbox).includes('filesCard-old'));
+    const order = () => [...listHtml(sandbox).matchAll(/id="filesCard-([a-z0-9]+)"/g)].map((m) => m[1]);
+    const days = () => (listHtml(sandbox).match(/<div class="files-day">([^<]*)<\/div>/g) || []).map((x) => x.replace(/<[^>]+>/g, ''));
+    const postsOf = () => sandbox._fetchLog.filter((e) => e.url === '/api/settings' && e.options && e.options.method === 'POST').map((e) => JSON.parse(e.options.body));
+    const choose = (sort) => dispatch(sandbox, { 'data-files-action': 'sort', 'data-sort': sort });
+
+    assert.deepEqual(order(), ['new', 'mid', 'mid2', 'old'], 'newest first by default');
+    assert.equal(days()[0], 'Today', 'with date groups');
+
+    choose('oldest');
+    assert.deepEqual(order(), ['old', 'mid2', 'mid', 'new'], 'oldest first');
+    assert.equal(days().length > 0 && days()[days().length - 1], 'Today', 'the date groups follow the order (today is last)');
+
+    choose('name');
+    assert.deepEqual(order(), ['old', 'mid', 'mid2', 'new'], 'by name, case-insensitive, ties newest first');
+    assert.equal(days().length, 0, 'no date groups when sorting by name');
+
+    choose('size');
+    assert.deepEqual(order(), ['old', 'mid', 'mid2', 'new'], 'by size, largest first, ties newest first');
+    assert.equal(days().length, 0, 'no date groups when sorting by size');
+
+    // remembered per kind of device (the sandbox is a desktop)
+    await waitFor(() => postsOf().length === 3);
+    assert.deepEqual(postsOf().map((b) => b.files), [{ sort_desktop: 'oldest' }, { sort_desktop: 'name' }, { sort_desktop: 'size' }],
+        'each choice is saved, for a desktop under its own key only');
+    choose('bogus');
+    assert.equal(postsOf().length, 3, 'an unknown sort is ignored and not saved');
+    assert.deepEqual(order(), ['old', 'mid', 'mid2', 'new']);
+
+    // the menu marks the active choice
+    assert.equal(sandbox.window.MeshCenterFiles.currentSort(), 'size');
+    console.log('PASS: test_fx1b_the_list_sorts_newest_first_by_default_and_by_choice');
+}
+
+async function test_fx1b_a_conversation_is_newest_first_too_and_the_saved_sort_is_restored() {
+    const now = Math.floor(Date.now() / 1000);
+    const list = [
+        attachment('c1', 'received', 'AVAILABLE', { created_at: now - 7200, counterparty_contact_id: '!22222222' }),
+        attachment('c2', 'sent', 'SENT', { created_at: now - 60, counterparty_contact_id: '!22222222' }),
+    ];
+    const sandbox = sandboxWithViews(listRoutes(list));
+    sandbox.appSettings = { files: { sort_desktop: 'oldest', sort_phone: 'name' } };
+    sandbox.window.MeshCenterTargets = null;
+    activate(sandbox);
+    await waitFor(() => listHtml(sandbox).includes('filesCard-c2'));
+    assert.equal(sandbox.window.MeshCenterFiles.currentSort(), 'oldest', 'the saved desktop sort is restored');
+
+    const fresh = sandboxWithViews(listRoutes(list));
+    activate(fresh);
+    await waitFor(() => listHtml(fresh).includes('filesCard-c2'));
+    assert.equal(fresh.window.MeshCenterFiles.currentSort(), 'newest', 'newest first when nothing was saved');
+    const html = listHtml(fresh);
+    assert.ok(html.indexOf('filesCard-c2') < html.indexOf('filesCard-c1'), 'a conversation lists the newest first as well');
+    console.log('PASS: test_fx1b_a_conversation_is_newest_first_too_and_the_saved_sort_is_restored');
+}
+
+async function test_fx1b_a_selected_contact_shows_a_filter_chip_and_the_x_shows_everything() {
+    const cps = [];
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/contacts') return json(200, { ok: true, contacts: [contact('!aaaaaaaa', 'trusted')] });
+            if (url.startsWith('/api/attachments?')) {
+                const cp = new URL(url, 'http://x').searchParams.get('counterparty');
+                cps.push(cp);
+                const all = [attachment('a1', 'sent', 'SENT', { counterparty_contact_id: '!aaaaaaaa' }), attachment('a2', 'received', 'AVAILABLE', { counterparty_contact_id: '!bbbbbbbb' })];
+                const list = cp ? all.filter((a) => a.counterparty_contact_id === cp) : all;
+                return json(200, { ok: true, attachments: list, total: list.length });
+            }
+            return undefined;
+        }),
+    });
+    const hidden = (id) => { const el = sandbox._document.getElementById(id); return el.hidden !== undefined ? el.hidden : el.style.display === 'none'; };
+    activate(sandbox);
+    await waitFor(() => listHtml(sandbox).includes('filesCard-a2'));
+    assert.equal(hidden('filesFilterChip'), true, 'no contact selected: no chip');
+    assert.equal(sandbox._document.getElementById('filesCount_all').textContent, '2');
+
+    sandbox.window.MeshCenterTargets.toggleSelect('node', '!aaaaaaaa');
+    await waitFor(() => cps.includes('!aaaaaaaa'));
+    await waitFor(() => !listHtml(sandbox).includes('filesCard-a2'));
+    assert.equal(hidden('filesFilterChip'), false, 'a contact is selected: the chip is shown');
+    assert.match(sandbox._document.getElementById('filesFilterChipText').textContent, /^Only: .*aaaaaaaa/, 'it names the contact');
+    assert.equal(sandbox._document.getElementById('filesCount_all').textContent, '1', 'the counters are for that contact');
+    assert.match(sandbox._document.getElementById('filesSeg_all').getAttribute('title'), /Counts for .* only/, 'and say so');
+
+    // the x clears the contact filter: all files again, no chip
+    dispatch(sandbox, { 'data-files-action': 'clear-contact' });
+    await waitFor(() => listHtml(sandbox).includes('filesCard-a2'));
+    assert.equal(hidden('filesFilterChip'), true, 'the chip is gone');
+    assert.equal(sandbox._document.getElementById('filesCount_all').textContent, '2', 'the counters are for everything again');
+    assert.equal(cps[cps.length - 1], null, 'the last request carries no counterparty');
+    console.log('PASS: test_fx1b_a_selected_contact_shows_a_filter_chip_and_the_x_shows_everything');
+}
+
 // ---- MCA-UX2: Accept needs no second confirmation, Reject asks once -----------------------------------------------
 
 function consentRoutes() {
@@ -2935,10 +3095,14 @@ async function main() {
     await test_fx1_executable_download_asks_first();
     await test_fx1_waiting_card_says_how_long_the_link_stays_valid();
     await test_fx1_phone_toolbar_search_more_menu_and_card_expansion();
+    await test_fx1b_a_held_offer_says_why_and_the_files_settings_are_saved();
+    await test_fx1b_the_list_sorts_newest_first_by_default_and_by_choice();
+    await test_fx1b_a_conversation_is_newest_first_too_and_the_saved_sort_is_restored();
+    await test_fx1b_a_selected_contact_shows_a_filter_chip_and_the_x_shows_everything();
     // MCA-UX2
     await test_accept_and_download_sends_at_once_without_a_confirm_dialog();
     await test_reject_asks_once_with_a_danger_dialog_and_cancel_sends_nothing();
-    console.log('All files UI behavior tests passed (69 scenarios).');
+    console.log('All files UI behavior tests passed (73 scenarios).');
 }
 
 main()

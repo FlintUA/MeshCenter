@@ -10,6 +10,9 @@ import re
 from meshsrv.radio_endpoint import DEFAULT_TCP_PORT
 
 
+FILES_SORT_CHOICES = ("newest", "oldest", "name", "size")
+FILES_CLEANUP_CHOICES = (0, 30, 60, 90, 180)   # days a received copy is kept; 0 = keep until deleted
+
 DEFAULT_SETTINGS = {
     # "auto" resolves from the browser's language client-side; an explicit
     # value overrides that. See static/i18n.js for the supported locale list.
@@ -75,6 +78,16 @@ DEFAULT_SETTINGS = {
         "favorites_only_desktop": None,
         "favorites_only_mobile": None,
         "recent": [],
+    },
+
+    "files": {
+        # FX1 Phase B: download offers from trusted contacts without a tap (inside a per-sender quota); delete received
+        # copies older than N days (0 = never, the default).
+        "auto_accept": True,
+        "auto_cleanup_days": 0,
+        # how the Files list is sorted, remembered for a desktop and for a phone separately
+        "sort_desktop": "newest",
+        "sort_phone": "newest",
     },
 
     "timers": {
@@ -512,6 +525,24 @@ def normalize_settings(settings):
             if len(recent_recipients) >= RECIPIENT_RECENT_MAX:
                 break
 
+    # ---------------- Files (FX1 Phase B) ----------------
+
+    files_raw = settings.get("files", {})
+    if not isinstance(files_raw, dict):
+        files_raw = {}
+    files_auto_accept = files_raw.get("auto_accept", True)
+    files_auto_accept = files_auto_accept if isinstance(files_auto_accept, bool) else True
+    try:
+        files_cleanup_days = int(files_raw.get("auto_cleanup_days", 0))
+    except (TypeError, ValueError):
+        files_cleanup_days = 0
+    if files_cleanup_days not in FILES_CLEANUP_CHOICES:
+        files_cleanup_days = 0
+    files_sort = {}
+    for key in ("sort_desktop", "sort_phone"):
+        value = files_raw.get(key, "newest")
+        files_sort[key] = value if value in FILES_SORT_CHOICES else "newest"
+
     # ---------------- Timer form defaults ----------------
 
     timer_settings = settings.get("timers", {})
@@ -673,6 +704,13 @@ def normalize_settings(settings):
             "favorites_only_desktop": _optional_bool(send_recipients_raw.get("favorites_only_desktop")),
             "favorites_only_mobile": _optional_bool(send_recipients_raw.get("favorites_only_mobile")),
             "recent": recent_recipients,
+        },
+
+        "files": {
+            "auto_accept": files_auto_accept,
+            "auto_cleanup_days": files_cleanup_days,
+            "sort_desktop": files_sort["sort_desktop"],
+            "sort_phone": files_sort["sort_phone"],
         },
 
         "timers": {

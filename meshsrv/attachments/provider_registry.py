@@ -121,6 +121,37 @@ class ProviderProfile:
     last_check_result: Optional[str] = None
     last_latency_ms: Optional[int] = None
     last_error_code: Optional[str] = None
+    # FX1 Phase B (migration 19): the effective limits above are the stricter of the relay's own published limits and the
+    # user's own; the two sources are kept apart so a relay refresh never overwrites a limit the user chose.
+    relay_max_ciphertext_bytes: Optional[int] = None
+    relay_min_ttl_seconds: Optional[int] = None
+    relay_max_ttl_seconds: Optional[int] = None
+    user_max_ciphertext_bytes: Optional[int] = None
+    user_min_ttl_seconds: Optional[int] = None
+    user_max_ttl_seconds: Optional[int] = None
+
+
+def effective_limits(
+    *,
+    relay_max_bytes: Optional[int], relay_min_ttl: Optional[int], relay_max_ttl: Optional[int],
+    user_max_bytes: Optional[int], user_min_ttl: Optional[int], user_max_ttl: Optional[int],
+):
+    """The stricter of the relay's limits and the user's: the smaller maximum (size, TTL), the larger minimum TTL. A minimum
+    that ends up above the maximum is dropped (the maximum is what keeps a transfer valid)."""
+    def _smallest(*values):
+        present = [v for v in values if v is not None]
+        return min(present) if present else None
+
+    def _largest(*values):
+        present = [v for v in values if v is not None]
+        return max(present) if present else None
+
+    max_bytes = _smallest(relay_max_bytes, user_max_bytes)
+    max_ttl = _smallest(relay_max_ttl, user_max_ttl)
+    min_ttl = _largest(relay_min_ttl, user_min_ttl)
+    if min_ttl is not None and max_ttl is not None and min_ttl > max_ttl:
+        min_ttl = None
+    return max_bytes, min_ttl, max_ttl
 
 
 def _b64url_encode(data: bytes) -> str:
@@ -274,6 +305,12 @@ def _row_to_profile(row: sqlite3.Row) -> ProviderProfile:
         last_check_result=(row["last_check_result"] if "last_check_result" in row_keys else None),
         last_latency_ms=(row["last_latency_ms"] if "last_latency_ms" in row_keys else None),
         last_error_code=(row["last_error_code"] if "last_error_code" in row_keys else None),
+        relay_max_ciphertext_bytes=(row["relay_max_ciphertext_bytes"] if "relay_max_ciphertext_bytes" in row_keys else None),
+        relay_min_ttl_seconds=(row["relay_min_ttl_seconds"] if "relay_min_ttl_seconds" in row_keys else None),
+        relay_max_ttl_seconds=(row["relay_max_ttl_seconds"] if "relay_max_ttl_seconds" in row_keys else None),
+        user_max_ciphertext_bytes=(row["user_max_ciphertext_bytes"] if "user_max_ciphertext_bytes" in row_keys else None),
+        user_min_ttl_seconds=(row["user_min_ttl_seconds"] if "user_min_ttl_seconds" in row_keys else None),
+        user_max_ttl_seconds=(row["user_max_ttl_seconds"] if "user_max_ttl_seconds" in row_keys else None),
     )
 
 
@@ -301,6 +338,7 @@ class ProviderRegistry:
         max_ttl_seconds: Optional[int] = None,
         protocol_version: Optional[str] = None,
         now: Optional[float] = None,
+        relay_max_ciphertext_bytes: Optional[int] = None,
     ) -> ProviderProfile:
         """Store a provider profile whose trust was already established by
         the caller through one of the three MVP bootstrap paths (module
@@ -337,6 +375,10 @@ class ProviderRegistry:
         _validate_protocol_version(protocol_version)
         provider_id = compute_provider_id(origin, service_public_key)
         now = time.time() if now is None else now
+        # FX1 Phase B: the values passed here are the relay's own, except a `max_ciphertext_bytes` below the relay's
+        # `relay_max_ciphertext_bytes`, which is the user's deliberately lower size limit.
+        relay_bytes = relay_max_ciphertext_bytes if relay_max_ciphertext_bytes is not None else max_ciphertext_bytes
+        user_bytes = max_ciphertext_bytes if max_ciphertext_bytes < relay_bytes else None
 
         # Step 1.6A.4: enforce MAX_PROVIDER_PROFILES in the *same* transaction
         # as the INSERT, so the count-check and the write can never be observed
@@ -366,8 +408,10 @@ class ProviderRegistry:
                     (provider_id, workspace_id, origin, service_public_key_b64url,
                      max_ciphertext_bytes, hard_expiry_default_seconds, is_default, added_at,
                      display_name, tls_required, upload_allowed, download_allowed,
-                     kind, min_ttl_seconds, max_ttl_seconds, protocol_version)
-                VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, 1, ?, ?, ?, ?, ?, ?)
+                     kind, min_ttl_seconds, max_ttl_seconds, protocol_version,
+                     relay_max_ciphertext_bytes, relay_min_ttl_seconds, relay_max_ttl_seconds, user_max_ciphertext_bytes,
+                     user_min_ttl_seconds, user_max_ttl_seconds)
+                VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
                 ON CONFLICT(provider_id) DO UPDATE SET
                     display_name = excluded.display_name,
                     max_ciphertext_bytes = excluded.max_ciphertext_bytes,
@@ -376,7 +420,13 @@ class ProviderRegistry:
                     kind = excluded.kind,
                     min_ttl_seconds = excluded.min_ttl_seconds,
                     max_ttl_seconds = excluded.max_ttl_seconds,
-                    protocol_version = excluded.protocol_version
+                    protocol_version = excluded.protocol_version,
+                    relay_max_ciphertext_bytes = excluded.relay_max_ciphertext_bytes,
+                    relay_min_ttl_seconds = excluded.relay_min_ttl_seconds,
+                    relay_max_ttl_seconds = excluded.relay_max_ttl_seconds,
+                    user_max_ciphertext_bytes = excluded.user_max_ciphertext_bytes,
+                    user_min_ttl_seconds = NULL,
+                    user_max_ttl_seconds = NULL
                 """,
                 (
                     provider_id,
@@ -393,6 +443,10 @@ class ProviderRegistry:
                     min_ttl_seconds,
                     max_ttl_seconds,
                     protocol_version,
+                    relay_bytes,
+                    min_ttl_seconds,
+                    max_ttl_seconds,
+                    user_bytes,
                 ),
             )
         if is_default:
@@ -465,11 +519,21 @@ class ProviderRegistry:
                 return None
             return value
 
-        effective_min_ttl = _resolve(min_ttl_seconds, existing.min_ttl_seconds)
-        effective_max_ttl = _resolve(max_ttl_seconds, existing.max_ttl_seconds)
-        _validate_ttl_pair(effective_min_ttl, effective_max_ttl)
+        # FX1 Phase B: what the user edits here is the user's OWN limit (kept apart from the relay's published one); the
+        # effective column every consumer reads is the stricter of the two.
+        user_min = _resolve(min_ttl_seconds, existing.user_min_ttl_seconds)
+        user_max = _resolve(max_ttl_seconds, existing.user_max_ttl_seconds)
+        _validate_ttl_pair(user_min, user_max)
         effective_protocol_version = _resolve(protocol_version, existing.protocol_version)
         _validate_protocol_version(effective_protocol_version)
+        effective_max_bytes, effective_min_ttl, effective_max_ttl = effective_limits(
+            relay_max_bytes=existing.relay_max_ciphertext_bytes, relay_min_ttl=existing.relay_min_ttl_seconds,
+            relay_max_ttl=existing.relay_max_ttl_seconds, user_max_bytes=existing.user_max_ciphertext_bytes,
+            user_min_ttl=user_min, user_max_ttl=user_max,
+        )
+        # an edit must not produce a minimum above the stricter maximum (effective_limits would silently drop it)
+        minimums = [v for v in (existing.relay_min_ttl_seconds, user_min) if v is not None]
+        _validate_ttl_pair(max(minimums) if minimums else None, effective_max_ttl)
 
         self._conn.execute(
             """
@@ -480,6 +544,8 @@ class ProviderRegistry:
                 download_allowed = COALESCE(?, download_allowed),
                 min_ttl_seconds = ?,
                 max_ttl_seconds = ?,
+                user_min_ttl_seconds = ?,
+                user_max_ttl_seconds = ?,
                 protocol_version = ?
             WHERE workspace_id = ? AND provider_id = ?
             """,
@@ -490,6 +556,8 @@ class ProviderRegistry:
                 None if download_allowed is None else int(download_allowed),
                 effective_min_ttl,
                 effective_max_ttl,
+                user_min,
+                user_max,
                 effective_protocol_version,
                 self._workspace_id,
                 provider_id,
@@ -506,11 +574,11 @@ class ProviderRegistry:
         min_ttl_seconds: Optional[int],
         max_ttl_seconds: Optional[int],
     ) -> bool:
-        """FX1: follow the limits the relay itself publishes in `/v1/info` (they were copied once at registration and went
-        stale when the operator changed the relay). Called by `ConnectivityMonitor` after a verified `/v1/info` read, so
-        every provider check (the periodic one and the manual Check button) refreshes them. A value the relay does not
-        publish (or an invalid one) leaves the stored value alone; a relay maximum below the stored minimum clears the
-        stored minimum instead of failing. Returns True when something changed."""
+        """FX1: follow the limits the relay itself publishes in `/v1/info`. Called by `ConnectivityMonitor` after a verified
+        `/v1/info` read, so every provider check (the periodic one and the manual Check button) refreshes them. Only the
+        relay's own values (`relay_*`) change; a limit the user chose (`user_*`) is never touched, and the effective value
+        every consumer reads is the stricter of the two. A value the relay does not publish (or an invalid one) leaves the
+        stored relay value alone. Returns True when the effective limits changed."""
         existing = self.resolve(provider_id)
         if existing is None:
             return False
@@ -518,17 +586,27 @@ class ProviderRegistry:
         def _positive(value):
             return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
 
-        new_bytes = _positive(max_ciphertext_bytes) or existing.max_ciphertext_bytes
-        new_max = _positive(max_ttl_seconds) or existing.max_ttl_seconds
-        new_min = _positive(min_ttl_seconds) or existing.min_ttl_seconds
-        if new_min is not None and new_max is not None and new_min > new_max:
-            new_min = _positive(min_ttl_seconds) and None
-        if (new_bytes, new_min, new_max) == (existing.max_ciphertext_bytes, existing.min_ttl_seconds, existing.max_ttl_seconds):
+        relay_bytes = _positive(max_ciphertext_bytes) or existing.relay_max_ciphertext_bytes
+        relay_max = _positive(max_ttl_seconds) or existing.relay_max_ttl_seconds
+        relay_min = _positive(min_ttl_seconds) or existing.relay_min_ttl_seconds
+        new_bytes, new_min, new_max = effective_limits(
+            relay_max_bytes=relay_bytes, relay_min_ttl=relay_min, relay_max_ttl=relay_max,
+            user_max_bytes=existing.user_max_ciphertext_bytes, user_min_ttl=existing.user_min_ttl_seconds,
+            user_max_ttl=existing.user_max_ttl_seconds,
+        )
+        if new_bytes is None:
+            new_bytes = existing.max_ciphertext_bytes
+        stored = (
+            existing.relay_max_ciphertext_bytes, existing.relay_min_ttl_seconds, existing.relay_max_ttl_seconds,
+            existing.max_ciphertext_bytes, existing.min_ttl_seconds, existing.max_ttl_seconds,
+        )
+        if (relay_bytes, relay_min, relay_max, new_bytes, new_min, new_max) == stored:
             return False
         self._conn.execute(
-            "UPDATE mca_provider_profiles SET max_ciphertext_bytes = ?, min_ttl_seconds = ?, max_ttl_seconds = ? "
+            "UPDATE mca_provider_profiles SET relay_max_ciphertext_bytes = ?, relay_min_ttl_seconds = ?, "
+            "relay_max_ttl_seconds = ?, max_ciphertext_bytes = ?, min_ttl_seconds = ?, max_ttl_seconds = ? "
             "WHERE workspace_id = ? AND provider_id = ?",
-            (new_bytes, new_min, new_max, self._workspace_id, provider_id),
+            (relay_bytes, relay_min, relay_max, new_bytes, new_min, new_max, self._workspace_id, provider_id),
         )
         self._conn.commit()
         return True

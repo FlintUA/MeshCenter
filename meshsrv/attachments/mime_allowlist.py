@@ -1,12 +1,21 @@
 """meshsrv/attachments/mime_allowlist.py
 
-MVP MIME allowlist (design spec section 20.2: "JPEG, PNG, WebP" explicit,
-plus PDF/TXT/LOG/CSV/JSON named in the Execution Plan's Step 0.6 summary of
-that section). This is an allowlist, not a denylist: anything not listed
-here is rejected, including every other image/video/audio/archive type,
-even common-and-usually-safe ones - MVP scope is deliberately narrow.
+FX1 Phase B: ANY file type can be sent (the sender-side allowlist is gone). What stays is what the old allowlist was really
+for - safety:
 
-This module only says which MIME types/extensions are *permitted*; it is
+* the MIME type is derived from the CONTENT (magic bytes), never from the name or a browser header; a file that is not one
+  of the known types is `application/octet-stream`;
+* only a verified JPEG, PNG or WebP is ever shown inline (a preview / a thumbnail); every other file, including HTML, SVG,
+  PDF and scripts, is served as a download (`application/octet-stream`, `nosniff`, `sandbox`), so active content is never
+  rendered by MeshCenter;
+* nothing is executed or unpacked, whatever the type (an archive is just bytes);
+* the display name is sanitized (basename only, printable characters only) and a downloaded executable asks first.
+
+`ALLOWED_MIME_TYPES` / `ALLOWED_EXTENSIONS` are now just the KNOWN types: they pick the preview and the text/JSON
+detection, they no longer reject anything.
+
+Historical note (design spec section 20.2 "JPEG, PNG, WebP" plus PDF/TXT/LOG/CSV/JSON). This module only says which MIME
+types/extensions are *known*; it is
 not itself the MIME-sniffing step (design spec section 20.1, "MIME
 spoofing" row: "Magic-byte sniff, extension не является источником
 доверия") - a later step must derive `mime_type` from real content
@@ -87,6 +96,30 @@ def sniff_mime_type(head_bytes: bytes) -> Optional[str]:
     if b"," in head_bytes.split(b"\n", 1)[0]:
         return "text/csv"
     return "text/plain"
+
+
+GENERIC_MIME_TYPE = "application/octet-stream"
+
+
+def detect_mime_type(head_bytes: bytes, *, text_clean: bool = True) -> str:
+    """The MIME type recorded for a file to send: one of the known types when the content proves it, else
+    `application/octet-stream`. `text_clean` is the whole-stream result of `TextStreamValidator` (a text type is only
+    claimed when the WHOLE file is clean UTF-8 without a NUL byte, not just its first bytes)."""
+    sniffed = sniff_mime_type(head_bytes)
+    if sniffed is None:
+        return GENERIC_MIME_TYPE
+    if sniffed in TEXT_FAMILY_MIME_TYPES and (not text_clean or _has_binary_control_bytes(head_bytes)):
+        return GENERIC_MIME_TYPE
+    return sniffed
+
+
+_TEXT_CONTROL_OK = frozenset(b"\t\n\r\x0c\x1b")
+
+
+def _has_binary_control_bytes(head_bytes: bytes) -> bool:
+    """Control characters that real text does not contain (a ZIP/APK starts with ``PK`` and two control bytes, which is valid
+    UTF-8 and has no NUL in its first bytes): such content is binary, not `text/plain`."""
+    return any(b < 0x20 and b not in _TEXT_CONTROL_OK for b in head_bytes) or 0x7F in head_bytes
 
 
 def is_allowed_mime_type(mime_type: str) -> bool:
@@ -193,6 +226,17 @@ def sanitize_display_name(raw_filename) -> str:
 
 
 def normalize_file_name_for_mime(
+    file_name: str, mime_type: str, max_code_points: Optional[int] = None
+) -> str:
+    """FX1 Phase B: the name is kept as the user chose it (`script.sh`, `notes.md`, `archive.zip` stay what they are); only
+    its length is capped. The extension is never rewritten to match the content any more: the old rewriting existed to keep
+    the extension allowlist and the content type consistent, and there is no extension allowlist now. The old behaviour is
+    kept as `normalize_known_extension` for callers that still want it.
+    """
+    return _truncate_code_points(file_name, max_code_points)
+
+
+def normalize_known_extension(
     file_name: str, mime_type: str, max_code_points: Optional[int] = None
 ) -> str:
     """Make `file_name`'s extension consistent with `mime_type`, preserving an

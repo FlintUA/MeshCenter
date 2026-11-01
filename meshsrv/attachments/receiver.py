@@ -82,7 +82,7 @@ from typing import Callable, List, Optional
 
 from nacl.signing import VerifyKey
 
-from meshsrv.attachments import codec, crypto, identity, manifest
+from meshsrv.attachments import codec, crypto, identity, manifest, mime_allowlist
 from meshsrv.attachments.identity import MCAPrincipal
 from meshsrv.attachments.key_exchange import AddressStatus, KeyExchangeCoordinator
 from meshsrv.attachments.provider_registry import ProviderRegistry, encode_provider_id
@@ -195,6 +195,19 @@ _ACK_QUOTA_STALE_AFTER_SECONDS = 86400  # a full day past its own window - safel
 # pass to retune" framing as the ACK quota above.
 MAX_PENDING_RECEIVED_PER_SOURCE = 20
 MAX_PENDING_RECEIVED_GLOBAL = 200
+
+# FX1 Phase B: auto-accept. An offer from a contact whose key is trusted (binding MCA_READY, the only way an offer reaches
+# the consent step at all) is downloaded without a tap, up to a per-sender quota in a rolling 24 hours. Above the quota the
+# offer is not refused: it waits in WAITING_CONSENT for a manual Download and the card says why (`error_code`
+# `auto_accept_quota`, which the UI shows as a note, not as a failure).
+AUTO_ACCEPT_MAX_BYTES = 50 * 1024 * 1024
+AUTO_ACCEPT_MAX_FILES = 20
+AUTO_ACCEPT_WINDOW_SECONDS = 86400
+AUTO_ACCEPT_QUOTA_CODE = "auto_accept_quota"
+_EVENT_AUTO_ACCEPTED = "auto_accepted"
+_EVENT_CONSENT_GIVEN = "consent_given"
+_EVENT_AUTO_ACCEPT_HELD = "auto_accept_held"
+MAX_RECEIVED_COMMENT_BYTES = 1000
 
 
 @dataclasses.dataclass(frozen=True)
@@ -685,6 +698,59 @@ def _would_exceed_inbound_admission_limit(
     return None
 
 
+def auto_accept_usage(
+    conn: sqlite3.Connection, workspace_id: str, sender_principal_id: Optional[str], now: float, *, exclude_id: Optional[str] = None
+) -> tuple:
+    """(files, bytes) this sender has had auto-accepted in the last 24 hours and that are still counted: in flight or
+    downloaded. A row that was held for a manual Download (WAITING_CONSENT) or that failed does not count."""
+    if sender_principal_id is None:
+        return (0, 0)
+    row = conn.execute(
+        """
+        SELECT COUNT(*), COALESCE(SUM(a.plain_size), 0)
+        FROM attachments a
+        JOIN attachment_events e ON e.attachment_id = a.id AND e.event_type = ?
+        WHERE a.workspace_id = ? AND a.direction = 'received' AND a.sender_principal_id = ?
+          AND e.occurred_at >= ? AND a.state IN (?, ?, ?) AND a.id != ?
+        """,
+        (_EVENT_AUTO_ACCEPTED, workspace_id, sender_principal_id, now - AUTO_ACCEPT_WINDOW_SECONDS,
+         DOWNLOADING, VERIFYING, AVAILABLE, exclude_id or ""),
+    ).fetchone()
+    return (int(row[0]), int(row[1]))
+
+
+def _clean_received_comment(comment: Optional[str]) -> Optional[str]:
+    """The comment arrives from the sender: show it as text, never trust its shape. Control characters other than a line break
+    are dropped, the length is capped, an empty comment is no comment."""
+    if not isinstance(comment, str):
+        return None
+    text = "".join(ch for ch in comment if ch in "\n" or (ch >= " " and ch != "\x7f")).strip()
+    if not text:
+        return None
+    encoded = text.encode("utf-8")
+    if len(encoded) > MAX_RECEIVED_COMMENT_BYTES:
+        text = encoded[:MAX_RECEIVED_COMMENT_BYTES].decode("utf-8", errors="ignore").rstrip()
+    return text or None
+
+
+def _consent_or_auto_accept(
+    conn: sqlite3.Connection, attachment_id: str, now: float, *, auto_accept: bool
+) -> str:
+    """Where a verified, downloadable offer goes next: straight to DOWNLOADING when auto-accept is on and the sender is
+    inside the quota, otherwise WAITING_CONSENT (with the quota code when the quota is the reason)."""
+    if not auto_accept:
+        _set_state(conn, attachment_id, WAITING_CONSENT, now)
+        return WAITING_CONSENT
+    row = _row(conn, attachment_id)
+    files, _bytes = auto_accept_usage(conn, row["workspace_id"], row["sender_principal_id"], now, exclude_id=attachment_id)
+    if row["sender_principal_id"] is None or files >= AUTO_ACCEPT_MAX_FILES:
+        _set_state(conn, attachment_id, WAITING_CONSENT, now, error_code=AUTO_ACCEPT_QUOTA_CODE if row["sender_principal_id"] else None)
+        return WAITING_CONSENT
+    _set_state(conn, attachment_id, DOWNLOADING, now)
+    _record_event(conn, attachment_id, now, _EVENT_AUTO_ACCEPTED, {})
+    return DOWNLOADING
+
+
 def _resolve_provider_or_wait(
     conn: sqlite3.Connection,
     *,
@@ -694,6 +760,7 @@ def _resolve_provider_or_wait(
     network_available: bool,
     now: float,
     on_provider_unknown: Optional[Callable[[], Optional[bytes]]] = None,
+    auto_accept: bool = False,
 ) -> ReceiveResult:
     """Shared WAITING_PROVIDER/WAITING_NETWORK/WAITING_CONSENT routing,
     used both right after a freshly-verified OFFER and by
@@ -712,8 +779,11 @@ def _resolve_provider_or_wait(
         _set_state(conn, attachment_id, WAITING_PROVIDER, now)
         conn.commit()
         return ReceiveResult(attachment_id=attachment_id, state=WAITING_PROVIDER, replies=replies)
-    new_state = WAITING_CONSENT if network_available else WAITING_NETWORK
-    _set_state(conn, attachment_id, new_state, now)
+    if network_available:
+        new_state = _consent_or_auto_accept(conn, attachment_id, now, auto_accept=auto_accept)
+    else:
+        new_state = WAITING_NETWORK
+        _set_state(conn, attachment_id, new_state, now)
     conn.commit()
     return ReceiveResult(attachment_id=attachment_id, state=new_state, replies=[])
 
@@ -734,6 +804,7 @@ def handle_offer(
     source_address: Optional[str] = None,
     reply_route: Optional[ReplyRoute] = None,
     defer_replies: bool = False,
+    auto_accept: bool = False,
 ) -> ReceiveResult:
     """Handle one inbound OFFER frame's already-`ingest()`-ed logical
     bytes. `key_exchange` is this workspace/adapter's own
@@ -801,6 +872,7 @@ def handle_offer(
             network_available=network_available,
             attachment_id=existing["id"],
             now=now,
+            auto_accept=auto_accept,
         )
 
     sender_key_id_hex = unverified.sender_key_id.hex()
@@ -923,6 +995,7 @@ def handle_offer(
         network_available=network_available,
         now=now,
         on_provider_unknown=None if defer_replies else _send_provider_unknown_ack,
+        auto_accept=auto_accept,
     )
     return ReceiveResult(attachment_id=attachment_id, state=result.state, replies=replies + result.replies)
 
@@ -978,6 +1051,7 @@ def run_step(
     attachment_id: str,
     relay_client: Optional[RelayClient] = None,
     now: Optional[float] = None,
+    auto_accept: bool = False,
 ) -> ReceiveResult:
     now = _now() if now is None else now
     row = _row(conn, attachment_id)
@@ -985,12 +1059,14 @@ def run_step(
 
     if state == WAITING_KEY:
         return _step_waiting_key(
-            conn, row, workspace_manager, principal, provider_registry, key_exchange, network_available, now
+            conn, row, workspace_manager, principal, provider_registry, key_exchange, network_available, now, auto_accept
         )
     if state == WAITING_PROVIDER:
-        return _step_waiting_provider(conn, row, workspace_manager, principal, provider_registry, network_available, now)
+        return _step_waiting_provider(
+            conn, row, workspace_manager, principal, provider_registry, network_available, now, auto_accept
+        )
     if state == WAITING_NETWORK:
-        return _step_waiting_network(conn, row, network_available, now)
+        return _step_waiting_network(conn, row, network_available, now, auto_accept)
     if state in (DOWNLOADING, VERIFYING):
         # Verifying is reached and completed synchronously inside
         # _step_downloading in this pass (no genuine chunk/verify resume -
@@ -1021,7 +1097,7 @@ def _build_provider_unknown_callback(conn, *, attachment_id, transfer_id, princi
     return _send
 
 
-def _step_waiting_key(conn, row, workspace_manager, principal, provider_registry, key_exchange, network_available, now):
+def _step_waiting_key(conn, row, workspace_manager, principal, provider_registry, key_exchange, network_available, now, auto_accept=False):
     attachment_id = row["id"]
     pending_raw = row["pending_offer_cbor"]
     if pending_raw is None:
@@ -1073,10 +1149,11 @@ def _step_waiting_key(conn, row, workspace_manager, principal, provider_registry
             workspace_manager=workspace_manager,
             now=now,
         ),
+        auto_accept=auto_accept,
     )
 
 
-def _step_waiting_provider(conn, row, workspace_manager, principal, provider_registry, network_available, now):
+def _step_waiting_provider(conn, row, workspace_manager, principal, provider_registry, network_available, now, auto_accept=False):
     attachment_id = row["id"]
     return _resolve_provider_or_wait(
         conn,
@@ -1093,16 +1170,17 @@ def _step_waiting_provider(conn, row, workspace_manager, principal, provider_reg
             workspace_manager=workspace_manager,
             now=now,
         ),
+        auto_accept=auto_accept,
     )
 
 
-def _step_waiting_network(conn, row, network_available, now):
+def _step_waiting_network(conn, row, network_available, now, auto_accept=False):
     attachment_id = row["id"]
     if not network_available:
         return ReceiveResult(attachment_id=attachment_id, state=WAITING_NETWORK, replies=[])
-    _set_state(conn, attachment_id, WAITING_CONSENT, now)
+    new_state = _consent_or_auto_accept(conn, attachment_id, now, auto_accept=auto_accept)
     conn.commit()
-    return ReceiveResult(attachment_id=attachment_id, state=WAITING_CONSENT, replies=[])
+    return ReceiveResult(attachment_id=attachment_id, state=new_state, replies=[])
 
 
 def begin_download(conn: sqlite3.Connection, attachment_id: str, now: Optional[float] = None) -> str:
@@ -1115,6 +1193,8 @@ def begin_download(conn: sqlite3.Connection, attachment_id: str, now: Optional[f
     if row["state"] != WAITING_CONSENT:
         raise ReceiverError(f"attachment {attachment_id!r} is {row['state']!r}, not WAITING_CONSENT - cannot begin download")
     _set_state(conn, attachment_id, DOWNLOADING, now)
+    # FX1 Phase B: a person pressed Download - the auto-accept quota no longer applies to this file
+    _record_event(conn, attachment_id, now, _EVENT_CONSENT_GIVEN, {})
     conn.commit()
     return DOWNLOADING
 
@@ -1235,6 +1315,17 @@ def _wait_network(conn, attachment_id, now) -> ReceiveResult:
     return ReceiveResult(attachment_id=attachment_id, state=WAITING_NETWORK, replies=[])
 
 
+def _is_auto_accepted(conn: sqlite3.Connection, attachment_id: str) -> bool:
+    """True while this download was started by auto-accept and no person has pressed Download for it."""
+    kinds = {
+        r[0] for r in conn.execute(
+            "SELECT DISTINCT event_type FROM attachment_events WHERE attachment_id = ? AND event_type IN (?, ?)",
+            (attachment_id, _EVENT_AUTO_ACCEPTED, _EVENT_CONSENT_GIVEN),
+        )
+    }
+    return _EVENT_AUTO_ACCEPTED in kinds and _EVENT_CONSENT_GIVEN not in kinds
+
+
 def _step_downloading(conn, row, workspace_manager, principal, provider_registry, relay_client, now):
     attachment_id = row["id"]
     transfer_id = bytes.fromhex(row["transfer_id"])
@@ -1282,6 +1373,18 @@ def _step_downloading(conn, row, workspace_manager, principal, provider_registry
     if header.chunk_count != chunk_count or header.plain_size != plain_size:
         return _fail(conn, attachment_id, now, "header_size_mismatch")
 
+    # FX1 Phase B: the exact size is known here (before any chunk is fetched). An auto-accepted file that would take this
+    # sender over the 24 hour byte quota is held for a manual Download instead of being fetched.
+    if _is_auto_accepted(conn, attachment_id):
+        _files_used, bytes_used = auto_accept_usage(
+            conn, row["workspace_id"], row["sender_principal_id"], now, exclude_id=attachment_id
+        )
+        if bytes_used + plain_size > AUTO_ACCEPT_MAX_BYTES:
+            _set_state(conn, attachment_id, WAITING_CONSENT, now, error_code=AUTO_ACCEPT_QUOTA_CODE)
+            _record_event(conn, attachment_id, now, _EVENT_AUTO_ACCEPT_HELD, {"reason": "bytes"})
+            conn.commit()
+            return ReceiveResult(attachment_id=attachment_id, state=WAITING_CONSENT, replies=[])
+
     assembled = bytearray()
     for index in range(chunk_count):
         try:
@@ -1316,6 +1419,16 @@ def _step_downloading(conn, row, workspace_manager, principal, provider_registry
         _quarantine(workspace_manager, principal.principal_id, transfer_id_hex, bytes(assembled))
         return _fail(conn, attachment_id, now, "plaintext_digest_mismatch")
 
+    # FX1 Phase B: what the sender calls an image (or what looks like one) must be one. The header MIME is the sender's claim;
+    # the bytes decide. Nothing is written for a file that is not what it says.
+    declared_mime = header.mime_type
+    sniffed_mime = mime_allowlist.sniff_mime_type(bytes(assembled[:64]))
+    if (
+        (isinstance(declared_mime, str) and declared_mime.startswith("image/")) or (sniffed_mime or "").startswith("image/")
+    ) and sniffed_mime != declared_mime:
+        _quarantine(workspace_manager, principal.principal_id, transfer_id_hex, bytes(assembled))
+        return _fail(conn, attachment_id, now, "type_mismatch")
+
     # Step 1.6A.5 storage model: the verified plaintext is written to the
     # internal content cache under its canonical attachment id - never the
     # sender-controlled `header.file_name`, which is retained only as the
@@ -1325,7 +1438,18 @@ def _step_downloading(conn, row, workspace_manager, principal, provider_registry
     paths = workspace_manager.paths(principal.principal_id)
     # MCA-VAULT: with the vault on the plaintext goes straight into `<attachment id>.mcv` (encrypted to a `.part` file, fsync,
     # rename); no plain file or temp file ever exists, and `saved_path` points at the encrypted file.
-    cache_path = workspace_manager.codec.write_content(paths.cache_incoming / attachment_id, bytes(assembled), attachment_id)
+    # FX1 Phase B: ONE store. The verified file is written straight into `files/` (it used to wait in `cache/incoming/` for a
+    # "Save to Files"): with the vault on as `<attachment id>.mcv`, otherwise under a sanitized, collision-free display name
+    # (the sender-controlled name never becomes a path component unchecked).
+    if workspace_manager.codec.active:
+        content_base = paths.files / attachment_id
+    else:
+        safe_name = (
+            mime_allowlist.sanitize_display_name(header.file_name)[: mime_allowlist.MAX_SOURCE_NAME_CODE_POINTS].strip(".")
+            or "attachment"
+        )
+        content_base = workspace_manager.unique_file_name(principal.principal_id, safe_name)
+    cache_path = workspace_manager.codec.write_content(content_base, bytes(assembled), attachment_id)
 
     try:
         client.complete(transfer_id, secret.receipt_secret)
@@ -1342,10 +1466,13 @@ def _step_downloading(conn, row, workspace_manager, principal, provider_registry
         attachment_id,
         AVAILABLE,
         now,
-        extra_sql=", file_name = ?, mime_type = ?, plain_size = ?, plain_sha256 = ?, saved_path = ?",
+        # `draft_comment` holds the comment the SENDER wrote on an incoming row (the column was only ever the sender's draft
+        # before; no schema change, an older build ignores it). Sealed under the vault like the file name.
+        extra_sql=", file_name = ?, mime_type = ?, plain_size = ?, plain_sha256 = ?, saved_path = ?, draft_comment = ?",
         extra_params=(
             codec_of(conn).seal("attachments", "file_name", attachment_id, header.file_name),
             header.mime_type, header.plain_size, header.plain_sha256.hex(), str(cache_path),
+            codec_of(conn).seal("attachments", "draft_comment", attachment_id, _clean_received_comment(header.comment)),
         ),
     )
     ack = enqueue_control_message(

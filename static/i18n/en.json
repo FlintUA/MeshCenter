@@ -303,7 +303,8 @@
       "invalid_backup_name": "This is not a vault backup folder",
       "vault_not_available": "The vault is not available",
       "recovery_key_not_available": "The recovery key was already shown",
-      "vault_corrupt": "A stored value could not be verified. The data may be damaged"
+      "vault_corrupt": "A stored value could not be verified. The data may be damaged",
+      "empty_file": "An empty file cannot be sent"
     },
     "accept_download": "Accept and download",
     "accepting_key_change": "Accepting key change…",
@@ -327,7 +328,6 @@
     "download_to_device": "Download to device",
     "downloaded": "Downloaded",
     "encrypted_file": "Encrypted file",
-    "err_mime": "File type is not allowed",
     "err_no_provider": "Choose a ready provider",
     "err_provider_not_ready": "Selected provider is not ready",
     "expired": "Expired",
@@ -448,7 +448,7 @@
     "err_provider_ttl_min_max": "Minimum TTL must not exceed maximum TTL.",
     "send_ttl_custom_placeholder": "Seconds",
     "send_file_type": "Type: {type}",
-    "send_file_type_unknown": "Type: unrecognized - the server will validate it",
+    "send_file_type_unknown": "Type: other file",
     "send_file_size": "Size: {size}",
     "relay_state_label": "Relay state",
     "upload_ready": "Upload: ready",
@@ -607,7 +607,9 @@
       "download_failed": "the download failed",
       "damaged": "the file was damaged or not authentic",
       "relay_refused": "the relay refused the file",
-      "unknown": "something went wrong"
+      "unknown": "something went wrong",
+      "type_mismatch": "the file is not the type it claims to be",
+      "empty_file": "the file is empty"
     },
     "send_ttl_value": "Amount",
     "send_ttl_unit": "Unit",
@@ -677,7 +679,32 @@
       "declined_in": "Declined",
       "cancelled_in": "Cancelled",
       "not_received": "Failed"
-    }
+    },
+    "note_auto_quota": "Not downloaded automatically: this contact sent a lot today. Press Download to accept it.",
+    "cleanup_days": {
+      "one": "{count} day",
+      "other": "{count} days",
+      "few": "{count} days",
+      "many": "{count} days"
+    },
+    "cleanup_confirm_title": "Delete old received files automatically?",
+    "cleanup_confirm_body": {
+      "one": "Received files older than {count} day will be deleted from this node, about once an hour. The entries stay in the history.",
+      "other": "Received files older than {count} days will be deleted from this node, about once an hour. The entries stay in the history.",
+      "few": "Received files older than {count} days will be deleted from this node, about once an hour. The entries stay in the history.",
+      "many": "Received files older than {count} days will be deleted from this node, about once an hour. The entries stay in the history."
+    },
+    "cleanup_confirm": "Turn on",
+    "settings_save_failed": "Could not save the setting",
+    "err_empty_file": "This file is empty",
+    "sort_label": "Sort by",
+    "sort_newest": "Newest first",
+    "sort_oldest": "Oldest first",
+    "sort_name": "Name",
+    "sort_size": "Size, largest first",
+    "filter_only": "Only: {name}",
+    "filter_clear": "Show all files",
+    "counts_for_contact": "Counts for {name} only"
   },
   "about": {
     "tab_overview": "Overview",
@@ -1590,7 +1617,11 @@
     "files_description": "File transfers over the Mesh via Relay providers.",
     "files_relay_providers": "Relay providers",
     "files_relay_wizard": "Set up a Relay",
-    "meshtastic_tcp_receive_note": "Over TCP, MeshCenter receives text messages, waypoints, node info, positions and telemetry. Delivery acknowledgements are not received yet - use USB for the full feed."
+    "meshtastic_tcp_receive_note": "Over TCP, MeshCenter receives text messages, waypoints, node info, positions and telemetry. Delivery acknowledgements are not received yet - use USB for the full feed.",
+    "files_auto_accept": "Accept files from trusted contacts automatically",
+    "files_auto_accept_hint": "Up to 50 MB or 20 files per contact per day. More than that waits for your OK.",
+    "files_auto_cleanup": "Delete received files after",
+    "files_cleanup_never": "Never"
   },
   "modals": {
     "message_info": "Message Info",

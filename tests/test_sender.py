@@ -270,12 +270,16 @@ def test_validation_fails_on_missing_source_file(conn, wsm, principal, recipient
     assert final == sender.FAILED_VALIDATION
 
 
-def test_validation_fails_on_disallowed_mime_type(conn, wsm, principal, recipient, tmp_path, relay_client):
-    attachment_id, _ = _draft(conn, wsm, principal, recipient, tmp_path, mime_type="application/x-msdownload")
+@pytest.mark.parametrize("mime", ["application/x-msdownload", "application/octet-stream", "application/zip", "video/mp4"])
+def test_validation_accepts_any_mime_type(conn, wsm, principal, recipient, tmp_path, relay_client, mime):
+    # FX1 Phase B: any file type can be sent; the sender no longer rejects a MIME type or an extension
+    attachment_id, _ = _draft(conn, wsm, principal, recipient, tmp_path, mime_type=mime)
     ether = InMemoryEther()
     adapter = FakeTextAdapter(ether, "sender-addr")
     final = _drive_to(conn, wsm, principal, recipient, relay_client, adapter, attachment_id, sender.TERMINAL_STATES)
-    assert final == sender.FAILED_VALIDATION
+    assert final != sender.FAILED_VALIDATION
+    assert conn.execute("SELECT error_code FROM attachments WHERE id = ?", (attachment_id,)).fetchone()[0] not in (
+        "mime_not_allowed", "extension_not_allowed")
 
 
 def test_queued_upload_stays_put_when_network_unavailable(conn, wsm, principal, recipient, tmp_path, relay_client):
@@ -892,7 +896,7 @@ def test_comment_never_reaches_relay_in_plaintext(conn, wsm, principal, recipien
         assert needle not in blob
 
 
-def test_draft_comment_column_cleared_after_encrypting(conn, wsm, principal, recipient, tmp_path, relay_client):
+def test_draft_comment_column_is_kept_after_encrypting(conn, wsm, principal, recipient, tmp_path, relay_client):
     attachment_id, _ = _draft(conn, wsm, principal, recipient, tmp_path, comment="temporary plaintext")
     recipient_identities = {recipient[2]: recipient[1]}
     for _ in range(5):
@@ -903,5 +907,6 @@ def test_draft_comment_column_cleared_after_encrypting(conn, wsm, principal, rec
             relay_client=relay_client, delivery_adapter=None, attachment_id=attachment_id,
         )
     assert sender.get_state(conn, attachment_id) == sender.QUEUED_UPLOAD
+    # FX1 Phase B: the comment stays on the sent entry (it used to be cleared once the manifest was built)
     row = conn.execute("SELECT draft_comment FROM attachments WHERE id = ?", (attachment_id,)).fetchone()
-    assert row[0] is None
+    assert row[0] == "temporary plaintext"

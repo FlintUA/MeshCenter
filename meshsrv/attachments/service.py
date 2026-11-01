@@ -62,7 +62,7 @@ from typing import Callable, Dict, List, Optional
 import requests
 from nacl.signing import VerifyKey
 
-from meshsrv.attachments import codec, contacts, crypto, key_request_retry, receiver, sender
+from meshsrv.attachments import codec, contacts, crypto, key_request_retry, receiver, sender, storage_merge
 from meshsrv.attachments.command_registry import CommandRegistry
 from meshsrv.attachments.commands import MAX_COMMANDS_PER_TICK, Command, CommandQueue
 from meshsrv.attachments.db.tombstones import is_tombstoned
@@ -173,6 +173,12 @@ VAULT_DEFERRED_INBOUND_MAX = 256
 # this backlog (e.g. the process restarted) is reclaimed by Finding 5's
 # bounded orphan-staging recovery.
 SPOOL_CLEANUP_BACKLOG_MAXSIZE = 256
+
+# FX1 Phase B: a finished transfer's sender copy is deleted (a failed one keeps it for Retry); the optional automatic cleanup
+# of received copies runs at most this often.
+SENT_COPY_DELETE_STATES = ("DOWNLOADED", "EXPIRED", "CANCELLED", "REVOKED", "REJECTED")
+SENT_COPY_SWEEP_BATCH = 20
+AUTO_CLEANUP_INTERVAL_SECONDS = 3600
 
 # How many backlogged spool-cleanup attempts one tick makes before moving on.
 MAX_SPOOL_CLEANUP_PER_TICK = 8
@@ -402,9 +408,12 @@ class AttachmentsService:
         key_request_snapshot_publisher: Optional[KeyRequestStatePublisher] = None,
         contact_exists_fn: Optional[Callable[[str], bool]] = None,
         offer_linked_fn: Optional[Callable[[str, str], None]] = None,
+        files_settings_fn: Optional[Callable[[], dict]] = None,
         vault=None,
     ):
         self._conn = conn
+        # FX1 Phase B: the instance's `files` settings (auto-accept, auto-cleanup), read fresh on every use
+        self._files_settings_fn = files_settings_fn
         # MCA-VAULT: the vault runtime (None for a standalone service); see _vault_locked() and the gates below
         self._vault = vault
         self._deferred_inbound = collections.deque(maxlen=VAULT_DEFERRED_INBOUND_MAX)
@@ -768,6 +777,11 @@ class AttachmentsService:
         # just-enqueued EXPIRED is sent this same tick.
         if not self._vault_locked():
             self._reconcile_receiver_expiry()
+
+        # FX1 Phase B: the sender's copy of a finished transfer goes; one-time storage merge; optional auto-cleanup
+        self._sweep_sent_copies()
+        self._storage_merge_once()
+        self._auto_cleanup_received()
 
         self._dispatch_outgoing_replies()
 
@@ -2326,17 +2340,19 @@ class AttachmentsService:
         )
 
     def _command_purge_received_cache(self, command: Command) -> CommandOutcome:
-        """`attachment_purge_received_cache` (MCA-UX1): delete the received copies in `cache/incoming/` that were
-        received more than `older_than_days` ago. Never touches a file saved with "Save to Files" (those live in
-        `files/`), never touches a sent row's spool, and only ever deletes a path that resolves to a file directly
-        inside `cache/incoming/`. The attachment rows and their history stay; their `saved_path` is cleared so the
-        row no longer claims content. Always an explicit user command, there is no automatic deletion."""
+        """`attachment_purge_received_cache` (MCA-UX1, FX1 Phase B): delete the received copies that were received more
+        than `older_than_days` ago. Received files live in `files/` (one store); a file still in `cache/incoming/` (not yet
+        merged) is handled the same way. Never touches a sent row's spool, and only ever deletes a path that resolves to a
+        file directly inside one of those two folders. The attachment rows and their history stay; their `saved_path` is
+        cleared so the row no longer claims content. Runs on an explicit user command, or from the automatic cleanup
+        setting (`files.auto_cleanup_days`, off by default)."""
         days = command.payload.get("older_than_days")
         if isinstance(days, bool) or not isinstance(days, int) or not 1 <= days <= 3650:
             return CommandOutcome.failed("invalid_older_than_days")
         cutoff = time.time() - days * 86400
         paths = self._workspace_manager.paths(self._principal.principal_id)
         cache_dir = paths.cache_incoming.resolve()
+        files_dir = Path(paths.files).resolve()
         self._conn.row_factory = sqlite3.Row
         rows = self._conn.execute(
             "SELECT id, saved_path, plain_size FROM attachments "
@@ -2346,10 +2362,10 @@ class AttachmentsService:
         deleted = 0
         freed = 0
         for row in rows:
-            if _is_inside_files(paths, row["saved_path"]):
-                continue
             path = self._resolve_content_path(paths, row["saved_path"])
-            if path is None or path.parent != cache_dir:
+            # FX1 Phase B: received files live in `files/` now (the cache folder only holds what the storage merge has not
+            # moved yet); only a file that sits directly in one of those two folders is ever deleted
+            if path is None or path.parent not in (cache_dir, files_dir):
                 continue
             try:
                 size = path.stat().st_size if path.exists() else 0
@@ -2924,6 +2940,7 @@ class AttachmentsService:
                 base_url=probe.origin,
                 service_public_key=probe.service_public_key,
                 max_ciphertext_bytes=max_ciphertext_bytes,
+                relay_max_ciphertext_bytes=probe.max_ciphertext_bytes,    # a lower policy value is the user's own limit
                 upload_allowed=upload_allowed,
                 download_allowed=download_allowed,
                 kind=kind,
@@ -3311,6 +3328,7 @@ class AttachmentsService:
                 source_address=source_address,
                 reply_route=reply_route,
                 defer_replies=defer_replies,
+                auto_accept=self._auto_accept_enabled(),
             )
             if defer_replies:
                 self._acks_deferred = True
@@ -3788,7 +3806,101 @@ class AttachmentsService:
             attachment_id=row["id"],
             relay_client=relay_client,
             now=self._now(),
+            auto_accept=self._auto_accept_enabled(),
         )
+
+    # ---- FX1 Phase B: sender copy, one store, auto-cleanup ----------------------------------------------------------
+
+    def _sweep_sent_copies(self) -> None:
+        """Delete the sender's own copy of the file (`spool/outgoing/<id>`) once the transfer is over for good: Delivered,
+        Expired, Cancelled, Revoked or Rejected. A failed transfer keeps it (Retry needs it). The row and its history stay
+        (name, size, comment, time, status); only the file goes and `saved_path` is cleared. Bounded per tick, idempotent,
+        and it only ever deletes the spool path derived from the row's own id."""
+        placeholders = ",".join("?" for _ in SENT_COPY_DELETE_STATES)
+        try:
+            self._conn.row_factory = sqlite3.Row
+            rows = self._conn.execute(
+                "SELECT id, saved_path FROM attachments WHERE workspace_id = ? AND direction = 'sent' AND saved_path IS NOT NULL "
+                f"AND state IN ({placeholders}) LIMIT ?",
+                (self._principal.workspace_id, *SENT_COPY_DELETE_STATES, SENT_COPY_SWEEP_BATCH),
+            ).fetchall()
+        except sqlite3.Error:
+            return
+        for row in rows:
+            spool_base = self._spool_path_for(row["id"])
+            if spool_base is None:
+                continue
+            try:
+                same = os.path.realpath(str(self._spool_content_path(spool_base))) == os.path.realpath(str(row["saved_path"]))
+            except (OSError, ValueError):
+                same = False
+            if not same:
+                continue                                  # saved_path is somewhere else (never delete a path we did not make)
+            try:
+                self._workspace_manager.codec.unlink_content(spool_base)
+            except OSError:
+                logger.warning("AttachmentsService: could not remove a finished transfer's sender copy")
+                continue
+            self._conn.execute("UPDATE attachments SET saved_path = NULL WHERE id = ? AND saved_path = ?", (row["id"], row["saved_path"]))
+            self._conn.commit()
+
+    def _storage_merge_once(self) -> None:
+        """Once per process: move the received copies still in `cache/incoming/` into `files/` (journaled, resumable, see
+        `storage_merge.py`). A failure is logged and retried at the next start; it never stops the worker."""
+        if getattr(self, "_storage_merged", False):
+            return
+        self._storage_merged = True
+        try:
+            paths = self._workspace_manager.paths(self._principal.principal_id)
+            storage_merge.merge_received_cache(
+                self._conn,
+                workspace_id=self._principal.workspace_id,
+                cache_dir=paths.cache_incoming,
+                files_dir=paths.files,
+                root=paths.root,
+                unique_file_name=lambda name: self._workspace_manager.unique_file_name(self._principal.principal_id, name),
+                sanitize_name=lambda name: sanitize_display_name(name or "")[:MAX_SOURCE_NAME_CODE_POINTS].strip(".") or "attachment",
+                vault_active=bool(self._workspace_manager.codec.active),
+            )
+        except Exception:  # noqa: BLE001 - the merge is a tidy-up; the transfers must keep running
+            self._rollback_silently()
+            logger.exception("AttachmentsService: the storage merge failed; it is retried at the next start")
+
+    def _auto_cleanup_received(self) -> None:
+        """Optional (`files.auto_cleanup_days`, 0 = off, the default): delete received copies older than N days, at most once
+        an hour, through the same code as the manual Clean up. Never runs for a locked vault (nothing is read, but a
+        deliberate deletion is not something to do unattended while the owner cannot see it)."""
+        days = self._files_setting("auto_cleanup_days", 0)
+        if isinstance(days, bool) or not isinstance(days, int) or days <= 0:
+            return
+        now = time.monotonic()
+        if now - getattr(self, "_last_auto_cleanup", -AUTO_CLEANUP_INTERVAL_SECONDS) < AUTO_CLEANUP_INTERVAL_SECONDS:
+            return
+        self._last_auto_cleanup = now
+        try:
+            outcome = self._command_purge_received_cache(
+                Command(command_id="auto-cleanup", kind="attachment_purge_received_cache",
+                        payload={"older_than_days": max(1, min(3650, days))}, created_at=time.time())
+            )
+            result = getattr(outcome, "result", None) or {}
+            if result.get("deleted"):
+                logger.info("AttachmentsService: auto-cleanup deleted %s received copies older than %s days", result["deleted"], days)
+        except Exception:  # noqa: BLE001
+            self._rollback_silently()
+            logger.exception("AttachmentsService: auto-cleanup failed")
+
+    def _files_setting(self, name: str, default):
+        try:
+            settings = self._files_settings_fn() if self._files_settings_fn is not None else None
+        except Exception:  # noqa: BLE001 - a settings read never stops a transfer
+            settings = None
+        if isinstance(settings, dict) and name in settings:
+            return settings[name]
+        return default
+
+    def _auto_accept_enabled(self) -> bool:
+        """FX1 Phase B: download offers from trusted contacts without a tap (inside the per-sender quota). On by default."""
+        return bool(self._files_setting("auto_accept", True))
 
     def _can_attempt(self, provider_id_text: Optional[str]) -> bool:
         """Feeds `ConnectivityMonitor.can_attempt_relay()` (advisory,

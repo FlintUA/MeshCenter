@@ -389,6 +389,12 @@ def _provider(**overrides):
         last_check_result="ok",
         last_latency_ms=42,
         last_error_code=None,
+        relay_max_ciphertext_bytes=5 * 1024 * 1024 + 1024,
+        relay_min_ttl_seconds=60,
+        relay_max_ttl_seconds=86400,
+        user_max_ciphertext_bytes=None,
+        user_min_ttl_seconds=None,
+        user_max_ttl_seconds=None,
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -2183,13 +2189,13 @@ def test_create_submit_exception_discards_the_staged_file_and_is_sanitized(
     assert list((tmp_path / "spool").iterdir()) == []
 
 
-def test_create_mime_not_allowed(monkeypatch, tmp_path):
+def test_create_unknown_binary_content_is_sent_as_octet_stream(monkeypatch, tmp_path):
     facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
     c = _client(monkeypatch, facade)
+    # FX1 Phase B: any file type can be sent; unknown binary content is `application/octet-stream`
     resp = _post_create(c, data=b"\x00\x01\x02\x03\x04")
-    assert resp.status_code == 400
-    assert resp.get_json()["error_code"] == "mime_not_allowed"
-    assert facade.submitted == []
+    assert resp.status_code == 202
+    assert facade.submitted[0].payload["mime_type"] == "application/octet-stream"
 
 
 def test_create_explicit_provider_not_found(monkeypatch, tmp_path):
@@ -2341,9 +2347,8 @@ def test_create_sanitizes_a_path_traversal_filename(monkeypatch, tmp_path):
     resp = _post_create(c, filename="../../etc/passwd")
     assert resp.status_code == 202
     cmd = facade.submitted[0]
-    # basename (never a path), then normalized to a `.jpg` extension consistent
-    # with the sniffed image/jpeg content (Finding 8).
-    assert cmd.payload["source_name"] == "passwd.jpg"
+    # basename (never a path); FX1 Phase B: the extension is no longer rewritten
+    assert cmd.payload["source_name"] == "passwd"
 
 
 def test_create_replay_pending_returns_the_same_ids(monkeypatch, tmp_path):
@@ -2518,17 +2523,16 @@ def test_create_accepts_each_allowed_format(monkeypatch, tmp_path, data, filenam
     assert cmd.payload["mime_type"] == mime_type
 
 
-def test_create_normalizes_a_mismatched_extension_to_the_sniffed_mime(monkeypatch, tmp_path):
-    # Content is a JPEG, but the browser named it `photo.png` - the MIME is
-    # established from content, and the extension is rewritten to be consistent
-    # (so the worker's later `is_allowed_extension` check cannot fail it).
+def test_create_keeps_the_name_and_takes_the_type_from_the_content(monkeypatch, tmp_path):
+    # Content is a JPEG, but the browser named it `photo.png` - the MIME is established from the content; the name stays
+    # as the user chose it (FX1 Phase B: no extension rewriting).
     facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
     c = _client(monkeypatch, facade)
     resp = _post_create(c, data=_JPEG, filename="photo.png")
     assert resp.status_code == 202
     cmd = facade.submitted[0]
     assert cmd.payload["mime_type"] == "image/jpeg"
-    assert cmd.payload["source_name"] == "photo.jpg"
+    assert cmd.payload["source_name"] == "photo.png"
 
 
 def test_create_ignores_a_misleading_browser_content_type(monkeypatch, tmp_path):
@@ -2547,19 +2551,19 @@ def test_create_ignores_a_misleading_browser_content_type(monkeypatch, tmp_path)
     assert resp.status_code == 202
     cmd = facade.submitted[0]
     assert cmd.payload["mime_type"] == "image/jpeg"
-    assert cmd.payload["source_name"] == "photo.jpg"
+    assert cmd.payload["source_name"] == "photo.png"
 
 
 def test_create_rejects_nul_after_the_sniffed_head(monkeypatch, tmp_path):
-    # A text file whose first 512 bytes are clean ASCII but which turns binary
-    # after the sniff window must be rejected (full-stream NUL detection).
+    # A text file whose first 512 bytes are clean ASCII but which turns binary after the sniff window is NOT text
+    # (full-stream NUL detection): FX1 Phase B sends it as `application/octet-stream` instead of refusing it.
     facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
     c = _client(monkeypatch, facade)
     data = b"a" * 512 + b"tail\x00tail"
     resp = _post_create(c, data=data, filename="notes.txt")
-    assert resp.status_code == 400
-    assert resp.get_json()["error_code"] == "mime_not_allowed"
-    assert facade.submitted == []
+    assert resp.status_code == 202
+    assert facade.submitted[0].payload["mime_type"] == "application/octet-stream"
+    assert facade.submitted[0].payload["source_name"] == "notes.txt"
 
 
 def test_create_rejects_invalid_utf8_after_the_sniffed_head(monkeypatch, tmp_path):
@@ -2567,30 +2571,27 @@ def test_create_rejects_invalid_utf8_after_the_sniffed_head(monkeypatch, tmp_pat
     c = _client(monkeypatch, facade)
     data = b"a" * 512 + b"\xff\xfe"
     resp = _post_create(c, data=data, filename="notes.txt")
-    assert resp.status_code == 400
-    assert resp.get_json()["error_code"] == "mime_not_allowed"
-    assert facade.submitted == []
+    assert resp.status_code == 202
+    assert facade.submitted[0].payload["mime_type"] == "application/octet-stream"
 
 
 @pytest.mark.parametrize("data", [b'{"broken": ', b"[1, 2,", b'{"a": 1} trailing'])
-def test_create_rejects_invalid_json_document(monkeypatch, tmp_path, data):
-    # A leading {/[ sniffs as JSON, but the whole document must parse.
+def test_create_sends_a_broken_json_document_as_plain_text(monkeypatch, tmp_path, data):
+    # A leading {/[ sniffs as JSON, but the whole document must parse; FX1 Phase B: a broken one is plain text, not refused.
     facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
     c = _client(monkeypatch, facade)
     resp = _post_create(c, data=data, filename="manifest.json")
-    assert resp.status_code == 400
-    assert resp.get_json()["error_code"] == "mime_not_allowed"
-    assert facade.submitted == []
+    assert resp.status_code == 202
+    assert facade.submitted[0].payload["mime_type"] == "text/plain"
 
 
 def test_create_rejects_an_empty_file(monkeypatch, tmp_path):
-    # Zero-byte policy: no content means no MIME can be established, so an
-    # empty file is `mime_not_allowed`, not a silent `text/plain`.
+    # Zero-byte policy: an empty file has nothing to send (`empty_file`).
     facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
     c = _client(monkeypatch, facade)
     resp = _post_create(c, data=b"", filename="empty.txt")
     assert resp.status_code == 400
-    assert resp.get_json()["error_code"] == "mime_not_allowed"
+    assert resp.get_json()["error_code"] == "empty_file"
     assert facade.submitted == []
 
 
@@ -2612,53 +2613,47 @@ def test_create_comment_at_1001_bytes_is_rejected(monkeypatch, tmp_path):
 
 
 def test_create_truncates_an_overlong_extensionless_filename_to_255(monkeypatch, tmp_path):
-    # The cap is applied to the *final* name (extension included): a 300-char
-    # extensionless name is truncated only in its stem, so the result is
-    # exactly 255 code points long and still carries the canonical `.txt`
-    # (never 259, the pre-fix 255-then-`.txt` outcome).
+    # FX1 Phase B: the name is only capped to 255 code points; no extension is added.
     facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
     c = _client(monkeypatch, facade)
     resp = _post_create(c, data=b"hello", filename="x" * 300)
     assert resp.status_code == 202
     source_name = facade.submitted[0].payload["source_name"]
-    assert source_name == "x" * 251 + ".txt"
+    assert source_name == "x" * 255
     assert len(source_name) == 255
 
 
 def test_create_255_extensionless_filename_is_shortened_before_ext(monkeypatch, tmp_path):
-    # A 255-char extensionless name cannot fit the `.txt` suffix; the stem is
-    # shortened to 251 so the final name is 255, not 259.
+    # A 255-char extensionless name is kept as it is (no `.txt` is appended any more).
     facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
     c = _client(monkeypatch, facade)
     resp = _post_create(c, data=b"hello", filename="x" * 255)
     assert resp.status_code == 202
     source_name = facade.submitted[0].payload["source_name"]
-    assert source_name == "x" * 251 + ".txt"
+    assert source_name == "x" * 255
     assert len(source_name) == 255
 
 
 def test_create_overlong_filename_keeps_a_correct_extension(monkeypatch, tmp_path):
-    # A 304-char name already ending in the *correct* extension keeps it: the
-    # stem is truncated, the `.txt` is retained, and the whole stays ≤ 255.
+    # A 304-char name ending in `.txt` is cut to 255 code points (FX1 Phase B: the cap is a plain truncation).
     facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
     c = _client(monkeypatch, facade)
     resp = _post_create(c, data=b"hello", filename="x" * 300 + ".txt")
     assert resp.status_code == 202
     source_name = facade.submitted[0].payload["source_name"]
-    assert source_name == "x" * 251 + ".txt"
+    assert source_name == "x" * 255
     assert len(source_name) == 255
 
 
 def test_create_filename_cap_is_code_points_not_bytes(monkeypatch, tmp_path):
-    # 300 code points of a 2-byte character (600 bytes) are truncated to 251
-    # *code points* (502 bytes) - pinning that the cap measures characters,
-    # not UTF-8 bytes (a byte-measured cap would stop around 127 characters).
+    # 300 code points of a 2-byte character (600 bytes) are truncated to 255 *code points* (510 bytes) - pinning that the
+    # cap measures characters, not UTF-8 bytes (a byte-measured cap would stop around 127 characters).
     facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
     c = _client(monkeypatch, facade)
     resp = _post_create(c, data=b"hello", filename="é" * 300)
     assert resp.status_code == 202
     source_name = facade.submitted[0].payload["source_name"]
-    assert source_name == "é" * 251 + ".txt"
+    assert source_name == "é" * 255
     assert len(source_name) == 255
 
 
@@ -3520,7 +3515,7 @@ def _cached(id, size, created_at):
                        descriptor=_descriptor(id, locator=f"cache/incoming/{id}", plain_size=size))
 
 
-def test_received_cache_stats_count_only_unsaved_received_copies(monkeypatch):
+def test_received_cache_stats_count_every_received_copy(monkeypatch):
     import time as _t
     now = _t.time()
     records = [
@@ -3533,10 +3528,11 @@ def test_received_cache_stats_count_only_unsaved_received_copies(monkeypatch):
     facade = _FakeFacade(snapshot=_snapshot(records))
     c = _client(monkeypatch, facade)
     body = c.get("/api/attachments/received-cache?older_than_days=30").get_json()
-    assert (body["count"], body["bytes"]) == (2, 1500)
-    assert (body["older_count"], body["older_bytes"]) == (1, 1000)
+    # FX1 Phase B: one store - a received file in files/ counts like any other received copy; a sent row never does
+    assert (body["count"], body["bytes"]) == (3, 11499)
+    assert body["older_count"] >= 1 and body["older_bytes"] >= 1000
     assert c.get("/api/attachments/received-cache?older_than_days=0").status_code == 400
-    assert c.get("/api/attachments/received-cache").get_json()["count"] == 2
+    assert c.get("/api/attachments/received-cache").get_json()["count"] == 3
 
 
 def test_received_cache_purge_queues_the_command_and_validates(monkeypatch):
@@ -3982,11 +3978,13 @@ def test_create_under_the_vault_stages_only_ciphertext_and_never_a_werkzeug_temp
 def test_create_under_the_vault_rejects_bad_json_and_oversize_without_leaving_a_file(monkeypatch, vault_dir, tmp_path):
     rt, facade, codec_obj = _vault_facade(monkeypatch, vault_dir, tmp_path)
     c = _client(monkeypatch, facade)
-    resp = _post_create(c, data=b'{"a": 1,', filename="doc.json")
-    assert resp.status_code == 400 and resp.get_json()["error_code"] == "mime_not_allowed"
+    spool = tmp_path / "spool"
     resp = _post_create(c, data=_JPEG + b"\x00" * (6 * 1024 * 1024))
     assert resp.status_code in (400, 413) and facade.submitted == []
-    assert list((tmp_path / "spool").iterdir()) == [], "nothing was left behind, plain or encrypted"
+    assert not spool.exists() or list(spool.iterdir()) == [], "nothing was left behind, plain or encrypted"
+    resp = _post_create(c, data=b"", filename="empty.json")
+    assert resp.status_code == 400 and resp.get_json()["error_code"] == "empty_file"
+    assert not spool.exists() or list(spool.iterdir()) == []
     ok = _post_create(c, data=b'{"a": [1, 2, 3]}', filename="doc.json")
     assert ok.status_code in (200, 202)
     assert [p.suffix for p in (tmp_path / "spool").iterdir()] == [".mcv"]
@@ -4289,3 +4287,48 @@ def test_g3_scheduled_send_with_a_locked_vault_skips_with_a_log_line_and_does_no
     now[0] += schedule_picture.MIN_INTERVAL_S
     assert schedule_picture.run(action, rule, deps) == "sent"
     assert len(facade.submitted) == 1
+
+
+
+# ---- FX1 Phase B: any file type can be sent; the safety rules stay -------------------------------------------------------
+
+
+@pytest.mark.parametrize("name,data,mime", [
+    ("setup.exe", b"MZ\x90\x00\x03\x00\x00\x00", "application/octet-stream"),
+    ("run.sh", b"#!/bin/sh\necho hi\n", "text/plain"),
+    ("index.html", b"<html><script>alert(1)</script></html>", "text/plain"),
+    ("logo.svg", b"<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>", "text/plain"),
+    ("bundle.zip", b"PK\x03\x04\x14\x00\x00\x00\x08\x00", "application/octet-stream"),
+    ("phone.apk", b"PK\x03\x04\x14\x00\x00\x00\x08\x00", "application/octet-stream"),
+    ("song.m4a", b"\x00\x00\x00\x20ftypM4A \x00\x00\x00\x00", "application/octet-stream"),
+    ("notes.md", b"# title\n\ntext\n", "text/plain"),
+    ("photo.heic", b"\x00\x00\x00\x18ftypheic\x00\x00\x00\x00", "application/octet-stream"),
+])
+def test_any_file_type_can_be_created_and_the_type_comes_from_the_content(monkeypatch, tmp_path, name, data, mime):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    resp = _post_create(c, data=data, filename=name)
+    assert resp.status_code == 202, resp.get_json()
+    payload = facade.submitted[0].payload
+    assert payload["mime_type"] == mime, "never claimed from the name or the browser"
+    assert payload["source_name"] == name, "the name stays as the user chose it"
+
+
+def test_an_html_or_svg_file_is_never_an_inline_type():
+    from meshsrv.attachments.snapshots import _INLINE_MIME_TYPES
+
+    assert _INLINE_MIME_TYPES == frozenset({"image/jpeg", "image/png", "image/webp"})
+    from meshsrv.attachments.mime_allowlist import detect_mime_type
+
+    for head in (b"<!doctype html><script>x</script>", b"<svg xmlns='http://www.w3.org/2000/svg'/>", b"%PDF-1.7"):
+        assert detect_mime_type(head) not in _INLINE_MIME_TYPES
+
+
+def test_a_name_with_a_path_is_reduced_to_a_single_safe_component(monkeypatch, tmp_path):
+    facade = _FakeFacade(providers={PROVIDER_ID: _provider()}, spool_dir=tmp_path / "spool")
+    c = _client(monkeypatch, facade)
+    for index, raw in enumerate(("..\\..\\Windows\\system32\\evil.exe", "../../etc/cron.d/job", "/abs/run.sh", "a/b/c.bat")):
+        resp = _post_create(c, data=b"echo " + raw.encode("utf-8"), filename=raw, meta=_make_meta(client_request_id="req-path-%d" % index))
+        assert resp.status_code == 202
+        name = facade.submitted[-1].payload["source_name"]
+        assert "/" not in name and "\\" not in name and ".." not in name, name

@@ -361,6 +361,12 @@ class _CommittedHandoff:
     canonical_hash: str
 
 
+def _interpreter_is_shutting_down(error: BaseException) -> bool:
+    """concurrent.futures refuses new work once the interpreter is exiting: 'cannot schedule new futures after interpreter
+    shutdown' (or '... after shutdown' for a pool that was shut down)."""
+    return isinstance(error, RuntimeError) and "cannot schedule new futures" in str(error)
+
+
 class AttachmentsService:
     """See module docstring. Construct once per workspace with its
     already-constructed collaborators (this module builds none of them
@@ -631,7 +637,9 @@ class AttachmentsService:
         # (5s) had already elapsed.
         try:
             self.tick()
-        except Exception:  # noqa: BLE001 - the worker thread must never die from one bad tick
+        except Exception as error:  # noqa: BLE001 - the worker thread must never die from one bad tick
+            if self._stop_event.is_set() or _interpreter_is_shutting_down(error):
+                return
             logger.exception("AttachmentsService initial tick failed")
         while not self._stop_event.is_set():
             self._wake_event.wait(timeout=self._tick_seconds)
@@ -640,7 +648,12 @@ class AttachmentsService:
                 break
             try:
                 self.tick()
-            except Exception:  # noqa: BLE001 - the worker thread must never die from one bad tick
+            except Exception as error:  # noqa: BLE001 - the worker thread must never die from one bad tick
+                if self._stop_event.is_set() or _interpreter_is_shutting_down(error):
+                    # The process is going away (SIGTERM mid-tick): the thread pool of a relay probe refuses new work.
+                    # That is the end of the worker, not a failed tick.
+                    logger.info("AttachmentsService worker stopping: the process is shutting down")
+                    break
                 logger.exception("AttachmentsService tick failed")
 
     # ---- one tick ---------------------------------------------------------
@@ -662,6 +675,8 @@ class AttachmentsService:
         # on this worker thread, holding this connection - never on the
         # radio listener thread, which only ever built the InboundEvent
         # and enqueued it (enqueue_inbound() above).
+        if self._stop_event.is_set():
+            return 0                                   # asked to stop: start nothing new (no probe, no step)
         self._drain_inbound_events()
         self._catch_up_after_unlock()
 
@@ -704,6 +719,8 @@ class AttachmentsService:
         # inbound-event dispatch above - everything after this is either
         # a cheap DB scan or a run_step() call, which does its own I/O
         # only when a row is actually due.
+        if self._stop_event.is_set():
+            return 0                                   # the relay probes use a thread pool: never start one while stopping
         self._connectivity.refresh()
 
         processed = 0

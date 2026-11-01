@@ -440,6 +440,21 @@ download, Save to Files, delete, cleanup, and the removal of the experimental fl
   (`stream_encode_multipart(use_tempfile=False)`). `tests/test_mca_api_attachments.py` pins it (a 750 KB picture, the plaintext-write spy) and the locked case
   (one log line, one notification, nothing taken or queued, the rule stays enabled and the run counts for the 15 minute rule).
 
+- **Findings of the real round on .104 (2026-11-01), fixed in PR 5:**
+  - after a restart and an unlock the transfer list showed "Encrypted file" for every row: the snapshot built while locked has no
+    names and the incremental refresh only rebuilds rows that changed. The service now asks the publisher for one full rebuild
+    after an unlock (`request_rebuild()`).
+  - enable and disable wrote the converted files with the umask's 0644: spool files and the identity seed and tokens went from 0600
+    to 0644 (the `keys/` and `files/` directories did not change, so this was a loosening, not a leak). `encrypt_file` now takes a
+    mode (0600 by default) and the migration keeps each file's own mode in both directions.
+  - the backup a disable makes holds the encrypted workspace and needs the passphrase; it is listed with `encrypted: true` and
+    warned about calmly. Only a plain backup gets the red "anyone can read it" warning.
+  - the worker logged `AttachmentsService tick failed ... cannot schedule new futures after interpreter shutdown` on a stop and the
+    stop took about 10 s. Not vault related: nothing told the MCAttach worker to stop when gunicorn's worker was asked to exit, so a
+    tick that was mid-flight started a relay probe on a thread pool the exiting interpreter refuses, and the in-flight probe held
+    the exit. `gunicorn.conf.py`'s `worker_exit` now calls `mca_runtime.stop_for_shutdown()` (stop flag, bounded wait), the tick
+    starts nothing once the flag is set, and the interpreter-shutdown error ends the worker without an ERROR line.
+
 ## Notes for later PRs (from the owner's PR 1 review)
 
 - **PR 2 (done here):** unlock is serialized with MCAttach work and refused with a clear message when free memory is

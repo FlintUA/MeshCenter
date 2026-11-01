@@ -701,7 +701,10 @@
     "sort_newest": "Сначала новые",
     "sort_oldest": "Сначала старые",
     "sort_name": "По имени",
-    "sort_size": "По размеру, большие сначала"
+    "sort_size": "По размеру, большие сначала",
+    "filter_only": "Только: {name}",
+    "filter_clear": "Показать все файлы",
+    "counts_for_contact": "Счётчики только для {name}"
   },
   "about": {
     "tab_overview": "Обзор",

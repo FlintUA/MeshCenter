@@ -2930,6 +2930,44 @@ async function test_fx1b_a_conversation_is_newest_first_too_and_the_saved_sort_i
     console.log('PASS: test_fx1b_a_conversation_is_newest_first_too_and_the_saved_sort_is_restored');
 }
 
+async function test_fx1b_a_selected_contact_shows_a_filter_chip_and_the_x_shows_everything() {
+    const cps = [];
+    const sandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => {
+            if (url === '/api/mca/contacts') return json(200, { ok: true, contacts: [contact('!aaaaaaaa', 'trusted')] });
+            if (url.startsWith('/api/attachments?')) {
+                const cp = new URL(url, 'http://x').searchParams.get('counterparty');
+                cps.push(cp);
+                const all = [attachment('a1', 'sent', 'SENT', { counterparty_contact_id: '!aaaaaaaa' }), attachment('a2', 'received', 'AVAILABLE', { counterparty_contact_id: '!bbbbbbbb' })];
+                const list = cp ? all.filter((a) => a.counterparty_contact_id === cp) : all;
+                return json(200, { ok: true, attachments: list, total: list.length });
+            }
+            return undefined;
+        }),
+    });
+    const hidden = (id) => { const el = sandbox._document.getElementById(id); return el.hidden !== undefined ? el.hidden : el.style.display === 'none'; };
+    activate(sandbox);
+    await waitFor(() => listHtml(sandbox).includes('filesCard-a2'));
+    assert.equal(hidden('filesFilterChip'), true, 'no contact selected: no chip');
+    assert.equal(sandbox._document.getElementById('filesCount_all').textContent, '2');
+
+    sandbox.window.MeshCenterTargets.toggleSelect('node', '!aaaaaaaa');
+    await waitFor(() => cps.includes('!aaaaaaaa'));
+    await waitFor(() => !listHtml(sandbox).includes('filesCard-a2'));
+    assert.equal(hidden('filesFilterChip'), false, 'a contact is selected: the chip is shown');
+    assert.match(sandbox._document.getElementById('filesFilterChipText').textContent, /^Only: .*aaaaaaaa/, 'it names the contact');
+    assert.equal(sandbox._document.getElementById('filesCount_all').textContent, '1', 'the counters are for that contact');
+    assert.match(sandbox._document.getElementById('filesSeg_all').getAttribute('title'), /Counts for .* only/, 'and say so');
+
+    // the x clears the contact filter: all files again, no chip
+    dispatch(sandbox, { 'data-files-action': 'clear-contact' });
+    await waitFor(() => listHtml(sandbox).includes('filesCard-a2'));
+    assert.equal(hidden('filesFilterChip'), true, 'the chip is gone');
+    assert.equal(sandbox._document.getElementById('filesCount_all').textContent, '2', 'the counters are for everything again');
+    assert.equal(cps[cps.length - 1], null, 'the last request carries no counterparty');
+    console.log('PASS: test_fx1b_a_selected_contact_shows_a_filter_chip_and_the_x_shows_everything');
+}
+
 // ---- MCA-UX2: Accept needs no second confirmation, Reject asks once -----------------------------------------------
 
 function consentRoutes() {
@@ -3060,10 +3098,11 @@ async function main() {
     await test_fx1b_a_held_offer_says_why_and_the_files_settings_are_saved();
     await test_fx1b_the_list_sorts_newest_first_by_default_and_by_choice();
     await test_fx1b_a_conversation_is_newest_first_too_and_the_saved_sort_is_restored();
+    await test_fx1b_a_selected_contact_shows_a_filter_chip_and_the_x_shows_everything();
     // MCA-UX2
     await test_accept_and_download_sends_at_once_without_a_confirm_dialog();
     await test_reject_asks_once_with_a_danger_dialog_and_cancel_sends_nothing();
-    console.log('All files UI behavior tests passed (72 scenarios).');
+    console.log('All files UI behavior tests passed (73 scenarios).');
 }
 
 main()

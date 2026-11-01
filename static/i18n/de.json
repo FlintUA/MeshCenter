@@ -701,7 +701,10 @@
     "sort_newest": "Neueste zuerst",
     "sort_oldest": "Älteste zuerst",
     "sort_name": "Name",
-    "sort_size": "Größe, größte zuerst"
+    "sort_size": "Größe, größte zuerst",
+    "filter_only": "Nur: {name}",
+    "filter_clear": "Alle Dateien anzeigen",
+    "counts_for_contact": "Zahlen nur für {name}"
   },
   "about": {
     "tab_overview": "Übersicht",

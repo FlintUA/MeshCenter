@@ -7254,6 +7254,39 @@ html[data-theme="dark"] .dock-vault-chip.is-locked, html[data-theme="dark"] .doc
 .files-sort-item[aria-checked="true"] { font-weight: 700; }
 .files-select-btn[aria-pressed="true"] { background: var(--mc-primary-soft, #e3efff); border-color: var(--mc-accent, #1769d2); color: var(--mc-accent, #1769d2); }
 
+.files-filter-chip {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    align-self: flex-start;
+    margin: 8px 12px 0;
+    padding: 2px 4px 2px 12px;
+    border: 1px solid var(--mc-accent, #1769d2);
+    border-radius: 999px;
+    background: var(--mc-primary-soft, #e3efff);
+    color: var(--mc-accent, #1769d2);
+    font-size: 13px;
+    font-weight: 600;
+    max-width: calc(100% - 24px);
+}
+.files-filter-chip[hidden] { display: none; }
+.files-filter-chip-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.files-filter-chip-x {
+    flex: 0 0 auto;
+    width: 32px;
+    height: 32px;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: inherit;
+    font-size: 14px;
+    cursor: pointer;
+}
+@media (max-width: 768px) {
+    .files-filter-chip { margin: 4px 6px 0; }
+    .files-filter-chip-x { width: 44px; height: 36px; border-radius: 18px; }
+}
 .files-bulkbar {
     flex: 0 0 auto;
     display: flex;

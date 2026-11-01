@@ -1110,7 +1110,38 @@
         list.innerHTML = '<div class="files-empty">' + esc(message) + '</div>';
     }
 
+    // FX1 Phase B: when a contact is selected in the sidebar the list (and its counters) are for that contact only. That was
+    // invisible; the chip says so and the x shows all files again.
+    function filterContactName() {
+        if (!state.counterparty) return '';
+        var contact = findContact(state.counterparty);
+        return (contact && (contact.name || contact.contact_id)) || state.counterparty;
+    }
+
+    function renderFilterChip() {
+        var chip = getEl('filesFilterChip');
+        var name = filterContactName();
+        if (chip) {
+            if (chip.hidden !== undefined) chip.hidden = !name; else chip.style.display = name ? '' : 'none';
+            var text = getEl('filesFilterChipText');
+            if (text) text.textContent = name ? tparams('files.filter_only', { name: name }, 'Only: ' + name) : '';
+        }
+        var hint = name ? tparams('files.counts_for_contact', { name: name }, 'Counts for ' + name + ' only') : '';
+        ['incoming', 'sent', 'all'].forEach(function (seg) {
+            var btn = getEl('filesSeg_' + seg);
+            if (!btn) return;
+            if (hint) btn.setAttribute('title', hint); else if (btn.removeAttribute) btn.removeAttribute('title');
+        });
+    }
+
+    function clearContactFilter() {
+        var store = (typeof window !== 'undefined') ? window.MeshCenterTargets : null;
+        if (store && typeof store.clearSelection === 'function') { store.clearSelection(); return; }
+        if (state.counterparty) { state.counterparty = ''; loadTransfers(); }
+    }
+
     function renderSegments() {
+        renderFilterChip();
         var counts = segmentCounts(state.attachments);
         ['incoming', 'sent', 'all'].forEach(function (seg) {
             var count = getEl('filesCount_' + seg);
@@ -2028,6 +2059,7 @@
         if (action === 'refresh') { state.moreOpen = false; renderToolbar(); refresh(); return; }
         if (action === 'segment') { setSegment(modal.getAttribute('data-segment')); return; }
         if (action === 'sort') { state.moreOpen = false; renderToolbar(); setSort(modal.getAttribute('data-sort')); return; }
+        if (action === 'clear-contact') { clearContactFilter(); return; }
         if (action === 'select-mode') { state.moreOpen = false; setSelectMode(!state.selectMode); return; }
         if (action === 'search-open') { state.moreOpen = false; setSearchOpen(true); return; }
         if (action === 'search-close') { setSearchOpen(false); return; }

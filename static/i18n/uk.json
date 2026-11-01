@@ -701,7 +701,10 @@
     "sort_newest": "Спочатку нові",
     "sort_oldest": "Спочатку старі",
     "sort_name": "За назвою",
-    "sort_size": "За розміром, великі спочатку"
+    "sort_size": "За розміром, великі спочатку",
+    "filter_only": "Лише: {name}",
+    "filter_clear": "Показати всі файли",
+    "counts_for_contact": "Лічильники лише для {name}"
   },
   "about": {
     "tab_overview": "Огляд",

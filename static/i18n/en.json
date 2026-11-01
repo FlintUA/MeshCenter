@@ -2140,5 +2140,23 @@
     "snapshot_saved_api_small": "Picture saved to Media: {resolution}, small picture from the camera.",
     "snapshot_saved_stream_only": "Picture saved to Media: {resolution}, taken from the running stream.",
     "snapshot_hint_stream_running_main": "The picture is taken from the running stream ({resolution})."
+  },
+  "recipient": {
+    "search_label": "Search contacts",
+    "search_placeholder": "Name or ID",
+    "clear": "Clear search",
+    "favorites_only": "Favorites only",
+    "list_label": "Contacts",
+    "group_recent": "Recently used",
+    "group_ready": "Contacts you can send to",
+    "group_nokey": "No key yet",
+    "key_unknown": "Key unknown, request the key",
+    "key_waiting": "Key requested, waiting for the answer",
+    "request_key": "Request key",
+    "no_match": "No contact matches",
+    "none": "No known contacts yet.",
+    "count": "{shown} of {total}",
+    "type_to_narrow": "Showing {shown} of {found}, type to narrow",
+    "selected": "Selected: {name}"
   }
 }

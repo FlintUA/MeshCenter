@@ -309,6 +309,21 @@
         var selectedEl = host.querySelector('.rp-selected');
         var touchedPrefs = false;
 
+        // A host without a real DOM (a test's fake document) gets the same markup, written as one string, and no events.
+        if (!input || !clear || !favs || !list || !count || !selectedEl) {
+            var headless = {
+                model: model,
+                setContacts: function (contacts) {
+                    model.setContacts(contacts);
+                    host.innerHTML = frameHtml(ctx, id) + renderListHtml(model.view(), ctx, model.selected);
+                },
+                setSelected: function (value) { if (value) model.select(value); else model.clearSelection(); },
+                getSelected: function () { return model.selected; },
+                refresh: function () {},
+            };
+            return headless;
+        }
+
         function paint() {
             var view = model.view();
             list.innerHTML = renderListHtml(view, ctx, model.selected);

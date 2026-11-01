@@ -210,6 +210,7 @@ function buildSandbox({ fetchImpl }) {
     vm.createContext(sandbox);
     // Load order mirrors index.html: targets.js (the shared store) before files.js.
     vm.runInContext(targetsSource, sandbox, { filename: 'targets.js' });
+    vm.runInContext(readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'static', 'recipient-picker.js'), 'utf8'), sandbox, { filename: 'recipient-picker.js' });
     vm.runInContext(source, sandbox, { filename: 'files.js' });
     return sandbox;
 }
@@ -434,10 +435,10 @@ async function test_activate_merges_contacts_and_excludes_local() {
     await waitFor(() => store.getNode('!22222222') !== null);
 
     dispatch(sandbox, { 'data-files-action': 'send' });
-    const sel = sandbox._document.getElementById('filesSendRecipient');
+    const sel = sandbox._document.getElementById('filesSendRecipientPicker');
     assert.ok(sel.innerHTML.includes('!22222222'), 'unbound known node must appear as a recipient');
     assert.ok(!sel.innerHTML.includes('!11111111'), 'the local node must never be listed as a recipient');
-    assert.ok(sel.innerHTML.includes('disabled'), 'the unbound node is present but not sendable (disabled option)');
+    assert.ok(sel.innerHTML.includes('is-disabled') && !sel.innerHTML.includes('data-rp-id="!22222222"'), 'the unbound node is present but not sendable (a disabled row, never a selectable one)');
 
     console.log('PASS: test_activate_merges_contacts_and_excludes_local');
 }
@@ -1240,10 +1241,14 @@ async function test_send_lists_all_providers_with_reason() {
     assert.match(html, /Provider is disabled/, 'the non-ready provider must show why it is disabled');
     assert.equal(sandbox._document.getElementById('filesSendProvider').value, 'prov1', 'the ready default provider is auto-selected');
 
-    // Relay state and upload readiness are rendered as separate facts.
+    // Relay state and upload readiness are separate facts, each stated ONCE: the relay line has the relay state, the check line
+    // under it the (authoritative) upload readiness. (UX5: "Upload: ready" used to be printed in both.)
+    await waitFor(() => (sandbox._document.getElementById('filesSendReadinessCheck').innerHTML || '').includes('Upload:'));
     const readiness = sandbox._document.getElementById('filesSendReadiness').innerHTML;
+    const check = sandbox._document.getElementById('filesSendReadinessCheck').innerHTML;
     assert.match(readiness, /Relay state/, 'relay state must be rendered');
-    assert.match(readiness, /Upload: ready/, 'upload readiness must be rendered separately');
+    assert.ok(!readiness.includes('Upload'), 'the relay line does not repeat the upload readiness');
+    assert.equal((readiness + check).split('Upload:').length - 1, 1, 'the upload readiness appears exactly once in the dialog');
 
     console.log('PASS: test_send_lists_all_providers_with_reason');
 }
@@ -2388,7 +2393,7 @@ async function test_send_dialog_no_fallback_for_invalid_channel_disappeared() {
         dispatch(sandbox, { 'data-files-action': 'send' });
         const sel = sandbox._document.getElementById('filesSendRecipient');
         assert.equal(sel.value, '', 'a channel selection must not pre-select a recipient');
-        assert.ok(sel.innerHTML.includes('Choose a trusted contact'), 'a channel selection shows the empty placeholder');
+        assert.ok(!sandbox._document.getElementById('filesSendRecipientPicker').innerHTML.includes('is-selected'), 'a channel selection selects nobody');
     }
 
     // (b) a selected node that is present but NOT sendable (confirmation_required).
@@ -2400,7 +2405,7 @@ async function test_send_dialog_no_fallback_for_invalid_channel_disappeared() {
         dispatch(sandbox, { 'data-files-action': 'send' });
         const sel = sandbox._document.getElementById('filesSendRecipient');
         assert.equal(sel.value, '', 'a non-sendable node must not be pre-selected');
-        assert.ok(sel.innerHTML.includes('Choose a trusted contact'), 'a non-sendable node shows the empty placeholder');
+        assert.ok(!sandbox._document.getElementById('filesSendRecipientPicker').innerHTML.includes('is-selected'), 'a non-sendable node selects nobody');
     }
 
     // (c) a selected node that has disappeared (not in the contact list at all).
@@ -2412,7 +2417,7 @@ async function test_send_dialog_no_fallback_for_invalid_channel_disappeared() {
         dispatch(sandbox, { 'data-files-action': 'send' });
         const sel = sandbox._document.getElementById('filesSendRecipient');
         assert.equal(sel.value, '', 'a disappeared node must not pre-select a recipient');
-        assert.ok(sel.innerHTML.includes('Choose a trusted contact'), 'a disappeared node shows the empty placeholder');
+        assert.ok(!sandbox._document.getElementById('filesSendRecipientPicker').innerHTML.includes('is-selected'), 'a disappeared node selects nobody');
     }
 
     console.log('PASS: test_send_dialog_no_fallback_for_invalid_channel_disappeared');
@@ -2788,10 +2793,13 @@ async function test_send_pictures_untrusted_contact_offers_connect_securely_and_
     await waitFor(() => sandbox.window.MeshCenterTargets.getNode('!bbbbbbbb') !== null);
     await sandbox.window.MeshCenterFiles.openSendPictures(PICS(2));
     const doc = sandbox._document;
-    assert.ok(!doc.getElementById('filesSendRecipient').innerHTML.includes('value="!bbbbbbbb" disabled'), 'a contact that only lacks a key can be chosen');
-    doc.getElementById('filesSendRecipient').value = '!bbbbbbbb';
+    // UX5: a node without a key is listed in its own group, disabled and never selectable, with a Request key action in the row
+    const picker = doc.getElementById('filesSendRecipientPicker').innerHTML;
+    assert.ok(picker.includes('data-rp-nokey="!bbbbbbbb"') && !picker.includes('data-rp-id="!bbbbbbbb"'), 'a contact without a key is not selectable');
+    assert.ok(picker.includes('data-rp-id="!aaaaaaaa"'), 'a trusted contact is');
+    assert.ok(picker.includes('Key unknown, request the key') && picker.includes('data-files-action="send-request-key"'), 'with the reason and the request action');
+    doc.getElementById('filesSendRecipient').value = '!bbbbbbbb';          // even a forced value cannot be sent to
     dispatchChange(sandbox, 'filesSendRecipient');
-    assert.ok(doc.getElementById('filesSendKeyStatus').innerHTML.includes('Connect securely'), 'the same Connect securely path as the Files dialog');
     assert.equal(doc.getElementById('filesSendSubmit').disabled, true, 'Send stays off until the contact is trusted');
     doc.getElementById('filesSendProvider').value = 'prov1';
     doc.getElementById('filesSendSubmit').disabled = false;

@@ -2140,5 +2140,23 @@
     "snapshot_saved_api_small": "Bild in Medien gespeichert: {resolution}, kleines Bild von der Kamera.",
     "snapshot_saved_stream_only": "Bild in Medien gespeichert: {resolution}, aus dem laufenden Stream aufgenommen.",
     "snapshot_hint_stream_running_main": "Das Bild wird aus dem laufenden Stream aufgenommen ({resolution})."
+  },
+  "recipient": {
+    "search_label": "Kontakte suchen",
+    "search_placeholder": "Name oder ID",
+    "clear": "Suche löschen",
+    "favorites_only": "Nur Favoriten",
+    "list_label": "Kontakte",
+    "group_recent": "Zuletzt verwendet",
+    "group_ready": "Kontakte, an die du senden kannst",
+    "group_nokey": "Noch kein Schlüssel",
+    "key_unknown": "Schlüssel unbekannt, Schlüssel anfordern",
+    "key_waiting": "Schlüssel angefordert, warte auf Antwort",
+    "request_key": "Schlüssel anfordern",
+    "no_match": "Kein Kontakt passt",
+    "none": "Noch keine bekannten Kontakte.",
+    "count": "{shown} von {total}",
+    "type_to_narrow": "{shown} von {found} angezeigt, tippe zum Eingrenzen",
+    "selected": "Ausgewählt: {name}"
   }
 }

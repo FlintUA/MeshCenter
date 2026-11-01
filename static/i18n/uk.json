@@ -2140,5 +2140,23 @@
     "snapshot_saved_api_small": "Знімок збережено в Медіа: {resolution}, малий знімок від камери.",
     "snapshot_saved_stream_only": "Знімок збережено в Медіа: {resolution}, взято з працюючого потоку.",
     "snapshot_hint_stream_running_main": "Знімок береться з працюючого потоку ({resolution})."
+  },
+  "recipient": {
+    "search_label": "Пошук контактів",
+    "search_placeholder": "Ім’я або ID",
+    "clear": "Очистити пошук",
+    "favorites_only": "Лише вибрані",
+    "list_label": "Контакти",
+    "group_recent": "Нещодавно використані",
+    "group_ready": "Контакти, яким можна надіслати",
+    "group_nokey": "Ключа поки немає",
+    "key_unknown": "Ключ невідомий, запросіть ключ",
+    "key_waiting": "Ключ запитано, чекаємо відповіді",
+    "request_key": "Запитати ключ",
+    "no_match": "Нічого не знайдено",
+    "none": "Відомих контактів поки немає.",
+    "count": "{shown} з {total}",
+    "type_to_narrow": "Показано {shown} з {found}, уточніть пошук",
+    "selected": "Вибрано: {name}"
   }
 }

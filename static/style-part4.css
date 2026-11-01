@@ -6889,3 +6889,251 @@ body.media-lightbox-open {
     flex: 0 0 auto; min-height: 34px; padding: 4px 14px; border: 0; border-radius: 8px;
     background: #fff; color: #0f4fa3; font-weight: 700; cursor: pointer;
 }
+
+/* ---- recipient picker (UX5): one searchable picker for every MCAttach recipient ---- */
+.rp {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+}
+
+.rp-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* ONE frame (the wrapper), as in the gallery filter: the input inside has none of its own */
+.rp-field {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 44px;
+    box-sizing: border-box;
+    border: 1px solid var(--mc-border);
+    border-radius: 8px;
+    background: var(--mc-bg-panel);
+    color: var(--mc-text-primary);
+}
+
+.rp-field:focus-within {
+    border-color: var(--mc-border-focus, var(--mc-accent, #1f6feb));
+    outline: 2px solid var(--mc-border-focus, var(--mc-accent, #1f6feb));
+    outline-offset: 1px;
+}
+
+.rp-ico {
+    display: inline-flex;
+    flex: 0 0 auto;
+    padding-left: 10px;
+    color: var(--mc-text-secondary, #667085);
+}
+
+/* doubled class: ui-kit.css (loaded later) styles every text input, incl. a dark-theme background and the global focus ring */
+.rp .rp-input.rp-input {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
+    max-width: 100%;
+    height: 100%;
+    min-height: 0;
+    margin: 0;
+    padding: 0 4px 0 8px;
+    box-sizing: border-box;
+    border: 0 !important;
+    border-radius: 0;
+    outline: 0 !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    -webkit-appearance: none;
+    appearance: none;
+    color: inherit;
+    font: inherit;
+    font-size: 16px;
+}
+
+.rp .rp-input.rp-input:focus,
+.rp .rp-input.rp-input:focus-visible {
+    outline: 0 !important;
+    box-shadow: none !important;
+    border: 0 !important;
+}
+
+.rp .rp-input.rp-input::placeholder {
+    color: var(--mc-text-secondary, #667085);
+    opacity: 1;
+}
+
+.rp-clear {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--mc-text-secondary, #667085);
+    cursor: pointer;
+}
+
+.rp-clear[hidden] {
+    display: none;
+}
+
+.rp-count {
+    flex: 0 0 auto;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    color: var(--mc-text-primary);
+}
+
+.rp-count:empty {
+    display: none;
+}
+
+.rp-count.is-empty {
+    color: var(--mc-danger, #b42318);
+}
+
+.rp-favs {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 36px;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.rp-favs-box {
+    width: 20px;
+    height: 20px;
+    margin: 0;
+    accent-color: var(--mc-accent, #1f6feb);
+}
+
+.rp-list {
+    max-height: 260px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    border: 1px solid var(--mc-border);
+    border-radius: 8px;
+    background: var(--mc-bg-panel);
+}
+
+.rp-group {
+    position: sticky;
+    top: 0;
+    padding: 6px 10px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--mc-text-secondary, #667085);
+    background: var(--mc-bg-muted, #eef2f7);
+}
+
+.rp-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    min-height: 44px;
+    padding: 6px 10px;
+    box-sizing: border-box;
+    border: 0;
+    border-bottom: 1px solid var(--mc-border-soft, var(--mc-border));
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.rp-row:hover:not(.is-disabled),
+.rp-row:focus-visible {
+    background: var(--mc-bg-muted, #eef2f7);
+}
+
+.rp-row.is-selected {
+    background: rgba(31, 111, 235, 0.14);
+}
+
+.rp-row.is-disabled {
+    flex-wrap: wrap;
+    cursor: default;
+    opacity: 0.8;
+}
+
+.rp-main {
+    display: flex;
+    flex: 1 1 0;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.rp-name {
+    font-size: 14px;
+    overflow-wrap: anywhere;
+}
+
+.rp-sub {
+    font-size: 11px;
+    color: var(--mc-text-secondary, #667085);
+    overflow-wrap: anywhere;
+}
+
+.rp-star {
+    flex: 0 0 auto;
+    color: #d9a400;
+}
+
+.rp-check {
+    flex: 0 0 auto;
+    font-weight: 700;
+    color: var(--mc-accent, #1f6feb);
+}
+
+.rp-reason {
+    flex: 1 0 100%;
+    font-size: 11px;
+    color: var(--mc-text-secondary, #667085);
+}
+
+.rp-request {
+    min-height: 36px;
+    padding: 0 12px;
+    border: 1px solid var(--mc-border);
+    border-radius: 8px;
+    background: var(--mc-bg-muted, #eef2f7);
+    color: var(--mc-text-primary);
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.rp-more,
+.rp-empty {
+    padding: 10px;
+    font-size: 12px;
+    text-align: center;
+    color: var(--mc-text-secondary, #667085);
+}
+
+.rp-selected {
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.rp-selected:empty {
+    display: none;
+}
+
+/* the Send dialog: a key-status box with nothing in it is not drawn (it used to show as an empty frame under the recipient) */
+.files-provider-probe:empty {
+    display: none;
+}

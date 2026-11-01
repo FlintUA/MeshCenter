@@ -448,15 +448,21 @@ def test_swap_information_is_part_of_the_preflight(env):
 def test_enable_and_disable_keep_the_permission_bits_of_every_file(env):
     """The live round found the spool files and the secrets loosened from 0600 to 0644 by the conversion (the umask)."""
     root = Path(env.paths.root)
-    wanted = {"spool/outgoing/sent1": 0o600, "keys/identity.seed": 0o600, "files/saved1": 0o640, "cache/incoming/recv1": 0o644}
-    for rel, mode in wanted.items():
-        os.chmod(str(root / rel), mode)
+    # plain path -> (its mode, the encrypted name it gets: a saved file is named by its attachment id)
+    wanted = {
+        "spool/outgoing/sent1": (0o600, "spool/outgoing/sent1.mcv"),
+        "keys/identity.seed": (0o600, "keys/identity.seed.mcv"),
+        "files/" + SECRET_NAME: (0o640, "files/saved1.mcv"),
+        "cache/incoming/recv1": (0o644, "cache/incoming/recv1.mcv"),
+    }
+    for plain, (mode, _enc) in wanted.items():
+        os.chmod(str(root / plain), mode)
     result = run_enable(env)
-    for rel, mode in wanted.items():
-        assert stat.S_IMODE((root / (rel + ".mcv")).stat().st_mode) == mode, "enable: " + rel
+    for plain, (mode, enc) in wanted.items():
+        assert stat.S_IMODE((root / enc).stat().st_mode) == mode, "enable: " + plain
     migration.disable(env, bytes(result.storage_key), make_backup_copy=False)
-    for rel, mode in wanted.items():
-        assert stat.S_IMODE((root / rel).stat().st_mode) == mode, "disable: " + rel
+    for plain, (mode, _enc) in wanted.items():
+        assert stat.S_IMODE((root / plain).stat().st_mode) == mode, "disable: " + plain
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")

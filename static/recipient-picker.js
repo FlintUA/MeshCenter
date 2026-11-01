@@ -70,7 +70,9 @@
         var cap = o.cap > 0 ? o.cap : CAP;
         var recentIds = Array.isArray(o.recent) ? o.recent : [];
         var query = normalizeQuery(o.query);
-        var filtered = list.filter(function (c) { return matches(c, query) && (!o.favoritesOnly || c.favorite === true); });
+        var filtered = list.filter(function (c) {
+            return matches(c, query) && (!o.favoritesOnly || c.favorite === true) && (!o.mcOnly || c.mc === true);
+        });
         var ready = filtered.filter(function (c) { return c.can_send === true; });
         var nokey = filtered.filter(function (c) { return c.can_send !== true; }).sort(byName);
         // Nodes without a key cannot receive a file: they are NOT listed unless asked for (`includeNokey`), and counted
@@ -124,6 +126,7 @@
             contacts: [],
             query: '',
             favoritesOnly: false,
+            mcOnly: false,            // FX1 Phase C: only nodes seen running MeshCenter (not remembered: it is a quick narrowing)
             favoritesTouched: s.favoritesOnly === true || s.favoritesOnly === false,
             recent: Array.isArray(s.recent) ? s.recent.slice(0, RECENT_MAX) : [],
             selected: '',
@@ -153,6 +156,7 @@
         model.setQuery = function (query) { model.query = String(query == null ? '' : query); };
         model.setShowNokey = function (value) { model.showNokey = Boolean(value); };
         model.setFavoritesOnly = function (value) { model.favoritesOnly = Boolean(value); model.favoritesTouched = true; };
+        model.setMcOnly = function (value) { model.mcOnly = Boolean(value); };
         model.setRecent = function (ids) { model.recent = Array.isArray(ids) ? ids.slice(0, RECENT_MAX) : []; };
         model.select = function (id) {
             var c = find(id);
@@ -164,7 +168,7 @@
         model.selectedContact = function () { return model.selected ? find(model.selected) : null; };
         model.view = function () {
             return build(model.contacts, {
-                query: model.query, favoritesOnly: model.favoritesOnly, recent: model.recent, cap: model.cap,
+                query: model.query, favoritesOnly: model.favoritesOnly, mcOnly: model.mcOnly, recent: model.recent, cap: model.cap,
                 includeNokey: model.showNokey, sendableOnly: model.sendableOnly,
             });
         };
@@ -249,7 +253,8 @@
         var title = c.name || c.short_name || c.id;
         var sub = [c.short_name && c.short_name !== title ? c.short_name : '', c.id].filter(Boolean).join(' · ');
         var star = c.favorite ? '<span class="rp-star" aria-hidden="true">★</span>' : '';
-        var main = star + '<span class="rp-main"><strong class="rp-name">' + escapeHtml(title) + '</strong>'
+        var mcMark = c.mc === true ? '<span class="rp-mc" title="' + escapeHtml(ctx.t('recipient.mc_badge', null, 'Seen running MeshCenter')) + '">MC</span>' : '';
+        var main = star + '<span class="rp-main"><strong class="rp-name">' + escapeHtml(title) + mcMark + '</strong>'
             + '<span class="rp-sub">' + escapeHtml(sub) + '</span></span>';
         if (c.can_send === true) {
             var on = c.id === selectedId;
@@ -311,6 +316,8 @@
             + '" title="' + escapeHtml(t('recipient.clear', null, 'Clear search')) + '" hidden>' + icon(ICON_CLOSE) + '</button></div>'
             + '<button type="button" class="rp-favtoggle" data-rp-favs aria-pressed="false" aria-label="' + escapeHtml(t('recipient.favorites_only', null, 'Favorites only'))
             + '" title="' + escapeHtml(t('recipient.favorites_only', null, 'Favorites only')) + '">☆</button>'
+            + '<button type="button" class="rp-mctoggle" data-rp-mc aria-pressed="false" aria-label="' + escapeHtml(t('recipient.mc_only', null, 'MeshCenter only'))
+            + '" title="' + escapeHtml(t('recipient.mc_only', null, 'MeshCenter only')) + '">MC</button>'
             + '<span class="rp-count" role="status" aria-live="polite"></span></div>'
             + '<div class="rp-list" role="listbox" aria-label="' + escapeHtml(t('recipient.list_label', null, 'Contacts')) + '"></div>'
             + '<div class="rp-selected" aria-live="polite"></div>';
@@ -333,13 +340,14 @@
         var input = host.querySelector('.rp-input');
         var clear = host.querySelector('[data-rp-clear]');
         var favs = host.querySelector('[data-rp-favs]');
+        var mcToggle = host.querySelector('[data-rp-mc]');
         var list = host.querySelector('.rp-list');
         var count = host.querySelector('.rp-count');
         var selectedEl = host.querySelector('.rp-selected');
         var touchedPrefs = false;
 
         // A host without a real DOM (a test's fake document) gets the same markup, written as one string, and no events.
-        if (!input || !clear || !favs || !list || !count || !selectedEl) {
+        if (!input || !clear || !favs || !mcToggle || !list || !count || !selectedEl) {
             var headless = {
                 model: model,
                 setContacts: function (contacts) {
@@ -356,12 +364,13 @@
         function paint() {
             var view = model.view();
             list.innerHTML = renderListHtml(view, ctx, model.selected);
-            var active = Boolean(normalizeQuery(model.query)) || model.favoritesOnly;
+            var active = Boolean(normalizeQuery(model.query)) || model.favoritesOnly || model.mcOnly;
             count.textContent = active ? ctx.t('recipient.count', { shown: view.found, total: view.total }, view.found + ' of ' + view.total) : '';
             count.className = 'rp-count' + (active && view.found === 0 ? ' is-empty' : '');
             clear.hidden = !model.query;
             favs.setAttribute('aria-pressed', model.favoritesOnly ? 'true' : 'false');
             favs.textContent = model.favoritesOnly ? '★' : '☆';
+            mcToggle.setAttribute('aria-pressed', model.mcOnly ? 'true' : 'false');
             var chosen = model.selectedContact();
             var name = chosen ? (chosen.name || chosen.short_name || chosen.id) : '';
             selectedEl.textContent = chosen ? ctx.t('recipient.selected', { name: name }, 'Selected: ' + name) : '';
@@ -379,6 +388,7 @@
             var row = target.closest('[data-rp-id]');
             if (row && model.select(row.getAttribute('data-rp-id'))) { paint(); changed(); }
         });
+        mcToggle.addEventListener('click', function () { model.setMcOnly(!model.mcOnly); paint(); });
         favs.addEventListener('click', function () {
             model.setFavoritesOnly(!model.favoritesOnly);
             touchedPrefs = true;

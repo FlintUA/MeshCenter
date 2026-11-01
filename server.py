@@ -37,6 +37,7 @@ from camera.camera_manager import build_camera_manager, network_drivers_from_sta
 from camera.rtsp_driver import drivers_from_store as rtsp_drivers_from_store
 from camera.source_store import CameraSourceStore
 from telemetry import telemetry
+from meshsrv import mc_marking
 from meshsrv import meshtastic_transport
 from meshsrv import planned_restart
 from meshsrv.info_parser import local_node_entry, parse_info_nodes
@@ -4753,6 +4754,8 @@ def get_nodes_list():
                 "last_seen": last_seen,
                 "ignored": ignored,
                 "favorite": favorite,
+                # FX1 Phase C: seen sending a MeshCenter control frame (passive marking, None = never)
+                **mc_marking.mc_fields(n),
 
                 # Normalized telemetry used by the node detail panes.
                 "battery_level": n.get("battery_level"),
@@ -5208,7 +5211,25 @@ def active_radio_node_id():
     return (accepted or str(LOCAL_NODE_ID or "").strip()).lower() or "unknown"
 
 
+def _note_meshcenter_frame(text, node_id):
+    """FX1 Phase C: a real MeshCenter control frame from `node_id` marks that node as running MeshCenter (passive, nothing
+    is ever sent for it). Never raises: marking is a nicety and must not touch the transfer."""
+    try:
+        if not mc_marking.is_mca_frame(text):
+            return
+        persist = False
+        with state_lock:
+            node = nodes.get(node_id)
+            if node is not None:
+                persist = mc_marking.note_frame(node, time.time())
+        if persist:
+            save_nodes()
+    except Exception as error:  # noqa: BLE001
+        print(f"[MC] marking failed: {error}", flush=True)
+
+
 def _dispatch_mca_text(text, node_id, packet_id, channel_index):
+    _note_meshcenter_frame(text, node_id)
     mca_runtime.handle_incoming_meshtastic_text(
         text, node_id, transport_router, data_dir=DATA_DIR, packet_id=packet_id,
         channel_index=channel_index,
@@ -9315,7 +9336,8 @@ def api_nodes_management():
                 "short_name": node.get("short_name", ""),
                 "ignored": node.get("ignored", False),
                 "favorite": node.get("favorite", False),
-                "last_seen": node.get("last_seen", 0)
+                "last_seen": node.get("last_seen", 0),
+                **mc_marking.mc_fields(node),
             })
         nodes_list.sort(key=lambda x: x.get("name", "").lower())
     return jsonify({"nodes": nodes_list, "total": len(nodes_list)})

@@ -4460,6 +4460,7 @@ const CHAT_ACTIONS = {
     'node-filters-reset': () => resetNodeFilters(),
     'nodes-header-online': () => toggleNodeHeaderFilter('hideOffline'),
     'nodes-header-direct': () => toggleNodeHeaderFilter('directOnly'),
+    'nodes-header-mc': () => toggleNodeHeaderFilter('mcOnly'),
     'nodes-header-clear': () => clearNodeHeaderFilters(),
     'notif-mark-read': (target) => {
         markBackendNotificationRead(target.getAttribute('data-id'), target);
@@ -5584,6 +5585,7 @@ function renderNodeCard(node) {
         : '';
 
     const mapBadge = renderNodeMapBadge(node);
+    const mcBadge = renderMeshCenterBadge(node);
     const favoriteStatus = isFavorite ? '⚑' : ' ';
     const ignoreStatus = isIgnored ? '<span class="node-ignore-mark" title="Ignored">🚫</span>' : '';
     const shortName = node.short_name || '-';
@@ -5626,7 +5628,7 @@ function renderNodeCard(node) {
                     <span class="node-favorite-slot" title="${isFavorite ? 'Favorite node' : 'Not favorite'}">${favoriteStatus}</span>
                     <span class="node-activity-square ${activityClass}" title="Node activity"></span>
                     <div class="node-card-name-wrap">
-                        <div class="node-card-title">${escapeHtml(displayName)}</div>
+                        <div class="node-card-title">${escapeHtml(displayName)}${mcBadge}</div>
                     </div>
                     ${ignoreStatus}
                 </div>
@@ -5645,6 +5647,7 @@ function renderNodeCard(node) {
             </div>
 
 
+            ${isSelected ? renderMeshCenterSeenRow(node) : ''}
             ${lastText}
             ${unignoreBtn}
             ${keyRow}
@@ -5727,6 +5730,7 @@ const NODE_FILTER_LABEL_KEYS = {
     directOnly: 'nodes.filter_direct_only',
     hideInfrastructure: 'nodes.filter_hide_infrastructure',
     knownKeyOnly: 'nodes.filter_known_key_only',
+    mcOnly: 'nodes.filter_mc_only',
 };
 
 // The cap applies on a phone while no search is typed (a search shows every match)
@@ -5870,6 +5874,7 @@ function renderNodesHeader(shownCount) {
     };
     fillPill('nodesPillOnline', counts.online, state.hideOffline, 'nodes.header_online', 'nodes.header_online_aria');
     fillPill('nodesPillDirect', counts.direct, state.directOnly, 'nodes.header_direct', 'nodes.header_direct_aria');
+    fillPill('nodesPillMc', counts.mc, state.mcOnly, 'nodes.header_mc', 'nodes.header_mc_aria');
     const clear = document.getElementById('nodesHeaderClear');
     if (clear) {
         clear.hidden = !(window.MCViews.activeFilterCount(state) > 0 || nodeSearchTerm);
@@ -6026,6 +6031,26 @@ function generateNodeCardSignature(node, isSelected) {
 // its exact DOM identity (and, if it happens to be hosting the stable
 // detail slot, the slot never needs to move at all).
 let nodeCardRenderCache = {}; // node_id -> last rendered signature for its COMPACT card.
+
+// FX1 Phase C: the small MC mark on a node that was seen sending a MeshCenter control frame (passive, advisory)
+function formatMeshCenterTime(epoch) {
+    const d = new Date(Number(epoch) * 1000);
+    return Number.isNaN(d.getTime()) ? '-' : d.toLocaleString();
+}
+
+function renderMeshCenterBadge(node) {
+    if (!window.MCViews.isMeshCenterNode(node)) return '';
+    const t = (key, params) => window.I18N.t(key, params);
+    const tip = t('nodes.mc_badge_title', { first: formatMeshCenterTime(node.mc_first_seen), last: formatMeshCenterTime(node.mc_last_seen) });
+    return `<span class="node-mc-badge" title="${escapeHtml(tip)}" aria-label="${escapeHtml(tip)}">MC</span>`;
+}
+
+function renderMeshCenterSeenRow(node) {
+    if (!window.MCViews.isMeshCenterNode(node)) return '';
+    const t = (key, params) => window.I18N.t(key, params);
+    const text = t('nodes.mc_seen_row', { first: formatMeshCenterTime(node.mc_first_seen), last: formatMeshCenterTime(node.mc_last_seen) });
+    return `<div class="node-mc-row"><span class="node-mc-badge" aria-hidden="true">MC</span> <span>${escapeHtml(text)}</span></div>`;
+}
 
 function renderSidebarNodeCards() {
     const nodesList = document.getElementById('nodesList');

@@ -1962,7 +1962,12 @@
     "change_reference_point": "Change reference point",
     "reference_cleared": "Reference point cleared",
     "coordinates_label": "Coordinates",
-    "show_more": "Show {count} more ({hidden} not shown)"
+    "show_more": "Show {count} more ({hidden} not shown)",
+    "filter_mc_only": "MeshCenter only",
+    "header_mc": "MeshCenter",
+    "header_mc_aria": "{count} seen running MeshCenter. Tap to show only these.",
+    "mc_badge_title": "Seen running MeshCenter. First seen {first}, last seen {last}",
+    "mc_seen_row": "MeshCenter: first seen {first}, last seen {last}"
   },
   "activity": {
     "card_title": "Activity",
@@ -2360,7 +2365,9 @@
     "selected": "Selected: {name}",
     "more_nokey": "More nodes without a key: {count} · show",
     "hide_nokey": "Hide nodes without a key",
-    "none_with_key": "No contact with a key. {count} nodes without a key found, request the key."
+    "none_with_key": "No contact with a key. {count} nodes without a key found, request the key.",
+    "mc_only": "MeshCenter only",
+    "mc_badge": "Seen running MeshCenter"
   },
   "vault": {
     "card_title": "MCAttach vault",

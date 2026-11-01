@@ -1962,7 +1962,12 @@
     "change_reference_point": "Referenzpunkt ändern",
     "reference_cleared": "Referenzpunkt entfernt",
     "coordinates_label": "Koordinaten",
-    "show_more": "{count} weitere anzeigen ({hidden} nicht angezeigt)"
+    "show_more": "{count} weitere anzeigen ({hidden} nicht angezeigt)",
+    "filter_mc_only": "Nur MeshCenter",
+    "header_mc": "MeshCenter",
+    "header_mc_aria": "{count} mit MeshCenter gesehen. Tippen, um nur diese zu zeigen.",
+    "mc_badge_title": "Mit MeshCenter gesehen. Erstmals {first}, zuletzt {last}",
+    "mc_seen_row": "MeshCenter: erstmals gesehen {first}, zuletzt {last}"
   },
   "activity": {
     "card_title": "Aktivität",
@@ -2360,7 +2365,9 @@
     "selected": "Ausgewählt: {name}",
     "more_nokey": "Weitere Knoten ohne Schlüssel: {count} · anzeigen",
     "hide_nokey": "Knoten ohne Schlüssel ausblenden",
-    "none_with_key": "Kein Kontakt mit Schlüssel. {count} Knoten ohne Schlüssel gefunden, fordere den Schlüssel an."
+    "none_with_key": "Kein Kontakt mit Schlüssel. {count} Knoten ohne Schlüssel gefunden, fordere den Schlüssel an.",
+    "mc_only": "Nur MeshCenter",
+    "mc_badge": "Mit MeshCenter gesehen"
   },
   "vault": {
     "card_title": "MCAttach-Tresor",

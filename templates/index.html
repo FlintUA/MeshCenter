@@ -7,14 +7,14 @@
     <meta name="csrf-token" content="{{ csrf_token }}">
     <meta name="runtime-capabilities" content="{{ runtime_capabilities }}">
     <!-- csrf.js must stay the FIRST script, in <head>, without defer/async: it wraps window.fetch, so no API request can run before the wrapper exists (tests/test_csrf_script_order.py) -->
-    <script src="{{ url_for('static', filename='csrf.js') }}?v=20261101-fxb4"></script>
+    <script src="{{ url_for('static', filename='csrf.js') }}?v=20261101-fxc"></script>
     <title>MeshCenter</title>
     <!-- MeshCenter build: stage2c7-4-unified-popovers-20260725 -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part1.css') }}?v=20261101-fxb4">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part2.css') }}?v=20261101-fxb4">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part3.css') }}?v=20261101-fxb4">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style-part4.css') }}?v=20261101-fxb4">
-    <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=20261101-fxb4">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part1.css') }}?v=20261101-fxc">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part2.css') }}?v=20261101-fxc">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part3.css') }}?v=20261101-fxc">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style-part4.css') }}?v=20261101-fxc">
+    <link rel="stylesheet" href="{{ url_for('static', filename='ui-kit.css') }}?v=20261101-fxc">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 </head>
@@ -1967,6 +1967,7 @@
                                 <label><input type="checkbox" data-node-filter="directOnly"> <span data-i18n="nodes.filter_direct_only">Heard directly only (0 hops)</span></label>
                                 <label><input type="checkbox" data-node-filter="hideInfrastructure"> <span data-i18n="nodes.filter_hide_infrastructure">Hide infrastructure (routers, repeaters)</span></label>
                                 <label><input type="checkbox" data-node-filter="knownKeyOnly"> <span data-i18n="nodes.filter_known_key_only">Known key only</span></label>
+                                <label><input type="checkbox" data-node-filter="mcOnly"> <span data-i18n="nodes.filter_mc_only">MeshCenter only</span></label>
                             </fieldset>
                             <button type="button" class="node-filters-reset" data-chat-action="node-filters-reset" data-i18n="nodes.filters_reset">Reset</button>
                         </div>
@@ -1983,6 +1984,7 @@
                             <span class="nodes-header-pills">
                                 <button type="button" class="nodes-pill nodes-pill-online" id="nodesPillOnline" data-chat-action="nodes-header-online" aria-pressed="false"><span class="nodes-pill-dot" aria-hidden="true"></span><span class="nodes-pill-num"></span><span class="nodes-pill-text"></span></button>
                                 <button type="button" class="nodes-pill nodes-pill-direct" id="nodesPillDirect" data-chat-action="nodes-header-direct" aria-pressed="false"><span class="nodes-pill-glyph" aria-hidden="true">&#8596;</span><span class="nodes-pill-num"></span><span class="nodes-pill-text"></span></button>
+                                <button type="button" class="nodes-pill nodes-pill-mc" id="nodesPillMc" data-chat-action="nodes-header-mc" aria-pressed="false"><span class="nodes-pill-glyph nodes-pill-mc-glyph" aria-hidden="true">MC</span><span class="nodes-pill-num"></span><span class="nodes-pill-text"></span></button>
                             </span>
                             <button type="button" class="nodes-header-clear" id="nodesHeaderClear" data-chat-action="nodes-header-clear" hidden>&#10005;</button>
                         </div>
@@ -2544,9 +2546,9 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="/static/chart.umd.min.js"></script>
-<script src="/static/i18n.js?v=20261101-fxb4"></script>
-<script src="/static/format-size.js?v=20261101-fxb4"></script>
-<script src="/static/runtime-caps.js?v=20261101-fxb4"></script>
+<script src="/static/i18n.js?v=20261101-fxc"></script>
+<script src="/static/format-size.js?v=20261101-fxc"></script>
+<script src="/static/runtime-caps.js?v=20261101-fxc"></script>
 <script>
     // Server already resolved "auto" (stored ui.language, or an
     // Accept-Language guess) to a concrete locale for <html lang> above -
@@ -2556,26 +2558,26 @@
     // weather.js is untouched until those call I18N.t()/plural() directly.
     window.I18N.init("{{ ui_language }}").then(() => window.I18N.applyStaticDom());
 </script>
-<script src="{{ url_for('static', filename='app-dialog.js') }}?v=20261101-fxb4"></script>
+<script src="{{ url_for('static', filename='app-dialog.js') }}?v=20261101-fxc"></script>
 <script src="{{ url_for('static', filename='chat-emoji.js') }}?v=20260821-domain-split"></script>
 <script src="{{ url_for('static', filename='chat-photo.js') }}?v=20260821-domain-split"></script>
-<script src="{{ url_for('static', filename='chat-telemetry.js') }}?v=20261101-fxb4"></script>
-<script src="{{ url_for('static', filename='chat-camera.js') }}?v=20261101-fxb4"></script>
-<script src="{{ url_for('static', filename='camera-ip.js') }}?v=20261101-fxb4"></script>
-<script src="{{ url_for('static', filename='camera-ip-controls.js') }}?v=20261101-fxb4"></script>
-<script src="{{ url_for('static', filename='camera-sources.js') }}?v=20261101-fxb4"></script>
-<script src="{{ url_for('static', filename='camera-diag.js') }}?v=20261101-fxb4"></script>
-<script src="{{ url_for('static', filename='chat-map.js') }}?v=20261101-fxb4"></script>
-<script src="{{ url_for('static', filename='chat-updates-security.js') }}?v=20261101-fxb4"></script>
-<script src="{{ url_for('static', filename='targets.js') }}?v=20261101-fxb4"></script>
-<script src="/static/recipient-picker.js?v=20261101-fxb4"></script>
-<script src="/static/files.js?v=20261101-fxb4"></script>
-<script src="/static/vault-ui.js?v=20261101-fxb4"></script>
-<script src="{{ url_for('static', filename='chat-views.js') }}?v=20261101-fxb4"></script>
-<script src="/static/chat.js?v=20261101-fxb4"></script>
-<script src="/static/mobile-layout.js?v=20261101-fxb4"></script>
-<script src="/static/media-views.js?v=20261101-fxb4"></script>
-<script src="/static/media.js?v=20261101-fxb4"></script>
+<script src="{{ url_for('static', filename='chat-telemetry.js') }}?v=20261101-fxc"></script>
+<script src="{{ url_for('static', filename='chat-camera.js') }}?v=20261101-fxc"></script>
+<script src="{{ url_for('static', filename='camera-ip.js') }}?v=20261101-fxc"></script>
+<script src="{{ url_for('static', filename='camera-ip-controls.js') }}?v=20261101-fxc"></script>
+<script src="{{ url_for('static', filename='camera-sources.js') }}?v=20261101-fxc"></script>
+<script src="{{ url_for('static', filename='camera-diag.js') }}?v=20261101-fxc"></script>
+<script src="{{ url_for('static', filename='chat-map.js') }}?v=20261101-fxc"></script>
+<script src="{{ url_for('static', filename='chat-updates-security.js') }}?v=20261101-fxc"></script>
+<script src="{{ url_for('static', filename='targets.js') }}?v=20261101-fxc"></script>
+<script src="/static/recipient-picker.js?v=20261101-fxc"></script>
+<script src="/static/files.js?v=20261101-fxc"></script>
+<script src="/static/vault-ui.js?v=20261101-fxc"></script>
+<script src="{{ url_for('static', filename='chat-views.js') }}?v=20261101-fxc"></script>
+<script src="/static/chat.js?v=20261101-fxc"></script>
+<script src="/static/mobile-layout.js?v=20261101-fxc"></script>
+<script src="/static/media-views.js?v=20261101-fxc"></script>
+<script src="/static/media.js?v=20261101-fxc"></script>
 <script src="/static/weather.js?v=20260815-weather-provider"></script>
 
 <div class="modal-overlay" id="wifiConnectModal" style="display:none;" onclick="closeWifiConnectModal()">

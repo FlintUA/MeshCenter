@@ -590,6 +590,7 @@
                 name: t.display_name || '',
                 short_name: t.short_name || '',
                 favorite: t.favorite === true,
+                mc: t.mc === true,
                 hasBinding: t.hasBinding,
             };
         });
@@ -2573,6 +2574,7 @@
                 short_name: c.short_name || '',
                 name: c.name || '',
                 favorite: c.favorite === true,
+                mc: c.mc === true,
                 can_send: c.can_send_file === true,
                 can_request_key: c.can_request_key === true,
                 status: c.status,

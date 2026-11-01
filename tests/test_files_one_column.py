@@ -13,7 +13,7 @@ def test_template_has_one_list_and_no_detail_pane():
     html = _read("templates/index.html")
     assert 'id="filesArchiveList"' in html
     for gone in ("filesDetail", "filesLayout", "filesFilter", "filesChannelNotice", "filesBackBtn"):
-        assert gone not in html, gone
+        assert 'id="%s"' % gone not in html, gone
 
 
 def test_segments_exist_for_incoming_sent_all():

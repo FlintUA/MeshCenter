@@ -440,3 +440,39 @@ def test_deleting_a_backup_only_accepts_a_real_backup_folder_name(env):
 def test_swap_information_is_part_of_the_preflight(env):
     env.swap_inspector = lambda: {"disk_swap": True, "known": True}
     assert migration.preflight(env, backup=False).swap == {"disk_swap": True, "known": True}
+
+
+# ---- MCA-VAULT PR 5 (the real round on .104): permissions survive the conversion, backups say what they hold -------------
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+def test_enable_and_disable_keep_the_permission_bits_of_every_file(env):
+    """The live round found the spool files and the secrets loosened from 0600 to 0644 by the conversion (the umask)."""
+    root = Path(env.paths.root)
+    wanted = {"spool/outgoing/sent1": 0o600, "keys/identity.seed": 0o600, "files/saved1": 0o640, "cache/incoming/recv1": 0o644}
+    for rel, mode in wanted.items():
+        os.chmod(str(root / rel), mode)
+    result = run_enable(env)
+    for rel, mode in wanted.items():
+        assert stat.S_IMODE((root / (rel + ".mcv")).stat().st_mode) == mode, "enable: " + rel
+    migration.disable(env, bytes(result.storage_key), make_backup_copy=False)
+    for rel, mode in wanted.items():
+        assert stat.S_IMODE((root / rel).stat().st_mode) == mode, "disable: " + rel
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+def test_a_file_encrypted_without_an_explicit_mode_is_private(tmp_path):
+    src = tmp_path / "plain.bin"
+    src.write_bytes(b"data")
+    os.chmod(str(src), 0o644)
+    dst = tmp_path / "plain.bin.mcv"
+    streamcrypt.encrypt_file(str(src), str(dst), b"k" * 32, "id1")
+    assert stat.S_IMODE(dst.stat().st_mode) == 0o600
+
+
+def test_a_backup_made_by_disable_is_listed_as_encrypted_and_one_made_by_enable_as_plain(env):
+    result = run_enable(env)                                   # make_backup defaults to a plain backup
+    listed = migration.list_backups(env.data_dir)
+    assert len(listed) == 1 and listed[0]["encrypted"] is False
+    migration.disable(env, bytes(result.storage_key), make_backup_copy=True)
+    listed = {b["name"]: b["encrypted"] for b in migration.list_backups(env.data_dir)}
+    assert sorted(listed.values()) == [False, True], "the plain one from enable, the encrypted one from disable"

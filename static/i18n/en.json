@@ -2293,6 +2293,10 @@
       "vault_handoff_expired": "The request expired. Enter the passphrase again.",
       "invalid_backup_name": "That backup folder name is not valid.",
       "not_ready": "MCAttach is not running."
-    }
+    },
+    "backup_encrypted_warning": "A backup of your encrypted MCAttach data still exists: {folder}, {size}, made {when}. It needs the passphrase to open. Delete it when you no longer need it.",
+    "backup_delete_enc": "Delete the backup",
+    "backup_delete_title_enc": "Delete the backup?",
+    "backup_delete_text_enc": "The folder {folder} ({size}) holds a copy of your encrypted MCAttach data. It is deleted for good."
   }
 }

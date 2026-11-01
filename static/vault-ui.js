@@ -221,14 +221,19 @@
 
     function backupLine(b) {
         var when = b.created_at ? new Date(b.created_at * 1000).toLocaleString() : '';
+        if (b.encrypted) {
+            return tr('vault.backup_encrypted_warning', { folder: b.name, size: size(b.bytes), when: when },
+                'A backup of your encrypted MCAttach data still exists: {folder}, {size}, made {when}. It needs the passphrase to open. Delete it when you no longer need it.');
+        }
         return tr('vault.backup_warning', { folder: b.name, size: size(b.bytes), when: when },
             'A plain backup of your MCAttach data still exists: {folder}, {size}, made {when}. Anyone with access to this device can read it.');
     }
 
     function backupBannerHtml(b) {
-        return '<div class="vault-banner is-danger" role="alert"><span class="vault-banner-text">⚠️ ' + esc(backupLine(b)) + '</span>' +
-            '<button type="button" class="vault-banner-btn is-danger" data-vault-action="delete-backup" data-backup="' + esc(b.name) + '" data-bytes="' + esc(b.bytes) + '">' +
-            esc(tr('vault.backup_delete', null, 'Delete the plain backup')) + '</button></div>';
+        var tone = b.encrypted ? 'is-warn' : 'is-danger';
+        return '<div class="vault-banner ' + tone + '" role="' + (b.encrypted ? 'status' : 'alert') + '"><span class="vault-banner-text">' + (b.encrypted ? '\uD83D\uDCBE ' : '\u26A0\uFE0F ') + esc(backupLine(b)) + '</span>' +
+            '<button type="button" class="vault-banner-btn ' + tone + '" data-vault-action="delete-backup" data-backup="' + esc(b.name) + '" data-bytes="' + esc(b.bytes) + '"' + (b.encrypted ? ' data-encrypted="1"' : '') + '>' +
+            esc(b.encrypted ? tr('vault.backup_delete_enc', null, 'Delete the backup') : tr('vault.backup_delete', null, 'Delete the plain backup')) + '</button></div>';
     }
 
     function renderBanner() {
@@ -742,13 +747,15 @@
         });
     }
 
-    function deleteBackup(name, bytes) {
+    function deleteBackup(name, bytes, encrypted) {
         if (typeof root.appConfirm !== 'function') return;
         root.appConfirm({
-            title: tr('vault.backup_delete_title', null, 'Delete the plain backup?'),
-            message: tr('vault.backup_delete_text', { folder: name, size: size(Number(bytes)) },
-                'The folder {folder} ({size}) holds a readable copy of your MCAttach data. It is deleted for good. On SD cards and eMMC, traces can remain until the blocks are reused.'),
-            confirmLabel: tr('vault.backup_delete', null, 'Delete the plain backup'), cancelLabel: tr('common.cancel', null, 'Cancel'), danger: true
+            title: encrypted ? tr('vault.backup_delete_title_enc', null, 'Delete the backup?') : tr('vault.backup_delete_title', null, 'Delete the plain backup?'),
+            message: encrypted
+                ? tr('vault.backup_delete_text_enc', { folder: name, size: size(Number(bytes)) }, 'The folder {folder} ({size}) holds a copy of your encrypted MCAttach data. It is deleted for good.')
+                : tr('vault.backup_delete_text', { folder: name, size: size(Number(bytes)) },
+                    'The folder {folder} ({size}) holds a readable copy of your MCAttach data. It is deleted for good. On SD cards and eMMC, traces can remain until the blocks are reused.'),
+            confirmLabel: encrypted ? tr('vault.backup_delete_enc', null, 'Delete the backup') : tr('vault.backup_delete', null, 'Delete the plain backup'), cancelLabel: tr('common.cancel', null, 'Cancel'), danger: true
         }).then(function (ok) {
             if (!ok) return;
             call('POST', '/api/mca/vault/backup/delete', { name: name }).then(function (result) {
@@ -787,7 +794,7 @@
         else if (action === 'change-passphrase') openChangePassphrase();
         else if (action === 'new-recovery-key') openNewRecoveryKey();
         else if (action === 'show-recovery') showPendingRecoveryKey();
-        else if (action === 'delete-backup') deleteBackup(el.getAttribute('data-backup'), el.getAttribute('data-bytes'));
+        else if (action === 'delete-backup') deleteBackup(el.getAttribute('data-backup'), el.getAttribute('data-bytes'), el.getAttribute('data-encrypted') === '1');
     });
 
     doc.addEventListener('keydown', function (event) {

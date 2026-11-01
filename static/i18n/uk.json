@@ -2293,6 +2293,10 @@
       "vault_handoff_expired": "Запит застарів. Введіть парольну фразу ще раз.",
       "invalid_backup_name": "Недійсна назва теки резервної копії.",
       "not_ready": "MCAttach не запущено."
-    }
+    },
+    "backup_encrypted_warning": "Резервна копія зашифрованих даних MCAttach досі існує: {folder}, {size}, створена {when}. Для відкриття потрібна парольна фраза. Видаліть її, коли вона стане непотрібна.",
+    "backup_delete_enc": "Видалити копію",
+    "backup_delete_title_enc": "Видалити копію?",
+    "backup_delete_text_enc": "Тека {folder} ({size}) містить копію зашифрованих даних MCAttach. Її буде видалено безповоротно."
   }
 }

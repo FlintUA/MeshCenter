@@ -956,7 +956,7 @@ def register_attachments_routes(app, handle_errors):
             backups = vault_migration.list_backups(data_dir)
             # the plain backup is a liability: this is derived from the folder, so a restart cannot lose the warning
             body["plain_backups"] = backups
-            body["plain_backup_warning"] = bool(backups)
+            body["plain_backup_warning"] = any(not b.get("encrypted") for b in backups)
         if body.get("state") == "disabled":
             body["notices"] = ["flash_remanence", "gallery_not_covered", "downgrade_refused"]
         body["ok"] = True

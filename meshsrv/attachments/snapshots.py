@@ -936,6 +936,13 @@ class AttachmentsSnapshotPublisher:
         with self._lock:
             return self._snapshot
 
+    def request_rebuild(self) -> None:
+        """Worker-only: the next refresh() does a full build instead of an incremental one. MCA-VAULT: rows rebuilt while the
+        vault was locked carry no name; after the unlock nothing marks them dirty, so without this the list would keep the
+        placeholders until each row happens to change."""
+        with self._lock:
+            self._initialized = False
+
     def refresh(
         self,
         conn: sqlite3.Connection,

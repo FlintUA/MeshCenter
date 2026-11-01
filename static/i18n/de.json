@@ -2293,6 +2293,10 @@
       "vault_handoff_expired": "Die Anfrage ist abgelaufen. Geben Sie die Passphrase erneut ein.",
       "invalid_backup_name": "Dieser Sicherungsordnername ist ungültig.",
       "not_ready": "MCAttach läuft nicht."
-    }
+    },
+    "backup_encrypted_warning": "Eine Sicherung Ihrer verschlüsselten MCAttach-Daten existiert noch: {folder}, {size}, erstellt {when}. Zum Öffnen braucht sie die Passphrase. Löschen Sie sie, wenn Sie sie nicht mehr brauchen.",
+    "backup_delete_enc": "Sicherung löschen",
+    "backup_delete_title_enc": "Sicherung löschen?",
+    "backup_delete_text_enc": "Der Ordner {folder} ({size}) enthält eine Kopie Ihrer verschlüsselten MCAttach-Daten. Er wird endgültig gelöscht."
   }
 }

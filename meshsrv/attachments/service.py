@@ -3052,6 +3052,12 @@ class AttachmentsService:
         tick advanced. Never raises: the publisher's own `refresh()` retains
         the last-known-good snapshot on any build failure, so a failed
         publish cannot kill the worker tick."""
+        # MCA-VAULT: a snapshot built (or changed) while the vault was locked has no names. Rebuild once after the unlock.
+        if self._vault_locked():
+            self._snapshot_names_withheld = True
+        elif getattr(self, "_snapshot_names_withheld", False):
+            self._snapshot_publisher.request_rebuild()
+            self._snapshot_names_withheld = False
         self._snapshot_publisher.refresh(
             self._conn,
             workspace_id=self._principal.workspace_id,

@@ -656,7 +656,28 @@
     "search_close": "Закрити пошук",
     "search_count": "{shown} з {total}",
     "more_menu": "Ще",
-    "card_toggle": "Показати подробиці"
+    "card_toggle": "Показати подробиці",
+    "status_short": {
+      "sending": "Надсилання",
+      "waiting_recipient": "Чекає",
+      "delivered": "Доставлено",
+      "expired": "Минув",
+      "revoked": "Скасовано",
+      "cancelled": "Скасовано",
+      "declined": "Відхилено",
+      "not_delivered": "Помилка",
+      "waiting_in": "Чекає",
+      "waiting_key": "Потрібен ключ",
+      "waiting_relay": "Чекає",
+      "waiting_internet": "Немає мережі",
+      "waiting_ok": "Ваш ОК",
+      "downloading": "Завантаж.",
+      "received": "Отримано",
+      "expired_in": "Минув",
+      "declined_in": "Відхилено",
+      "cancelled_in": "Скасовано",
+      "not_received": "Помилка"
+    }
   },
   "about": {
     "tab_overview": "Огляд",

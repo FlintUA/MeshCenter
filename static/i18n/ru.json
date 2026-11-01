@@ -656,7 +656,28 @@
     "search_close": "Закрыть поиск",
     "search_count": "{shown} из {total}",
     "more_menu": "Ещё",
-    "card_toggle": "Показать подробности"
+    "card_toggle": "Показать подробности",
+    "status_short": {
+      "sending": "Отправка",
+      "waiting_recipient": "Ждёт",
+      "delivered": "Доставлено",
+      "expired": "Истёк",
+      "revoked": "Отменено",
+      "cancelled": "Отменено",
+      "declined": "Отклонён",
+      "not_delivered": "Ошибка",
+      "waiting_in": "Ждёт",
+      "waiting_key": "Нужен ключ",
+      "waiting_relay": "Ждёт",
+      "waiting_internet": "Нет сети",
+      "waiting_ok": "Ваш ОК",
+      "downloading": "Загрузка",
+      "received": "Получено",
+      "expired_in": "Истёк",
+      "declined_in": "Отклонён",
+      "cancelled_in": "Отменено",
+      "not_received": "Ошибка"
+    }
   },
   "about": {
     "tab_overview": "Обзор",

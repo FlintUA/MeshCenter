@@ -945,6 +945,13 @@ def _ready_profile(registry, store, conn, wsm, flask_session, **overrides):
     _configure_upload_token(registry, conn, wsm, profile.provider_id)
     monitor = ConnectivityMonitor(registry, session=flask_session)
     monitor.refresh(force=True)
+    # FX1: the refresh follows the mock relay's own published limits; these tests need the profile's narrower ones back
+    conn.execute(
+        "UPDATE mca_provider_profiles SET max_ciphertext_bytes = ?, min_ttl_seconds = ?, max_ttl_seconds = ? WHERE provider_id = ?",
+        (profile.max_ciphertext_bytes, profile.min_ttl_seconds, profile.max_ttl_seconds, profile.provider_id),
+    )
+    conn.commit()
+    monitor._refresh_profile_snapshot()
     return monitor, profile
 
 
@@ -1392,3 +1399,76 @@ def test_concurrent_readers_never_observe_a_partial_or_mutable_snapshot(registry
         assert not reader_thread.is_alive(), "reader thread did not stop"
 
     assert violations == [], violations
+
+
+# ---- FX1: the relay's own limits are followed on every verified /v1/info check -------------------------------------
+
+
+def _info_handler(profile, limits):
+    from meshsrv.attachments.provider_registry import b64url_encode
+
+    def handler(method, url):
+        if url.endswith("/health"):
+            return _ScriptedResponse(status_code=200)
+        return _ScriptedResponse(
+            status_code=200,
+            payload={
+                "provider_id": profile.provider_id,
+                "service_key": {"public_key": b64url_encode(profile.service_public_key)},
+                "limits": limits,
+            },
+        )
+
+    return handler
+
+
+def test_a_verified_info_check_refreshes_ttl_and_size_limits(registry, store):
+    profile = _register(registry, store, min_ttl_seconds=60, max_ttl_seconds=259200)
+    limits = {"max_ciphertext_bytes": 5_000_000, "max_hard_ttl_seconds": 2592000, "min_hard_ttl_seconds": 3600}
+    monitor = ConnectivityMonitor(registry, session=_ScriptedSession(_info_handler(profile, limits)))
+    monitor.refresh(force=True)
+
+    fresh = registry.resolve(profile.provider_id)
+    assert (fresh.min_ttl_seconds, fresh.max_ttl_seconds, fresh.max_ciphertext_bytes) == (3600, 2592000, 5_000_000)
+
+
+def test_a_relay_that_publishes_no_minimum_keeps_the_stored_one(registry, store):
+    profile = _register(registry, store, min_ttl_seconds=120, max_ttl_seconds=3600)
+    limits = {"max_ciphertext_bytes": 1_000_000, "max_hard_ttl_seconds": 2592000}
+    monitor = ConnectivityMonitor(registry, session=_ScriptedSession(_info_handler(profile, limits)))
+    monitor.refresh(force=True)
+
+    fresh = registry.resolve(profile.provider_id)
+    assert (fresh.min_ttl_seconds, fresh.max_ttl_seconds) == (120, 2592000)
+
+
+def test_a_failed_identity_check_never_touches_the_limits(registry, store):
+    from meshsrv.attachments.provider_registry import b64url_encode
+
+    profile = _register(registry, store, min_ttl_seconds=60, max_ttl_seconds=3600)
+
+    def handler(method, url):
+        if url.endswith("/health"):
+            return _ScriptedResponse(status_code=200)
+        return _ScriptedResponse(
+            status_code=200,
+            payload={
+                "provider_id": "someone-else",
+                "service_key": {"public_key": b64url_encode(profile.service_public_key)},
+                "limits": {"max_ciphertext_bytes": 9, "max_hard_ttl_seconds": 9999999},
+            },
+        )
+
+    monitor = ConnectivityMonitor(registry, session=_ScriptedSession(handler))
+    monitor.refresh(force=True)
+    fresh = registry.resolve(profile.provider_id)
+    assert fresh.max_ttl_seconds == 3600 and fresh.max_ciphertext_bytes == profile.max_ciphertext_bytes
+
+
+def test_a_relay_maximum_below_the_stored_minimum_clears_the_minimum(registry, store):
+    profile = _register(registry, store, min_ttl_seconds=7200, max_ttl_seconds=259200)
+    monitor = ConnectivityMonitor(registry, session=_ScriptedSession(
+        _info_handler(profile, {"max_ciphertext_bytes": 1_000_000, "max_hard_ttl_seconds": 3600})))
+    monitor.refresh(force=True)
+    fresh = registry.resolve(profile.provider_id)
+    assert fresh.max_ttl_seconds == 3600 and fresh.min_ttl_seconds is None

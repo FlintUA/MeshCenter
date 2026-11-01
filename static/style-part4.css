@@ -7483,9 +7483,14 @@ html[data-theme="dark"] .dock-vault-chip.is-locked, html[data-theme="dark"] .doc
     .files-card-chev svg { transition: transform 0.15s; }
     .files-card.is-open .files-card-chev svg { transform: rotate(180deg); }
 }
+.files-chip-short { display: none; }
 @media (max-width: 399px) {
     .files-seg-long { display: none; }
     .files-seg-short { display: inline; }
+    /* a short word instead of a cut-off sentence; the opened card shows the whole text */
+    .files-card:not(.is-open) .files-chip-full { display: none; }
+    .files-card:not(.is-open) .files-chip-short { display: inline; }
+    .files-card.is-open .files-card-line3 .files-chip { white-space: normal; }
 }
 
 @media (max-width: 768px) {

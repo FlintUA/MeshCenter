@@ -803,7 +803,8 @@
             }
         }
         var tone = PLAIN_TONE[key] || 'wait';
-        return { key: key, tone: tone, text: text, retrying: retrying, busy: tone === 'progress' };
+        // a short word for a narrow phone (a tooltip does not exist on touch); the full text is shown in the opened card
+        return { key: key, tone: tone, text: text, short: t('files.status_short.' + key, text), retrying: retrying, busy: tone === 'progress' };
     }
 
     // "Link valid for 2 more days": only while the file still waits (nobody has it yet)
@@ -1020,7 +1021,7 @@
                 '<div class="files-card-who">' + esc(whoLine(a)) + '</div>' +
                 '<div class="files-card-name" title="' + esc(a.locked ? '' : (a.file_name || '')) + '">' + esc(name) + '</div>' +
                 '<div class="files-card-line3"><span class="files-card-meta">' + esc(fmtBytes(a.plain_size)) + ' · ' + esc(clock(a.created_at || 0)) + '</span>' +
-                    '<span class="files-chip is-' + esc(status.tone) + '" title="' + esc(status.text) + '">' + esc(status.text) + '</span></div>' +
+                    '<span class="files-chip is-' + esc(status.tone) + '" title="' + esc(status.text) + '"><span class="files-chip-full">' + esc(status.text) + '</span><span class="files-chip-short">' + esc(status.short) + '</span></span></div>' +
                 '<div class="files-card-extra">' +
                     comment + noteBlock +
                     (actions.primary ? '<div class="files-card-actions">' + actions.primary + '</div>' : '') +

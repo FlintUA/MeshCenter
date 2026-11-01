@@ -53,3 +53,17 @@ def test_phone_layout_is_compact_one_toolbar_menu_fab_and_expandable_cards():
         files = json.loads(_read("static/i18n/%s.json" % loc))["files"]
         for key in ("segment_incoming_short", "segment_sent_short", "segment_all_short", "search_count", "search_close", "more_menu", "card_toggle"):
             assert key in files, (loc, key)
+
+
+def test_every_plain_status_has_a_short_word_in_all_locales():
+    import json
+    keys = ("sending", "waiting_recipient", "delivered", "expired", "revoked", "cancelled", "declined", "not_delivered", "waiting_in",
+            "waiting_key", "waiting_relay", "waiting_internet", "waiting_ok", "downloading", "received", "expired_in", "declined_in",
+            "cancelled_in", "not_received")
+    for loc in ("en", "de", "ru", "uk"):
+        short = json.loads(_read("static/i18n/%s.json" % loc))["files"]["status_short"]
+        for key in keys:
+            assert short.get(key), (loc, key)
+            assert len(short[key]) <= 13, (loc, key, "a short word must fit a narrow chip")
+    css = _read("static/style-part4.css")
+    assert ".files-card:not(.is-open) .files-chip-full { display: none; }" in css

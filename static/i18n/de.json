@@ -656,7 +656,28 @@
     "search_close": "Suche schließen",
     "search_count": "{shown} von {total}",
     "more_menu": "Mehr",
-    "card_toggle": "Details anzeigen"
+    "card_toggle": "Details anzeigen",
+    "status_short": {
+      "sending": "Sendet",
+      "waiting_recipient": "Wartet",
+      "delivered": "Zugestellt",
+      "expired": "Abgelaufen",
+      "revoked": "Abgebrochen",
+      "cancelled": "Abgebrochen",
+      "declined": "Abgelehnt",
+      "not_delivered": "Fehler",
+      "waiting_in": "Wartet",
+      "waiting_key": "Schlüssel?",
+      "waiting_relay": "Wartet",
+      "waiting_internet": "Offline",
+      "waiting_ok": "Ihr OK",
+      "downloading": "Lädt",
+      "received": "Empfangen",
+      "expired_in": "Abgelaufen",
+      "declined_in": "Abgelehnt",
+      "cancelled_in": "Abgebrochen",
+      "not_received": "Fehler"
+    }
   },
   "about": {
     "tab_overview": "Übersicht",

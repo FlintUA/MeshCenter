@@ -2633,6 +2633,8 @@ async function test_fx1_plain_status_table_pins_every_state_and_reason() {
     const retry = plain('sent', 'UPLOADING', { error_code: 'relay_unavailable' });
     assert.equal(retry.key, 'sending');
     assert.equal(retry.retrying, true);
+    // a short word for narrow phones, the full text stays for the opened card
+    assert.ok(plain('sent', 'SENT').short, 'a short word is always there (the catalogs are pinned by a Python test)');
     // tones: waiting is neutral, failures are bad, done is ok
     assert.equal(plain('sent', 'DOWNLOADED').tone, 'ok');
     assert.equal(plain('sent', 'EXPIRED').tone, 'bad');

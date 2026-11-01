@@ -5461,6 +5461,89 @@ html[data-theme="dark"] .telemetry-btn.power .telemetry-value {
    master/detail: ONE view at a time (data-view on #filesLayout, set by files.js), everything in normal document flow and one scroll,
    the panel. No fixed or minimum heights, so nothing can be drawn over anything else. The container is .files-view (style-part4.css);
    FILES_COMPACT_MAX in static/files.js must match 700px. */
+/* The same rules for a phone viewport, for browsers without container queries (Safari before 16, so iOS 15): the viewport
+   media query alone must be enough for the phone layout. Keep this body identical to the container block below. */
+@media (max-width: 768px) {
+/* the header stacks (title block, then the actions wrapping) */
+.files-header.mc-workspace-header {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    height: auto;
+    min-height: 0;
+    flex: 0 0 auto;
+}
+
+/* Files: master/detail. ONE view at a time (data-view on #filesLayout, set by files.js), everything in normal document
+   flow and one scroll: the panel itself. No fixed or minimum heights, so nothing can be drawn over anything else. */
+.files-panel.mc-workspace-panel {
+    overflow-x: hidden;
+    overflow-y: auto;
+}
+
+.files-layout {
+    display: block;
+    flex: 0 0 auto;
+    overflow: visible;
+}
+
+.files-archive,
+.files-detail {
+    display: block;
+    min-height: 0;
+    overflow: visible;
+}
+
+.files-layout[data-view="detail"] .files-archive,
+.files-layout:not([data-view="detail"]) .files-detail {
+    display: none;
+}
+
+.files-archive-list,
+.files-detail-body {
+    flex: none;
+    max-height: none;
+    overflow: visible;
+}
+
+.files-back-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 44px;
+    margin: -6px 8px -6px -8px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--mc-accent, #2563eb);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.files-layout[data-view="detail"] .files-pane-title {
+    display: flex;
+    align-items: center;
+}
+
+.files-detail {
+    border-left: 0;
+    border-top: 0;
+}
+
+.files-header .workspace-page-actions {
+    flex-wrap: wrap;
+    width: 100%;
+    gap: 8px;
+}
+
+.files-header .workspace-page-actions .mc-refresh-btn {
+    flex: 1 1 auto;
+    min-height: 44px;
+}
+}
+
 @container filesview (max-width: 700px) {
 /* the header stacks (title block, then the actions wrapping) */
 .files-header.mc-workspace-header {

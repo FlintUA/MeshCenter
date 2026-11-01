@@ -52,3 +52,19 @@ def test_back_button_label_in_all_four_catalogs():
     for loc in ("en", "de", "ru", "uk"):
         text = _read("static/i18n/%s.json" % loc)
         assert '"back_to_list"' in text and '"back_to_list_short"' in text
+
+
+
+
+def test_phone_layout_does_not_depend_on_container_queries():
+    """Safari before 16 (iOS 15) ignores @container: the <= 768 px media query must carry the identical master/detail rules."""
+    css = _read("static/ui-kit.css")
+    head = "@container filesview (max-width: 700px) {"
+    c0 = css.index(head) + len(head)
+    cbody = css[c0:css.rfind("/*", 0, css.index("MOB1: one screen at a time"))].strip()
+    marker = "Keep this body identical to the container block below. */\n@media (max-width: 768px) {"
+    m0 = css.index(marker) + len(marker)
+    mbody = css[m0:css.index(head)].strip()
+    assert mbody == cbody
+    assert '.files-layout[data-view="detail"] .files-archive' in mbody
+    assert '.files-layout:not([data-view="detail"]) .files-detail' in mbody

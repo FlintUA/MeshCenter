@@ -81,7 +81,7 @@
     "filter_pending": "Pending",
     "filter_saved": "Saved",
     "filter_errors": "Errors",
-    "channel_unsupported_notice": "File transfer to channels is not supported. Showing all transfers.",
+    "channel_unsupported_notice": "A channel is selected in the sidebar. Channels have no file transfer, so all transfers are shown, not only that channel's.",
     "loading_transfers": "Loading transfers...",
     "detail_title": "Details",
     "select_transfer_hint": "Select a transfer to view its progress and details.",
@@ -2157,6 +2157,9 @@
     "none": "No known contacts yet.",
     "count": "{shown} of {total}",
     "type_to_narrow": "Showing {shown} of {found}, type to narrow",
-    "selected": "Selected: {name}"
+    "selected": "Selected: {name}",
+    "more_nokey": "More nodes without a key: {count} · show",
+    "hide_nokey": "Hide nodes without a key",
+    "none_with_key": "No contact with a key. {count} nodes without a key found, request the key."
   }
 }

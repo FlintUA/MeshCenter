@@ -1059,7 +1059,7 @@ function _scheduleMountContactPicker(selectedId) {
   if (!host || !picker) return;
   const store = targetStore();
   const targets = store && typeof store.nodeTargets === 'function' ? store.nodeTargets() : [];
-  const contacts = targets.filter(t => t && !t.is_local).map(t => ({
+  const contacts = targets.filter(t => t && !t.is_local && t.can_send_file === true).map(t => ({
     id: t.id,
     short_name: t.short_name || '',
     name: t.display_name || '',
@@ -1072,6 +1072,7 @@ function _scheduleMountContactPicker(selectedId) {
   }));
   const controller = picker.mount(host, {
     id: 'sfPic',
+    sendableOnly: true,
     t: (key, params, fallback) => { const v = window.I18N.t(key, params || undefined); return v === key && fallback ? fallback : v; },
     reasonLabel: (c) => {
       const key = c.reason === 'key_unknown' || !c.reason ? 'recipient.key_unknown' : 'files.unavailable.' + c.reason;

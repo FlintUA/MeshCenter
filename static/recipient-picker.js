@@ -73,6 +73,9 @@
         var filtered = list.filter(function (c) { return matches(c, query) && (!o.favoritesOnly || c.favorite === true); });
         var ready = filtered.filter(function (c) { return c.can_send === true; });
         var nokey = filtered.filter(function (c) { return c.can_send !== true; }).sort(byName);
+        // Nodes without a key cannot receive a file: they are NOT listed unless asked for (`includeNokey`), and counted
+        var includeNokey = o.includeNokey === true && !o.sendableOnly;
+        var visibleFound = ready.length + (includeNokey ? nokey.length : 0);
 
         var recent = [];
         if (!query) {
@@ -95,17 +98,20 @@
         }
         take('recent', recent);
         take('ready', rest);
-        take('nokey', nokey);
+        if (includeNokey) take('nokey', nokey);
         // a header is only worth showing when there is more than one group on screen (the no-key group always says so)
         var headers = rows.filter(function (r) { return r.kind === 'header'; });
         if (headers.length === 1 && headers[0].group !== 'nokey') rows.shift();
         return {
             rows: rows,
-            found: filtered.length,
+            found: visibleFound,
             total: list.length,
             shown: used,
-            truncated: filtered.length > used,
+            truncated: visibleFound > used,
             readyFound: ready.length,
+            nokeyFound: o.sendableOnly ? 0 : nokey.length,
+            nokeyHidden: includeNokey || o.sendableOnly ? 0 : nokey.length,
+            includeNokey: includeNokey,
             query: query,
         };
     }
@@ -122,6 +128,8 @@
             recent: Array.isArray(s.recent) ? s.recent.slice(0, RECENT_MAX) : [],
             selected: '',
             cap: s.cap > 0 ? s.cap : CAP,
+            sendableOnly: s.sendableOnly === true,
+            showNokey: false,
         };
         if (model.favoritesTouched) model.favoritesOnly = s.favoritesOnly;
 
@@ -137,11 +145,13 @@
 
         model.setContacts = function (contacts) {
             model.contacts = Array.isArray(contacts) ? contacts : [];
+            if (model.sendableOnly) model.contacts = model.contacts.filter(function (c) { return c.can_send === true; });
             if (!model.favoritesTouched) model.favoritesOnly = defaultFavoritesOnly(model.contacts);
             var chosen = find(model.selected);
             if (model.selected && !(chosen && chosen.can_send === true)) model.selected = '';
         };
         model.setQuery = function (query) { model.query = String(query == null ? '' : query); };
+        model.setShowNokey = function (value) { model.showNokey = Boolean(value); };
         model.setFavoritesOnly = function (value) { model.favoritesOnly = Boolean(value); model.favoritesTouched = true; };
         model.setRecent = function (ids) { model.recent = Array.isArray(ids) ? ids.slice(0, RECENT_MAX) : []; };
         model.select = function (id) {
@@ -153,7 +163,10 @@
         model.clearSelection = function () { model.selected = ''; };
         model.selectedContact = function () { return model.selected ? find(model.selected) : null; };
         model.view = function () {
-            return build(model.contacts, { query: model.query, favoritesOnly: model.favoritesOnly, recent: model.recent, cap: model.cap });
+            return build(model.contacts, {
+                query: model.query, favoritesOnly: model.favoritesOnly, recent: model.recent, cap: model.cap,
+                includeNokey: model.showNokey, sendableOnly: model.sendableOnly,
+            });
         };
         model.defaultFavoritesOnly = function () { return defaultFavoritesOnly(model.contacts); };
         return model;
@@ -243,16 +256,28 @@
             return '<button type="button" class="rp-row' + (on ? ' is-selected' : '') + '" role="option" aria-selected="' + on
                 + '" data-rp-id="' + escapeHtml(c.id) + '">' + main + (on ? '<span class="rp-check" aria-hidden="true">✓</span>' : '') + '</button>';
         }
+        // a node without a key: ONE compact line (name, id, a small "Request key" link), never selectable
         var reason = ctx.reasonLabel ? ctx.reasonLabel(c) : ctx.t('recipient.key_unknown', null, 'Key unknown, request the key');
-        var action = ctx.requestKeyAttr && c.can_request_key
-            ? '<button type="button" class="rp-request" ' + ctx.requestKeyAttr + ' data-contact="' + escapeHtml(c.id) + '">'
+        var link = ctx.requestKeyAttr && c.can_request_key
+            ? '<button type="button" class="rp-request-link" ' + ctx.requestKeyAttr + ' data-contact="' + escapeHtml(c.id) + '">'
                 + escapeHtml(ctx.t('recipient.request_key', null, 'Request key')) + '</button>' : '';
-        return '<div class="rp-row is-disabled" role="option" aria-disabled="true" aria-selected="false" data-rp-nokey="' + escapeHtml(c.id) + '">'
-            + main + '<span class="rp-reason">' + escapeHtml(reason) + '</span>' + action + '</div>';
+        return '<div class="rp-row rp-compact is-disabled" role="option" aria-disabled="true" aria-selected="false" title="' + escapeHtml(reason)
+            + '" data-rp-nokey="' + escapeHtml(c.id) + '"><span class="rp-name">' + escapeHtml(title) + '</span>'
+            + '<span class="rp-sub">' + escapeHtml(c.id) + '</span>' + link + '</div>';
+    }
+
+    function showNokeyButton(view, ctx) {
+        return '<button type="button" class="rp-nokey-toggle" data-rp-show-nokey>' + escapeHtml(ctx.t('recipient.more_nokey', { count: view.nokeyHidden },
+            'More nodes without a key: ' + view.nokeyHidden + ' \u00b7 show')) + '</button>';
     }
 
     function renderListHtml(view, ctx, selectedId) {
         if (!view.rows.length) {
+            if (view.nokeyHidden > 0) {
+                // nothing sendable matches, but nodes without a key do
+                return '<div class="rp-empty" role="status">' + escapeHtml(ctx.t('recipient.none_with_key', { count: view.nokeyHidden },
+                    'No contact with a key. ' + view.nokeyHidden + ' nodes without a key found, request the key.')) + '</div>' + showNokeyButton(view, ctx);
+            }
             return '<div class="rp-empty" role="status">' + escapeHtml(view.total
                 ? ctx.t('recipient.no_match', null, 'No contact matches') : ctx.t('recipient.none', null, 'No known contacts yet.')) + '</div>';
         }
@@ -264,6 +289,10 @@
             }
             return renderRowHtml(row, ctx, selectedId);
         }).join('');
+        if (view.nokeyHidden > 0) html += showNokeyButton(view, ctx);
+        if (view.includeNokey && view.nokeyFound > 0) {
+            html += '<button type="button" class="rp-nokey-toggle" data-rp-hide-nokey>' + escapeHtml(ctx.t('recipient.hide_nokey', null, 'Hide nodes without a key')) + '</button>';
+        }
         if (view.truncated) {
             html += '<div class="rp-more" role="status">' + escapeHtml(ctx.t('recipient.type_to_narrow', { shown: view.shown, found: view.found },
                 'Showing ' + view.shown + ' of ' + view.found + ', type to narrow')) + '</div>';
@@ -299,7 +328,7 @@
             reasonLabel: o.reasonLabel, requestKeyAttr: o.requestKeyAttr,
         };
         var id = o.id || 'rp';
-        var model = createModel({ cap: o.cap });
+        var model = createModel({ cap: o.cap, sendableOnly: o.sendableOnly });
         host.innerHTML = frameHtml(ctx, id);
         var input = host.querySelector('.rp-input');
         var clear = host.querySelector('[data-rp-clear]');
@@ -344,6 +373,8 @@
             var target = event.target;
             if (!target || typeof target.closest !== 'function') return;
             if (target.closest('[data-rp-clear]')) { input.value = ''; model.setQuery(''); paint(); input.focus(); return; }
+            if (target.closest('[data-rp-show-nokey]')) { model.setShowNokey(true); paint(); return; }
+            if (target.closest('[data-rp-hide-nokey]')) { model.setShowNokey(false); paint(); return; }
             var row = target.closest('[data-rp-id]');
             if (row && model.select(row.getAttribute('data-rp-id'))) { paint(); changed(); }
         });

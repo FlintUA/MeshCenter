@@ -81,7 +81,7 @@
     "filter_pending": "Ausstehend",
     "filter_saved": "Gespeichert",
     "filter_errors": "Fehler",
-    "channel_unsupported_notice": "Dateiübertragung an Kanäle wird nicht unterstützt. Es werden alle Übertragungen angezeigt.",
+    "channel_unsupported_notice": "In der Seitenleiste ist ein Kanal ausgewählt. Kanäle haben keine Dateienübertragung, daher werden alle Übertragungen angezeigt, nicht nur die dieses Kanals.",
     "loading_transfers": "Lade Übertragungen...",
     "detail_title": "Details",
     "select_transfer_hint": "Wähle eine Übertragung, um Fortschritt und Details zu sehen.",
@@ -2157,6 +2157,9 @@
     "none": "Noch keine bekannten Kontakte.",
     "count": "{shown} von {total}",
     "type_to_narrow": "{shown} von {found} angezeigt, tippe zum Eingrenzen",
-    "selected": "Ausgewählt: {name}"
+    "selected": "Ausgewählt: {name}",
+    "more_nokey": "Weitere Knoten ohne Schlüssel: {count} · anzeigen",
+    "hide_nokey": "Knoten ohne Schlüssel ausblenden",
+    "none_with_key": "Kein Kontakt mit Schlüssel. {count} Knoten ohne Schlüssel gefunden, fordere den Schlüssel an."
   }
 }

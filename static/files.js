@@ -1970,6 +1970,7 @@
         if (!target || !target.id) return;
         if (target.id === 'filesSearch') {
             state.search = target.value || '';
+            refreshChannelNotice();
             renderTransfers();
             renderSummaries();
             return;
@@ -2003,6 +2004,7 @@
     function setFilter(filter) {
         if (!FILTER_API[filter]) return;
         state.filter = filter;
+        refreshChannelNotice();
         var sel = getEl('filesFilterSelect');
         if (sel && sel.value !== filter) sel.value = filter;
         loadTransfers();
@@ -2011,12 +2013,22 @@
     // A channel selection shows a compact unsupported-transfer notice above the
     // transfer list (channels are navigation-only and never file recipients);
     // any node or no selection hides it.
+    //
+    // UX5: it explains one thing, that the list is NOT narrowed to the selected channel. It shows only while the list is
+    // shown plain (filter "All", nothing typed in the search); once the user narrows the list themselves it has nothing left to
+    // explain, and showing it above a "Sent" list only looked like an error.
     function renderChannelNotice(sel) {
         var notice = getEl('filesChannelNotice');
         if (!notice) return;
-        var isChannel = Boolean(sel && sel.kind === 'channel');
+        var plainList = state.filter === 'all' && !state.search;
+        var isChannel = Boolean(sel && sel.kind === 'channel') && plainList;
         if (notice.hidden !== undefined) notice.hidden = !isChannel;
         else notice.style.display = isChannel ? '' : 'none';
+    }
+
+    function refreshChannelNotice() {
+        var store = (typeof window !== 'undefined') ? window.MeshCenterTargets : null;
+        renderChannelNotice(store && typeof store.selected === 'function' ? store.selected() : null);
     }
 
     // PR 4 Finding 1: the shared store's selection is the single source of

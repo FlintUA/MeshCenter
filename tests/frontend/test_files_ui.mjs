@@ -436,9 +436,10 @@ async function test_activate_merges_contacts_and_excludes_local() {
 
     dispatch(sandbox, { 'data-files-action': 'send' });
     const sel = sandbox._document.getElementById('filesSendRecipientPicker');
-    assert.ok(sel.innerHTML.includes('!22222222'), 'unbound known node must appear as a recipient');
+    assert.ok(sel.innerHTML.includes('No contact with a key. 1 nodes without a key found'), 'the unbound known node is counted, and the dialog says so');
     assert.ok(!sel.innerHTML.includes('!11111111'), 'the local node must never be listed as a recipient');
-    assert.ok(sel.innerHTML.includes('is-disabled') && !sel.innerHTML.includes('data-rp-id="!22222222"'), 'the unbound node is present but not sendable (a disabled row, never a selectable one)');
+    assert.ok(!sel.innerHTML.includes('data-rp-id="!22222222"') && !sel.innerHTML.includes('data-rp-nokey="!22222222"'), 'a node without a key is neither selectable nor listed by default');
+    assert.ok(sel.innerHTML.includes('data-rp-show-nokey') || sel.innerHTML.includes('No contact with a key'), 'it is counted behind one "show" line');
 
     console.log('PASS: test_activate_merges_contacts_and_excludes_local');
 }
@@ -2795,9 +2796,9 @@ async function test_send_pictures_untrusted_contact_offers_connect_securely_and_
     const doc = sandbox._document;
     // UX5: a node without a key is listed in its own group, disabled and never selectable, with a Request key action in the row
     const picker = doc.getElementById('filesSendRecipientPicker').innerHTML;
-    assert.ok(picker.includes('data-rp-nokey="!bbbbbbbb"') && !picker.includes('data-rp-id="!bbbbbbbb"'), 'a contact without a key is not selectable');
+    assert.ok(!picker.includes('data-rp-id="!bbbbbbbb"'), 'a contact without a key is not selectable');
     assert.ok(picker.includes('data-rp-id="!aaaaaaaa"'), 'a trusted contact is');
-    assert.ok(picker.includes('Key unknown, request the key') && picker.includes('data-files-action="send-request-key"'), 'with the reason and the request action');
+    assert.ok(picker.includes('data-rp-show-nokey'), 'the keyless one is behind the "show" line, not listed');
     doc.getElementById('filesSendRecipient').value = '!bbbbbbbb';          // even a forced value cannot be sent to
     dispatchChange(sandbox, 'filesSendRecipient');
     assert.equal(doc.getElementById('filesSendSubmit').disabled, true, 'Send stays off until the contact is trusted');

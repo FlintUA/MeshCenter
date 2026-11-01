@@ -33,3 +33,23 @@ def test_status_chip_and_direction_stripe_styles_present():
     css = _read("static/style-part4.css")
     for cls in (".files-card.is-incoming", ".files-card.is-sent", ".files-chip.is-ok", ".files-chip.is-bad"):
         assert cls in css, cls
+
+
+def test_phone_layout_is_compact_one_toolbar_menu_fab_and_expandable_cards():
+    html = _read("templates/index.html")
+    for ident in ("filesSearchBtn", "filesSearchClose", "filesSearchCount", "filesMoreBtn", "filesMoreMenu", "filesMenuUse", "filesFab"):
+        assert 'id="%s"' % ident in html, ident
+    assert 'data-files-action="search-open"' in html and 'data-files-action="more-toggle"' in html
+    assert 'class="files-fab files-phone-only"' in html and 'data-files-action="send"' in html.split('id="filesFab"')[0].rsplit("<button", 1)[1] + 'data-files-action="send"'
+    css = _read("static/style-part4.css")
+    phone = css[css.index(".files-seg-short { display: none; }"):]
+    assert ".files-header.mc-workspace-header { display: none; }" in phone, "no tall header on a phone"
+    assert ".files-footer { display: none; }" in phone, "the storage line moved into the menu"
+    assert ".files-card-extra { display: none;" in phone and ".files-card.is-open .files-card-extra { display: block; }" in phone
+    assert "text-overflow: ellipsis" in phone and "white-space: nowrap" in phone, "the file name is one line with an ellipsis"
+    assert "@media (max-width: 399px)" in phone and ".files-seg-short { display: inline; }" in phone, "short segment labels at narrow widths"
+    for loc in ("en", "de", "ru", "uk"):
+        import json
+        files = json.loads(_read("static/i18n/%s.json" % loc))["files"]
+        for key in ("segment_incoming_short", "segment_sent_short", "segment_all_short", "search_count", "search_close", "more_menu", "card_toggle"):
+            assert key in files, (loc, key)

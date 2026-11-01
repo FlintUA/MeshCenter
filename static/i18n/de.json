@@ -649,7 +649,14 @@
       "other": "noch {count} Zeichen",
       "few": "noch {count} Zeichen",
       "many": "noch {count} Zeichen"
-    }
+    },
+    "segment_incoming_short": "Ein",
+    "segment_sent_short": "Ges.",
+    "segment_all_short": "Alle",
+    "search_close": "Suche schließen",
+    "search_count": "{shown} von {total}",
+    "more_menu": "Mehr",
+    "card_toggle": "Details anzeigen"
   },
   "about": {
     "tab_overview": "Übersicht",

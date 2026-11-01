@@ -5602,27 +5602,6 @@ html[data-theme="dark"] .telemetry-btn.power .telemetry-value {
         aspect-ratio: var(--camera-aspect, 16 / 9);
     }
 
-    /* Files: the header stacks (title block, then the actions wrapping) */
-    .files-header.mc-workspace-header {
-        flex-direction: column;
-        flex-wrap: nowrap;
-        align-items: stretch;
-        height: auto;
-        min-height: 0;
-        flex: 0 0 auto;
-    }
-
-    .files-header .workspace-page-actions {
-        flex-wrap: wrap;
-        width: 100%;
-        gap: 8px;
-    }
-
-    .files-header .workspace-page-actions .mc-refresh-btn {
-        flex: 1 1 auto;
-        min-height: 44px;
-    }
-
     /* network camera controls: the card scrolls as a whole, tap-size targets, the lens slider thumb is 44 px */
     .video-view .video-panel {
         display: flex !important;

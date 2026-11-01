@@ -649,7 +649,14 @@
       "few": "Осталось {count} символа",
       "many": "Осталось {count} символов",
       "other": "Осталось {count} символа"
-    }
+    },
+    "segment_incoming_short": "Вход",
+    "segment_sent_short": "Отпр",
+    "segment_all_short": "Все",
+    "search_close": "Закрыть поиск",
+    "search_count": "{shown} из {total}",
+    "more_menu": "Ещё",
+    "card_toggle": "Показать подробности"
   },
   "about": {
     "tab_overview": "Обзор",

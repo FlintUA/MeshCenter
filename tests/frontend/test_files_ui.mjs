@@ -2767,6 +2767,45 @@ async function test_fx1_waiting_card_says_how_long_the_link_stays_valid() {
     console.log('PASS: test_fx1_waiting_card_says_how_long_the_link_stays_valid');
 }
 
+async function test_fx1_phone_toolbar_search_more_menu_and_card_expansion() {
+    const list = [attachment('a1', 'received', 'AVAILABLE', { file_name: 'quarterly-report.pdf' }), attachment('a2', 'received', 'AVAILABLE', { file_name: 'photo.jpg', created_at: 1700000100 }),
+        attachment('a3', 'sent', 'SENT', { file_name: 'notes.txt', created_at: 1700000200 })];
+    const sandbox = sandboxWithViews(listRoutes(list));
+    activate(sandbox);
+    await waitFor(() => listHtml(sandbox).includes('filesCard-a3'));
+    const el = (id) => sandbox._document.getElementById(id);
+    const hidden = (id) => (el(id).hidden !== undefined ? el(id).hidden : el(id).style.display === 'none');
+    // the more menu opens and closes; Select starts selecting and closes it
+    dispatch(sandbox, { 'data-files-action': 'more-toggle' });
+    assert.equal(hidden('filesMoreMenu'), false, 'the menu opens');
+    assert.equal(el('filesMoreBtn').getAttribute('aria-expanded'), 'true');
+    dispatch(sandbox, { 'data-files-action': 'select-mode' });
+    assert.equal(hidden('filesMoreMenu'), true, 'a menu item closes the menu');
+    assert.equal(hidden('filesBulkBar'), false, 'Select started selecting');
+    dispatch(sandbox, { 'data-files-action': 'select-mode' });
+    // the storage line lives in the menu
+    assert.match(el('filesMenuUse').textContent, /Files use /);
+    // search: the count reads "N of M" and closing clears the filter
+    dispatch(sandbox, { 'data-files-action': 'search-open' });
+    const input = el('filesSearch');
+    input.value = 'photo';
+    for (const fn of sandbox._document.listeners.input || []) fn({ target: input });
+    assert.equal(el('filesSearchCount').textContent, '1 of 3');
+    assert.ok(listHtml(sandbox).includes('filesCard-a2') && !listHtml(sandbox).includes('filesCard-a1'), 'the list is filtered');
+    dispatch(sandbox, { 'data-files-action': 'search-close' });
+    assert.equal(el('filesSearchCount').textContent, '', 'closing clears the count');
+    assert.ok(listHtml(sandbox).includes('filesCard-a1'), 'and the filter');
+    // a phone card opens and stays open across a re-render (a poll)
+    dispatch(sandbox, { 'data-files-action': 'toggle-card', 'data-attachment': 'a1' });
+    dispatch(sandbox, { 'data-files-action': 'segment', 'data-segment': 'incoming' });
+    const html = listHtml(sandbox);
+    const card = html.slice(html.indexOf('filesCard-a1') - 60, html.indexOf('filesCard-a1') + 80);
+    assert.match(card, /files-card is-incoming is-open/, 'the expanded card stays expanded');
+    // the card carries the full name for the one-line ellipsis and the chip words in a title
+    assert.match(html, /files-card-name" title="quarterly-report\.pdf"/);
+    console.log('PASS: test_fx1_phone_toolbar_search_more_menu_and_card_expansion');
+}
+
 // ---- MCA-UX2: Accept needs no second confirmation, Reject asks once -----------------------------------------------
 
 function consentRoutes() {
@@ -2893,10 +2932,11 @@ async function main() {
     await test_fx1_multi_select_bulk_delete_asks_once_and_only_received_files();
     await test_fx1_executable_download_asks_first();
     await test_fx1_waiting_card_says_how_long_the_link_stays_valid();
+    await test_fx1_phone_toolbar_search_more_menu_and_card_expansion();
     // MCA-UX2
     await test_accept_and_download_sends_at_once_without_a_confirm_dialog();
     await test_reject_asks_once_with_a_danger_dialog_and_cancel_sends_nothing();
-    console.log('All files UI behavior tests passed (68 scenarios).');
+    console.log('All files UI behavior tests passed (69 scenarios).');
 }
 
 main()

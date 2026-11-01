@@ -222,6 +222,9 @@
         checked: {},              // id -> true while selecting
         openMore: {},             // id -> true: the "More details" of this card is open (survives a poll re-render)
         openComment: {},          // id -> true: the full comment is shown
+        openCard: {},             // id -> true: the phone card is expanded (actions and details shown)
+        searchOpen: false,        // phone: the search field replaces the toolbar
+        moreOpen: false,          // phone: the more menu is open
         moreExtra: {},            // id -> timeline / deliveries html fetched when "More details" was first opened
         chatScrolledFor: '',      // the contact the messenger layout was last scrolled to the bottom for
         storage: null,            // {count, bytes}: the received copies in cache/incoming (MCA-UX1)
@@ -962,6 +965,7 @@
     function moreRowsHtml(a) {
         var provider = providerById(a.provider_id);
         var rows = [
+            ['files.detail_file', 'File', a.locked ? '-' : (a.file_name || '-')],
             ['files.more_state', 'Internal state', filesStateLabel(a.state)],
             ['files.detail_created', 'Created', fmtDate(a.created_at)],
             ['files.detail_expires', 'Relay link expires', a.hard_expires_at ? fmtDate(a.hard_expires_at) + ' (' + fmtRel(a.hard_expires_at) + ')' : '-'],
@@ -978,6 +982,10 @@
         return detailRowsHtml(rows);
     }
 
+    var CHEVRON = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+    // Phone: collapsed = three lines (who, name, size + time + status); a tap opens the rest (the extra block). Elsewhere the
+    // extra block is always shown. One markup, the CSS decides.
     function cardHtml(a) {
         var status = plainStatus(a);
         var actions = cardActionsHtml(a);
@@ -989,6 +997,7 @@
         var valid = linkValidText(a);
         var checked = state.checked[a.id] ? ' is-checked' : '';
         var open = state.openMore[a.id] ? ' open' : '';
+        var expanded = state.openCard[a.id] ? ' is-open' : '';
         var comment = (!a.locked && a.comment)
             ? '<div class="files-card-comment' + (state.openComment[a.id] ? ' is-open' : '') + '" data-files-action="toggle-comment" data-attachment="' + esc(a.id) + '">' + esc(a.comment) + '</div>'
             : '';
@@ -998,23 +1007,28 @@
         if (a.state === 'WAITING_KEY') {
             note += '<span class="files-card-note">' + esc(t('files.note_confirm_key', "Confirm this contact's key in the node list to receive the file.")) + '</span>';
         }
+        var noteBlock = (note || busy) ? '<div class="files-card-status">' + note + busy + '</div>' : '';
         var more = '<details class="files-card-more" data-more="' + esc(a.id) + '"' + open + '><summary>' + esc(t('files.more_details', 'More details')) + '</summary>' +
             '<div class="files-detail-table">' + moreRowsHtml(a) + '</div>' +
             (actions.more ? '<div class="files-card-actions">' + actions.more + '</div>' : '') +
             '<div class="files-more-extra" data-more-extra="' + esc(a.id) + '">' + (state.moreExtra[a.id] || '') + '</div></details>';
-        return '<article class="files-card ' + (incoming ? 'is-incoming' : 'is-sent') + checked + '" id="filesCard-' + esc(a.id) + '" data-attachment="' + esc(a.id) + '" data-direction="' + (incoming ? 'incoming' : 'sent') + '">' +
+        return '<article class="files-card ' + (incoming ? 'is-incoming' : 'is-sent') + checked + expanded + '" id="filesCard-' + esc(a.id) + '" data-attachment="' + esc(a.id) + '" data-direction="' + (incoming ? 'incoming' : 'sent') + '">' +
             '<label class="files-check"><input type="checkbox" data-files-check="' + esc(a.id) + '"' + (state.checked[a.id] ? ' checked' : '') +
                 ' aria-label="' + esc(t('files.select_one', 'Select')) + '"></label>' +
             '<div class="files-card-thumb">' + thumb + '</div>' +
             '<div class="files-card-body">' +
                 '<div class="files-card-who">' + esc(whoLine(a)) + '</div>' +
-                '<div class="files-card-name">' + esc(name) + '</div>' +
-                '<div class="files-card-meta">' + esc(fmtBytes(a.plain_size)) + ' · ' + esc(clock(a.created_at || 0)) + '</div>' +
-                comment +
-                '<div class="files-card-status"><span class="files-chip is-' + esc(status.tone) + '">' + esc(status.text) + '</span>' + note + busy + '</div>' +
-                (actions.primary ? '<div class="files-card-actions">' + actions.primary + '</div>' : '') +
-                more +
+                '<div class="files-card-name" title="' + esc(a.locked ? '' : (a.file_name || '')) + '">' + esc(name) + '</div>' +
+                '<div class="files-card-line3"><span class="files-card-meta">' + esc(fmtBytes(a.plain_size)) + ' · ' + esc(clock(a.created_at || 0)) + '</span>' +
+                    '<span class="files-chip is-' + esc(status.tone) + '" title="' + esc(status.text) + '">' + esc(status.text) + '</span></div>' +
+                '<div class="files-card-extra">' +
+                    comment + noteBlock +
+                    (actions.primary ? '<div class="files-card-actions">' + actions.primary + '</div>' : '') +
+                    more +
+                '</div>' +
             '</div>' +
+            '<button type="button" class="files-card-chev" data-files-action="toggle-card" data-attachment="' + esc(a.id) + '" aria-expanded="' + (state.openCard[a.id] ? 'true' : 'false') +
+                '" aria-label="' + esc(t('files.card_toggle', 'Show details')) + '">' + CHEVRON + '</button>' +
         '</article>';
     }
 
@@ -1034,10 +1048,55 @@
         });
     }
 
+    function isPhone() {
+        try { return Boolean(window.matchMedia && window.matchMedia('(max-width: 768px)').matches); } catch (e) { return false; }
+    }
+
+    function setFlag(el, cls, on) {
+        if (el && el.classList && el.classList.toggle) el.classList.toggle(cls, Boolean(on));
+    }
+
+    // Phone toolbar: [segments] [search] [more]; the search field takes the toolbar's place (like the gallery filter), the more
+    // menu holds Select, Refresh and the storage line. Elsewhere the same elements are laid out as a normal toolbar.
+    function renderToolbar() {
+        var bar = getEl('filesToolbar');
+        setFlag(bar, 'is-search', state.searchOpen);
+        var menu = getEl('filesMoreMenu');
+        if (menu) { if (menu.hidden !== undefined) menu.hidden = !state.moreOpen; else menu.style.display = state.moreOpen ? '' : 'none'; }
+        var more = getEl('filesMoreBtn');
+        if (more) more.setAttribute('aria-expanded', state.moreOpen ? 'true' : 'false');
+        setFlag(getEl('filesView'), 'is-selecting', state.selectMode);
+        var count = getEl('filesSearchCount');
+        if (count) {
+            var q = state.search.trim();
+            if (!q) { count.textContent = ''; } else {
+                var total = state.attachments.filter(function (a) { return state.segment === 'all' || segmentOf(a) === state.segment; }).length;
+                count.textContent = tparams('files.search_count', { shown: visibleAttachments().length, total: total },
+                    visibleAttachments().length + ' of ' + total);
+            }
+        }
+        var search = getEl('filesSearch');
+        if (search && search.value !== state.search) search.value = state.search;
+    }
+
+    function closeMoreMenu() {
+        if (!state.moreOpen) return;
+        state.moreOpen = false;
+        renderToolbar();
+    }
+
+    function setSearchOpen(on) {
+        state.searchOpen = Boolean(on);
+        if (!state.searchOpen && state.search) { state.search = ''; renderTransfers(); } else renderToolbar();
+        var input = getEl('filesSearch');
+        if (state.searchOpen && input && input.focus) { try { input.focus(); } catch (e) { /* no focus in a stub */ } }
+    }
+
     function renderTransfers() {
         var list = getEl('filesArchiveList');
         if (!list) return;
         renderSegments();
+        renderToolbar();
         var items = visibleAttachments();
         var chat = Boolean(state.counterparty);
         if (list.classList) {
@@ -1111,6 +1170,14 @@
         if (count) count.textContent = plural('files.bulk_count', n, '{count} selected', '{count} selected');
     }
 
+    function toggleCard(id) {
+        if (state.openCard[id]) delete state.openCard[id]; else state.openCard[id] = true;
+        var card = getEl('filesCard-' + id);
+        setFlag(card, 'is-open', state.openCard[id]);
+        var chev = card && card.querySelector ? card.querySelector('.files-card-chev') : null;
+        if (chev) chev.setAttribute('aria-expanded', state.openCard[id] ? 'true' : 'false');
+    }
+
     function setSelectMode(on) {
         state.selectMode = Boolean(on);
         if (!state.selectMode) state.checked = {};
@@ -1168,6 +1235,8 @@
 
     function renderFooter() {
         var el = getEl('filesFooter');
+        var use = getEl('filesMenuUse');
+        if (use) use.textContent = tparams('files.footer_use', { size: fmtBytes(filesBytes()) }, 'Files use ' + fmtBytes(filesBytes()));
         if (!el) return;
         if (!state.attachments.length && !state.storage) { el.innerHTML = ''; return; }
         el.innerHTML =
@@ -1840,6 +1909,11 @@
         var target = e.target || e.srcElement;
         if (!target) return;
 
+        if (state.moreOpen && !closestSel(target, '#filesMoreMenu') && !closestSel(target, '#filesMoreBtn')) {
+            state.moreOpen = false;
+            renderToolbar();
+        }
+
         // FX1: while selecting, a tap on the card itself ticks it (buttons, links and the details toggle keep their own job)
         if (state.selectMode) {
             var card = closestSel(target, '.files-card');
@@ -1848,6 +1922,16 @@
                 toggleChecked(card.getAttribute('data-attachment'));
                 var box = card.querySelector ? card.querySelector('input[data-files-check]') : null;
                 if (box) box.checked = Boolean(state.checked[card.getAttribute('data-attachment')]);
+                return;
+            }
+        }
+
+        // phone: a tap on the card (not on a button, link, the details toggle or the comment) opens or closes it
+        if (!state.selectMode && isPhone()) {
+            var tapped = closestSel(target, '.files-card');
+            if (tapped && !closestSel(target, 'button, a, summary, input, details, .files-card-comment')) {
+                if (state.longPressed) { state.longPressed = false; return; }
+                toggleCard(tapped.getAttribute('data-attachment'));
                 return;
             }
         }
@@ -1870,13 +1954,16 @@
         if (action === 'send') { openSendDialog(); return; }
         if (action === 'providers') { openProviderSettings(); return; }
         if (action === 'relay-wizard') { openRelayWizard(); return; }
-        if (action === 'refresh') { refresh(); return; }
+        if (action === 'refresh') { state.moreOpen = false; renderToolbar(); refresh(); return; }
         if (action === 'segment') { setSegment(modal.getAttribute('data-segment')); return; }
-        if (action === 'select-mode') { setSelectMode(!state.selectMode); return; }
+        if (action === 'select-mode') { state.moreOpen = false; setSelectMode(!state.selectMode); return; }
+        if (action === 'search-open') { state.moreOpen = false; setSearchOpen(true); return; }
+        if (action === 'search-close') { setSearchOpen(false); return; }
+        if (action === 'more-toggle') { state.moreOpen = !state.moreOpen; renderToolbar(); return; }
         if (action === 'select-mode-off') { setSelectMode(false); return; }
         if (action === 'bulk-download') { bulkDownload(); return; }
         if (action === 'bulk-delete') { bulkDelete(); return; }
-        if (action === 'purge-received') { purgeReceivedCopies(); return; }
+        if (action === 'purge-received') { state.moreOpen = false; renderToolbar(); purgeReceivedCopies(); return; }
 
         // Attachment + contact + provider actions carry a data-attachment /
         // data-contact / data-provider id validated against the current model.
@@ -1885,6 +1972,7 @@
         var providerId = modal.getAttribute('data-provider');
 
         if (attachmentId && state.attachments.some(function (a) { return a.id === attachmentId; })) {
+            if (action === 'toggle-card') { toggleCard(attachmentId); return; }
             if (action === 'toggle-comment') { state.openComment[attachmentId] = !state.openComment[attachmentId]; renderTransfers(); return; }
             if (action === 'attach-download') { attachmentDownload(attachmentId); return; }
             if (action === 'attach-reject') { attachmentReject(attachmentId); return; }

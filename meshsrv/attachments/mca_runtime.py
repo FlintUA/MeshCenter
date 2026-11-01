@@ -137,6 +137,7 @@ from meshsrv.attachments.recipient_snapshot import RecipientSnapshotPublisher
 from meshsrv.attachments.service import INBOUND_QUEUE_MAXSIZE, AttachmentsService, InboundEvent
 from meshsrv.attachments.snapshots import AttachmentsSnapshotPublisher
 from meshsrv.attachments.vault.codec import VaultCodec, VaultConnection
+from meshsrv.attachments.vault import unlock_file
 from meshsrv.attachments.vault.runtime import VaultRuntime
 from meshsrv.attachments.workspace import MCAWorkspaceManager
 from meshsrv.connectivity_monitor import ConnectivityMonitor
@@ -493,6 +494,12 @@ def start_attachments_service(
     if problem is not None:
         _vault_log("ERROR", "MCAttach not started", "The vault header cannot be read by this version (%s)" % problem)
         return
+    # MCA-VAULT (ADR-0013 decision 9): an optional, off-by-default unlock from a Docker secret file for a NAS that restarts alone.
+    # One attempt per start; a missing, unreadable or wrong secret leaves the vault locked and says so in the System Log.
+    try:
+        unlock_file.maybe_unlock(state.vault, _vault_log)
+    except Exception:  # noqa: BLE001 - the unattended unlock is a convenience: it must never keep MCAttach from starting
+        logger.exception("MCAttach unlock file: unexpected failure")
     state.ensure_service(radio_transport, control_channel_index, contact_exists, offer_linked)
 
 

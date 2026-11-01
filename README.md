@@ -148,7 +148,7 @@ The install has been validated end-to-end on a clean Raspberry Pi Zero 2 W with 
 ## Features
 
 - **Messaging** - public channel and direct messages, native Meshtastic reply support, favorites/ignore list, full chat history
-- **Files (MCAttach)** - end-to-end encrypted node-to-node file transfer with a pluggable Relay, trusted-contact key exchange, and transfer lifecycle tracking
+- **Files (MCAttach)** - end-to-end encrypted node-to-node file transfer with a pluggable Relay, trusted-contact key exchange, and transfer lifecycle tracking; an optional **vault** encrypts what MCAttach keeps on the device at rest ([guide](docs/MCAttach_Vault.md))
 - **Interactive Map** - embedded Leaflet map with live node positions, distance/bearing, waypoint management, synchronized selection with the node list
 - **Node Management** - automatic discovery, hardware/role info, favorites, custom icons, CSV/JSON export-import, remote Node Tools (telemetry/position request, traceroute)
 - **Telemetry** - device/environment/power history with selectable chart ranges, bounded and debounced storage (see [Data Storage](docs/architecture/Architecture.md#data-storage))
@@ -219,6 +219,8 @@ sudo systemctl restart meshcenter.service
 Then open MeshCenter in a browser: it shows the setup wizard (`/setup`) where you choose a new password. The old sessions of every device are ended by the same step. In Docker, edit `auth.json` in the mounted data folder the same way and restart the container. Details: [User Guide, security notes](docs/User_Guide.md#18-security-notes).
 
 MeshCenter is served over plain HTTP by default and is intended for a trusted local network - password protection stops unauthorized use of the interface, but doesn't encrypt the connection itself. Use a VPN or a TLS-terminating reverse proxy for genuine remote access rather than exposing the service directly to the Internet.
+
+**MCAttach vault (optional).** File transfers are end-to-end encrypted on the air and at the Relay; the optional vault also encrypts what MCAttach stores on the device (received and queued files, their names and comments, the identity key and Relay tokens) with a passphrase only you know, and MCAttach is locked after every start until you unlock it. It does not cover the Media gallery or any other MeshCenter file, and on SD cards it cannot make old plaintext unrecoverable. What it does and does not protect, the recovery key, memory and swap on a small Pi, and the Docker options: [docs/MCAttach_Vault.md](docs/MCAttach_Vault.md).
 
 See [docs/User_Guide.md](docs/User_Guide.md#18-security-notes) for the full detail.
 

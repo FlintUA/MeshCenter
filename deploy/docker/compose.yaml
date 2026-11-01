@@ -30,9 +30,13 @@ services:
       TZ: ${TZ:-UTC}
       MESHCENTER_TRUST_HOST_CLOCK: ${MESHCENTER_TRUST_HOST_CLOCK:-0}
       MESHCENTER_INSTANCE_NAME: ${MESHCENTER_INSTANCE_NAME:-}
+      # Optional, OFF by default (docs/MCAttach_Vault.md: read the trade-off first, the key is then derivable from the volume plus the secret).
+      # To unlock the MCAttach vault by itself after a restart uncomment this line, the `secrets:` line under the service and the block at the end:
+      # MESHCENTER_MCA_VAULT_UNLOCK_FILE: /run/secrets/mca_vault_passphrase
     volumes:
       - ./config:/config
       - ./data:/data
+    # secrets: [mca_vault_passphrase]
     hostname: meshcenter
     cap_drop:
       - ALL
@@ -45,3 +49,7 @@ services:
       timeout: 5s
       retries: 3
       start_period: 150s
+
+# secrets:
+#   mca_vault_passphrase:
+#     file: ./secrets/mca_vault_passphrase    # chmod 400, owned by PUID; one line, the vault passphrase

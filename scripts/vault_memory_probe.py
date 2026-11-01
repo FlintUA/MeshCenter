@@ -28,6 +28,8 @@ MEM = int(sys.argv[1]) if len(sys.argv) > 1 else 64
 OPS = int(sys.argv[2]) if len(sys.argv) > 2 else 3
 ROUNDS = int(sys.argv[3]) if len(sys.argv) > 3 else 5
 TRIM = (sys.argv[4] == 'trim') if len(sys.argv) > 4 else False
+MEM = max(MEM, kdf.MIN_MEMLIMIT // (1024 * 1024))      # the vault's own floors: 32 MiB and 2 passes
+OPS = max(OPS, kdf.MIN_OPSLIMIT)
 PASS = 'correct horse battery staple'
 
 

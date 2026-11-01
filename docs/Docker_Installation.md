@@ -494,6 +494,17 @@ share it as a public folder, and treat every backup or copy of `data/` as
 secret too. `camera_secrets.json` is a plain, owner-only (0600) file, not
 encrypted.
 
+## MCAttach vault (optional)
+
+The vault encrypts what MCAttach keeps under `data/mca/` (files, names, comments, the identity key and Relay tokens) with a passphrase. It is off by default and is turned on in the UI (Settings, **MCAttach vault**). In the container:
+
+- After **every container start** the vault is locked until you unlock it in the UI. The passphrase is never an environment variable, a compose value or an image label.
+- Swap is decided by the host (a NAS may swap to disk); the enable dialog warns when the container sees a swap device that is not zram.
+- A backup of `data/` with the vault on contains ciphertext, `vault.json` and the database with encrypted columns; keep the recovery key somewhere else. Turn the vault off before you go back to an older image (an older image cannot read it).
+- **Unattended unlock (off by default).** For a NAS that restarts by itself, `MESHCENTER_MCA_VAULT_UNLOCK_FILE` can point at a Docker secret holding the passphrase (see the commented lines in `deploy/docker/compose.yaml`). The key is then derivable by anyone who can read the volume and the secret, so the vault protects much less; read the trade-off in [MCAttach_Vault.md](MCAttach_Vault.md#docker-and-the-nas) first. It is read once per start, a wrong file leaves the vault locked, every use is noted in the System Log, and it is ignored outside the container.
+
+Full guide: [MCAttach_Vault.md](MCAttach_Vault.md).
+
 ## Day to day
 
 ```bash

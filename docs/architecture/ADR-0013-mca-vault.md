@@ -296,7 +296,7 @@ and the fail-closed start, the log/notification/toast leak test, the swap check)
 migration (backup lifecycle, unlock test, flash notice, the leak test across the migration); PR 4 file operations under
 the vault (leak test across receive, save, send, schedule, purge); PR 5 UI (persistent plain-backup warning in Files and
 System, strength hint, disabled Roll back button, the "gallery not covered" note); PR 6 Docker and documentation
-(swap notes, downgrade notes). Details, tests and the live round of each are in section 13 of
+(swap notes, downgrade notes) - all six are done. Details, tests and the live round of each are in section 13 of
 `docs/proposals/MCA-VAULT.md`.
 
 ## Amendments made in PR 3 (enable, disable, migration)
@@ -454,6 +454,12 @@ download, Save to Files, delete, cleanup, and the removal of the experimental fl
     tick that was mid-flight started a relay probe on a thread pool the exiting interpreter refuses, and the in-flight probe held
     the exit. `gunicorn.conf.py`'s `worker_exit` now calls `mca_runtime.stop_for_shutdown()` (stop flag, bounded wait), the tick
     starts nothing once the flag is set, and the interpreter-shutdown error ends the worker without an ERROR line.
+
+## Amendments made in PR 6 (Docker, documentation, memory)
+
+- **The unlock file is implemented** (`meshsrv/attachments/vault/unlock_file.py`, decision 9): `MESHCENTER_MCA_VAULT_UNLOCK_FILE`, off by default, honoured only in container mode (a native install logs that it is ignored), read once per start from `start_attachments_service()`, UTF-8 text of at most 1 KiB with only the final line break removed, symlinks followed, one attempt (a wrong secret counts against the rate limit like a typed one, there is no retry loop), a missing or wrong file leaves the vault locked with one System Log line carrying a code and never a value. A successful use logs a WARNING "MCAttach unlocked from the unlock file" that names the trade-off. `deploy/docker/compose.yaml` carries the commented secret block.
+- **Memory on the Zero 2 W was measured, nothing is retained.** After the real round on .104 the free memory read 142.9 MB before and 103.4 MB after an enable, which looked like a leak. In an isolated process on the same node (`scripts/vault_memory_probe.py`, and an enable, three unlocks and a disable on a copy of the real workspace) resident memory goes back to the baseline after every Argon2id derivation: start 23.7 MB, after enable 24.4 MB (peak 87.7 MB, the transient 64 MiB), after unlock 18.4 to 18.5 MB on three runs, after disable 20.7 MB; unlocking from new threads (as request threads do) also returns to the baseline; `malloc_trim` returns about 1 MB. `MemAvailable` on a 425 MB node moves by 15 MB or more by itself (page cache), so the drop was the process's own few megabytes plus the page cache of the two backup copies and ordinary variation, not retained key-derivation memory. As cheap insurance `release_unused_memory()` (gc + `malloc_trim(0)`, best effort, glibc only) runs after an unlock, a lock, an enable and a disable. Running the derivation in a short-lived subprocess was considered and not done: it would not lower the peak (the memory is needed for that second either way) and there is nothing to give back.
+- **Documentation:** `docs/MCAttach_Vault.md` (user guide: what is and is not protected, enable, daily use, recovery, flash storage, downgrade, memory and swap with the measured numbers, Docker and the unlock file, troubleshooting), README, User Guide, Docker guide, CLAUDE.md.
 
 ## Notes for later PRs (from the owner's PR 1 review)
 

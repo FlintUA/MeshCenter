@@ -25,6 +25,7 @@ from typing import Callable, Dict, Optional, Tuple
 
 from meshsrv.attachments.vault import header as header_mod
 from meshsrv.attachments.vault import kdf, memory, passphrase as passphrase_mod, recovery as recovery_mod, swapcheck
+from meshsrv.attachments.vault import trim as trim_mod
 from meshsrv.attachments.vault.errors import VaultError
 from meshsrv.attachments.vault.keys import subkey as _subkey
 
@@ -277,6 +278,7 @@ class VaultRuntime:
         except OSError:
             pass
         self._log("INFO", "MCAttach vault unlocked", "MCAttach files can be opened")
+        trim_mod.release_unused_memory()                  # the derivation's 64 MiB are already freed; give glibc's free pages back too
 
     def lock(self) -> Dict[str, object]:
         """Lock now: zero the key, bump the generation (a reader streaming under the old one must stop)."""
@@ -288,6 +290,7 @@ class VaultRuntime:
         if old is not None:
             old.zero()
             self._log("INFO", "MCAttach vault locked", "MCAttach files are locked")
+            trim_mod.release_unused_memory()
         return self.status()
 
     # ---- observability -------------------------------------------------------------------------------------------
@@ -328,6 +331,7 @@ class VaultRuntime:
             self._recovery_pending = recovery_mod.encode(recovery_key)
             self._progress = None
         self._log("INFO", "MCAttach vault enabled", "MCAttach files are now encrypted")
+        trim_mod.release_unused_memory()                  # the job read and wrote every file: return its buffers
 
     def finish_disable(self) -> None:
         old = None
@@ -339,6 +343,7 @@ class VaultRuntime:
         if old is not None:
             old.zero()
         self._log("INFO", "MCAttach vault disabled", "MCAttach files are plain again")
+        trim_mod.release_unused_memory()
 
     def take_recovery_key(self) -> Optional[str]:
         """The recovery key text, once. After this call it is gone from memory."""

@@ -479,6 +479,10 @@ A file someone sends you appears under `Files` waiting for your decision. Open i
 
 Tap any transfer to see its status in plain language - Preparing, Uploading, Waiting, Receiving, or Ready. If something needs attention (for example, no Relay configured, or a lost connection), MeshCenter says so plainly - never just a spinner and never a raw technical code. Open `Advanced details` or `Technical diagnostics` only if you want to dig further; most people never need to.
 
+### The vault (optional)
+
+Under `Settings`, the **MCAttach vault** card turns on encryption of everything MCAttach stores on the device. When it is on, MCAttach is locked after every start: transfers show **Locked** instead of names until you unlock it (the lock chip in the bottom bar, or **Unlock** in the Files banner). Write the recovery key on paper when you enable it; without the passphrase and the recovery key the data cannot be opened. The Media gallery is not covered. Full guide: [MCAttach_Vault.md](MCAttach_Vault.md).
+
 ### Relay providers
 
 A file transfer passes through a small server called a Relay, which temporarily stores the encrypted file until the recipient downloads it. **By default, MeshCenter uses the project's own Relay at `https://mcattach.elektroniker.help` - almost nobody needs to change this.** If you do want to add or switch a Relay, use `Workspace > Settings > Files / MCAttach > Set up a Relay`.

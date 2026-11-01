@@ -762,13 +762,14 @@
     var REASON_BY_CODE = {
         recipient_not_trusted: 'key_not_trusted', no_recipients: 'no_recipient', source_file_missing: 'source_missing',
         disk_low_block: 'disk_low', recipient_provider_unknown: 'recipient_relay',
-        mime_not_allowed: 'type_not_allowed', extension_not_allowed: 'type_not_allowed',
+        mime_not_allowed: 'type_not_allowed', extension_not_allowed: 'type_not_allowed', type_mismatch: 'type_mismatch',
         pending_offer_signature_invalid: 'sender_unverified', provider_missing: 'no_relay',
         chunk_fetch_failed: 'download_failed',
         descriptor_signature_invalid: 'damaged', manifest_invalid: 'damaged', header_size_mismatch: 'damaged',
         chunk_digest_mismatch: 'damaged', chunk_aead_failed: 'damaged', plaintext_digest_mismatch: 'damaged',
     };
     var REASON_LABELS = {
+        type_mismatch: 'the file is not the type it claims to be',
         key_not_trusted: "the contact's key is not trusted", no_recipient: 'there is no recipient', source_missing: 'the file is no longer on this node',
         disk_low: 'not enough free space on this node', recipient_relay: 'the recipient does not use this relay',
         type_not_allowed: 'this file type is not accepted', sender_unverified: 'the sender could not be verified',
@@ -1005,6 +1006,10 @@
         var busy = status.busy ? '<div class="files-progress" role="progressbar" aria-label="' + esc(status.text) + '"><span></span></div>' : '';
         var note = status.retrying ? '<span class="files-card-note">' + esc(t('files.note_retrying', 'trying again automatically')) + '</span>' : '';
         if (valid) note += '<span class="files-card-note">' + esc(valid) + '</span>';
+        if (a.state === 'WAITING_CONSENT' && a.error_code === 'auto_accept_quota') {
+            // not a failure: a trusted contact sent a lot today, so this one waits for a person
+            note += '<span class="files-card-note">' + esc(t('files.note_auto_quota', 'Not downloaded automatically: this contact sent a lot today. Press Download to accept it.')) + '</span>';
+        }
         if (a.state === 'WAITING_KEY') {
             note += '<span class="files-card-note">' + esc(t('files.note_confirm_key', "Confirm this contact's key in the node list to receive the file.")) + '</span>';
         }
@@ -2063,6 +2068,7 @@
     // useful 'input' event; this routes the send form's dynamic feedback.
     function onDocumentChange(e) {
         var target = e.target;
+        if (target && target.getAttribute && target.getAttribute('data-files-setting')) { onFilesSettingChange(target); return; }
         if (target && target.getAttribute && target.getAttribute('data-files-check')) { toggleChecked(target.getAttribute('data-files-check'), Boolean(target.checked)); return; }
         if (!target || !target.id) return;
         if (target.id === 'filesSendExpiry') { renderSendCustomTtl(); renderSendSubmit(); refreshSendReadiness(); return; }
@@ -4007,6 +4013,58 @@
         }, 500);
     }
 
+    function currentFilesSettings() {
+        var s = (typeof appSettings !== 'undefined' && appSettings && appSettings.files) ? appSettings.files : {};
+        return { auto_accept: s.auto_accept !== false, auto_cleanup_days: Number(s.auto_cleanup_days) || 0 };
+    }
+
+    function cleanupOptionLabel(days) {
+        return Number(days) === 0 ? t('settings.files_cleanup_never', 'Never') : plural('files.cleanup_days', Number(days), '{count} day', '{count} days');
+    }
+
+    function syncFilesSettings() {
+        var current = currentFilesSettings();
+        var accept = getEl('filesAutoAccept');
+        if (accept) accept.checked = current.auto_accept;
+        var cleanup = getEl('filesAutoCleanup');
+        if (cleanup) {
+            var options = cleanup.querySelectorAll ? cleanup.querySelectorAll('option') : [];
+            for (var i = 0; i < options.length; i++) options[i].textContent = cleanupOptionLabel(options[i].value);
+            cleanup.value = String(current.auto_cleanup_days);
+        }
+    }
+
+    function saveFilesSetting(name, value) {
+        var body = { files: {} };
+        body.files[name] = value;
+        return api('/api/settings', { method: 'POST', body: JSON.stringify(body) }).then(function (r) {
+            if (r.status === 200 && r.data && r.data.ok) {
+                if (typeof appSettings !== 'undefined') appSettings = r.data.settings;
+            } else {
+                toast(t('files.settings_save_failed', 'Could not save the setting'), 'error');
+            }
+            syncFilesSettings();
+        }).catch(function () { toast(t('files.settings_save_failed', 'Could not save the setting'), 'error'); syncFilesSettings(); });
+    }
+
+    function onFilesSettingChange(target) {
+        var name = target.getAttribute('data-files-setting');
+        if (name === 'auto_accept') { saveFilesSetting(name, Boolean(target.checked)); return; }
+        if (name !== 'auto_cleanup_days') return;
+        var days = parseInt(target.value, 10) || 0;
+        if (days === 0) { saveFilesSetting(name, 0); return; }
+        // turning on an automatic deletion is a decision: say what will happen, once
+        var dialog = (typeof window !== 'undefined') ? window.MCDialog : null;
+        var asked = (dialog && dialog.confirm) ? dialog.confirm({
+            title: t('files.cleanup_confirm_title', 'Delete old received files automatically?'),
+            message: plural('files.cleanup_confirm_body', days,
+                'Received files older than {count} day will be deleted from this node, about once an hour. The entries stay in the history.',
+                'Received files older than {count} days will be deleted from this node, about once an hour. The entries stay in the history.'),
+            confirmLabel: t('files.cleanup_confirm', 'Turn on'), cancelLabel: t('dialog.cancel', 'Cancel'), danger: true,
+        }) : Promise.resolve(false);
+        asked.then(function (yes) { if (yes) saveFilesSetting(name, days); else syncFilesSettings(); });
+    }
+
     // the node card's quick links (chat.js) ask for "received" / "sent" / "all"
     function setFilterCompat(direction) {
         setSegment(direction === 'received' ? 'incoming' : (direction === 'sent' ? 'sent' : 'all'));
@@ -4018,6 +4076,7 @@
         plainStatus: plainStatus,
         isExecutableName: isExecutableName,
         setSegment: setSegment,
+        syncSettings: syncFilesSettings,
         activate: activate,
         deactivate: deactivate,
         refresh: refresh,

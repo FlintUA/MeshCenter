@@ -1064,12 +1064,8 @@ def register_attachments_routes(app, handle_errors):
     # ---- MCA-UX1: the space used by received copies (cache/incoming) -----------------------------------------------
 
     def _received_cache_records(snapshot):
-        """Received rows whose content sits in the internal cache (not saved with "Save to Files")."""
-        return [
-            r for r in snapshot.records
-            if r.direction == "received" and not r.saved and r.descriptor is not None
-            and str(r.descriptor.locator).startswith("cache/incoming/")
-        ]
+        """Received rows that still hold their file (FX1 Phase B: received files live in `files/`, one store)."""
+        return [r for r in snapshot.records if r.direction == "received" and r.descriptor is not None]
 
     def _parse_older_than_days(raw):
         try:
@@ -1109,8 +1105,8 @@ def register_attachments_routes(app, handle_errors):
     @handle_errors
     @_mca_error_boundary
     def purge_received_cache():
-        """Delete the received copies older than N days. Explicit only (no automatic deletion); never touches a file
-        saved with "Save to Files"."""
+        """Delete the received copies older than N days. A button press here; the automatic cleanup is the separate
+        `files.auto_cleanup_days` setting (off by default)."""
         facade = _facade()
         if facade is None:
             return _not_ready()

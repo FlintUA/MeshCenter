@@ -653,12 +653,10 @@ def _step_encrypting(
         attachment_id,
         QUEUED_UPLOAD,
         now,
-        # draft_comment was only ever needed to build `header` above (it's
-        # now sealed inside manifest_blob, already persisted to
-        # mca_sender_state a few lines up) - clear the local plaintext
-        # copy now that it has done its one job, same spirit as clearing
-        # `pending_offer_cbor` once receiver.py is done with it.
-        extra_sql=", cipher_size = ?, draft_comment = NULL",
+        # FX1 Phase B: `draft_comment` is KEPT (it used to be cleared here). It is the comment shown on the sent entry in the
+        # Files history; it stays sealed under the vault like the file name, and the sent copy of the file itself is what is
+        # deleted once the transfer is over. On a received row the same column holds the comment the sender wrote.
+        extra_sql=", cipher_size = ?",
         extra_params=(total_ciphertext_size,),
     )
     return QUEUED_UPLOAD

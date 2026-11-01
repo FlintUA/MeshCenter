@@ -607,7 +607,8 @@
       "download_failed": "der Download ist fehlgeschlagen",
       "damaged": "die Datei war beschädigt oder nicht echt",
       "relay_refused": "das Relay hat die Datei abgelehnt",
-      "unknown": "etwas ist schiefgelaufen"
+      "unknown": "etwas ist schiefgelaufen",
+      "type_mismatch": "die Datei ist nicht vom angegebenen Typ"
     },
     "send_ttl_value": "Anzahl",
     "send_ttl_unit": "Einheit",
@@ -677,7 +678,23 @@
       "declined_in": "Abgelehnt",
       "cancelled_in": "Abgebrochen",
       "not_received": "Fehler"
-    }
+    },
+    "note_auto_quota": "Nicht automatisch geladen: dieser Kontakt hat heute viel gesendet. Mit Herunterladen nehmen Sie sie an.",
+    "cleanup_days": {
+      "one": "{count} Tag",
+      "other": "{count} Tage",
+      "few": "{count} Tage",
+      "many": "{count} Tage"
+    },
+    "cleanup_confirm_title": "Alte empfangene Dateien automatisch löschen?",
+    "cleanup_confirm_body": {
+      "one": "Empfangene Dateien, die älter als {count} Tag sind, werden etwa stündlich von diesem Knoten gelöscht. Die Einträge bleiben im Verlauf.",
+      "other": "Empfangene Dateien, die älter als {count} Tage sind, werden etwa stündlich von diesem Knoten gelöscht. Die Einträge bleiben im Verlauf.",
+      "few": "Empfangene Dateien, die älter als {count} Tage sind, werden etwa stündlich von diesem Knoten gelöscht. Die Einträge bleiben im Verlauf.",
+      "many": "Empfangene Dateien, die älter als {count} Tage sind, werden etwa stündlich von diesem Knoten gelöscht. Die Einträge bleiben im Verlauf."
+    },
+    "cleanup_confirm": "Einschalten",
+    "settings_save_failed": "Die Einstellung konnte nicht gespeichert werden"
   },
   "about": {
     "tab_overview": "Übersicht",
@@ -1590,7 +1607,11 @@
     "files_description": "Dateiübertragungen über das Mesh via Relay-Anbieter.",
     "files_relay_providers": "Relay-Anbieter",
     "files_relay_wizard": "Relay einrichten",
-    "meshtastic_tcp_receive_note": "Über TCP empfängt MeshCenter Textnachrichten, Wegpunkte, Knoteninfos, Positionen und Telemetrie. Zustellbestätigungen werden noch nicht empfangen - für den vollständigen Empfang USB verwenden."
+    "meshtastic_tcp_receive_note": "Über TCP empfängt MeshCenter Textnachrichten, Wegpunkte, Knoteninfos, Positionen und Telemetrie. Zustellbestätigungen werden noch nicht empfangen - für den vollständigen Empfang USB verwenden.",
+    "files_auto_accept": "Dateien vertrauenswürdiger Kontakte automatisch annehmen",
+    "files_auto_accept_hint": "Bis zu 50 MB oder 20 Dateien pro Kontakt und Tag. Mehr wartet auf Ihr OK.",
+    "files_auto_cleanup": "Empfangene Dateien löschen nach",
+    "files_cleanup_never": "Nie"
   },
   "modals": {
     "message_info": "Nachrichteninfo",

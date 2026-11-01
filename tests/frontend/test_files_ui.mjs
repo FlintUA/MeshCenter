@@ -2808,6 +2808,51 @@ async function test_fx1_phone_toolbar_search_more_menu_and_card_expansion() {
     console.log('PASS: test_fx1_phone_toolbar_search_more_menu_and_card_expansion');
 }
 
+async function test_fx1b_a_held_offer_says_why_and_the_files_settings_are_saved() {
+    // a trusted contact over the daily quota: not a failure, the card says why and offers Download
+    const list = [attachment('q1', 'received', 'WAITING_CONSENT', { error_code: 'auto_accept_quota' })];
+    const sandbox = sandboxWithViews(listRoutes(list));
+    activate(sandbox);
+    await waitFor(() => listHtml(sandbox).includes('filesCard-q1'));
+    const html = listHtml(sandbox);
+    assert.match(html, /Not downloaded automatically/, 'the reason is on the card');
+    assert.match(html, /attach-download/, 'with the Download action');
+    assert.doesNotMatch(html, /Not received/, 'it is not shown as a failure');
+    assert.equal(sandbox.window.MeshCenterFiles.plainStatus(list[0]).key, 'waiting_ok');
+
+    // Settings > Files: the toggle saves one files section
+    const settingsSandbox = buildSandbox({
+        fetchImpl: defaultRoutes(async (url) => (url === '/api/settings' ? json(200, { ok: true, settings: { files: {} } }) : undefined)),
+    });
+    const posts = () => settingsSandbox._fetchLog
+        .filter((e) => e.url === '/api/settings' && e.options && e.options.method === 'POST')
+        .map((e) => JSON.parse(e.options.body));
+    const change = (target) => { for (const fn of settingsSandbox._document.listeners.change || []) fn({ target }); };
+    const toggle = new FakeElement('input');
+    toggle.setAttribute('data-files-setting', 'auto_accept');
+    toggle.checked = false;
+    change(toggle);
+    await waitFor(() => posts().length === 1);
+    assert.deepEqual(posts()[0], { files: { auto_accept: false } });
+
+    // a cleanup period is a decision: it asks once, Cancel saves nothing
+    const asked = [];
+    settingsSandbox.window.MCDialog = { confirm: async (o) => { asked.push(o); return false; }, prompt: async () => null };
+    const select = new FakeElement('select');
+    select.setAttribute('data-files-setting', 'auto_cleanup_days');
+    select.value = '60';
+    change(select);
+    await waitFor(() => asked.length === 1);
+    await new Promise((r) => setTimeout(r, 30));
+    assert.equal(asked[0].danger, true);
+    assert.equal(posts().length, 1, 'Cancel saves nothing');
+    settingsSandbox.window.MCDialog = { confirm: async () => true, prompt: async () => null };
+    change(select);
+    await waitFor(() => posts().length === 2);
+    assert.deepEqual(posts()[1], { files: { auto_cleanup_days: 60 } });
+    console.log('PASS: test_fx1b_a_held_offer_says_why_and_the_files_settings_are_saved');
+}
+
 // ---- MCA-UX2: Accept needs no second confirmation, Reject asks once -----------------------------------------------
 
 function consentRoutes() {
@@ -2935,10 +2980,11 @@ async function main() {
     await test_fx1_executable_download_asks_first();
     await test_fx1_waiting_card_says_how_long_the_link_stays_valid();
     await test_fx1_phone_toolbar_search_more_menu_and_card_expansion();
+    await test_fx1b_a_held_offer_says_why_and_the_files_settings_are_saved();
     // MCA-UX2
     await test_accept_and_download_sends_at_once_without_a_confirm_dialog();
     await test_reject_asks_once_with_a_danger_dialog_and_cancel_sends_nothing();
-    console.log('All files UI behavior tests passed (69 scenarios).');
+    console.log('All files UI behavior tests passed (70 scenarios).');
 }
 
 main()

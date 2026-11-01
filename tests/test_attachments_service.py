@@ -4632,7 +4632,7 @@ def _purge_command(days):
                    payload={"older_than_days": days}, created_at=time.time())
 
 
-def test_purge_received_cache_deletes_only_old_cache_copies(conn, wsm, principal, service):
+def test_purge_received_cache_deletes_only_old_received_copies(conn, wsm, principal, service):
     old_id, new_id, saved_id = "a1" * 16, "b2" * 16, "c3" * 16
     old = _seed_received_available(conn, principal, wsm, attachment_id=old_id, content=b"x" * 100)
     new = _seed_received_available(conn, principal, wsm, attachment_id=new_id, content=b"y" * 50)
@@ -4644,10 +4644,12 @@ def test_purge_received_cache_deletes_only_old_cache_copies(conn, wsm, principal
     outcome = service._dispatcher.dispatch(_purge_command(7))
 
     assert outcome.error_code is None
-    assert dict(outcome.result) == {"deleted": 1, "bytes": 100, "older_than_days": 7}
+    # FX1 Phase B: one store - the old file in files/ (formerly "saved") is a received copy like the others
+    assert dict(outcome.result) == {"deleted": 2, "bytes": 118, "older_than_days": 7}
     assert not old.exists() and _saved_path_of(conn, old_id) is None
     assert new.exists() and _saved_path_of(conn, new_id) == str(new), "a recent copy stays"
-    assert (wsm.paths(principal.principal_id).files / "kept.jpg").exists(), "a file saved with Save to Files is never touched"
+    assert not (wsm.paths(principal.principal_id).files / "kept.jpg").exists(), "an old file in files/ goes too: one store"
+    assert _saved_path_of(conn, saved_id) is None
     assert receiver.get_state(conn, old_id) == receiver.AVAILABLE, "the row and its history stay"
 
 

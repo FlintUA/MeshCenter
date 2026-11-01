@@ -892,7 +892,7 @@ def test_comment_never_reaches_relay_in_plaintext(conn, wsm, principal, recipien
         assert needle not in blob
 
 
-def test_draft_comment_column_cleared_after_encrypting(conn, wsm, principal, recipient, tmp_path, relay_client):
+def test_draft_comment_column_is_kept_after_encrypting(conn, wsm, principal, recipient, tmp_path, relay_client):
     attachment_id, _ = _draft(conn, wsm, principal, recipient, tmp_path, comment="temporary plaintext")
     recipient_identities = {recipient[2]: recipient[1]}
     for _ in range(5):
@@ -903,5 +903,6 @@ def test_draft_comment_column_cleared_after_encrypting(conn, wsm, principal, rec
             relay_client=relay_client, delivery_adapter=None, attachment_id=attachment_id,
         )
     assert sender.get_state(conn, attachment_id) == sender.QUEUED_UPLOAD
+    # FX1 Phase B: the comment stays on the sent entry (it used to be cleared once the manifest was built)
     row = conn.execute("SELECT draft_comment FROM attachments WHERE id = ?", (attachment_id,)).fetchone()
-    assert row[0] is None
+    assert row[0] == "temporary plaintext"

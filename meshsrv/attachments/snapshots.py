@@ -336,6 +336,9 @@ class AttachmentRecord:
     deliveries: Tuple[DeliveryRecord, ...]
     descriptor: Optional[ContentDescriptor]
     timeline: Tuple[TimelineEvent, ...]
+    # FX1 Phase B: the comment of the transfer (what this node's user wrote on a sent row, what the sender wrote on a
+    # received one), read from `draft_comment` like the file name: None while the vault is locked.
+    comment: Optional[str] = None
 
     @property
     def content_available(self) -> bool:
@@ -412,6 +415,7 @@ def serialize_attachment_public(record: AttachmentRecord, *, include_timeline: b
         "direction": record.direction,
         "state": record.state,
         "file_name": record.file_name,
+        "comment": record.comment,
         "mime_type": record.mime_type,
         "plain_size": record.plain_size,
         "cipher_size": record.cipher_size,
@@ -431,6 +435,7 @@ def serialize_attachment_public(record: AttachmentRecord, *, include_timeline: b
         # MCA-VAULT (ADR-0013 Decision 4): while locked the list shows the contact, the time, the size and the type;
         # the name is withheld, never replaced by a ciphertext. The UI shows a "locked" placeholder.
         out["file_name"] = None
+        out["comment"] = None
         out["locked"] = True
     if include_timeline:
         out["timeline"] = [serialize_timeline_event(e) for e in record.timeline]
@@ -638,6 +643,7 @@ def _record_from_row(
         recipients=tuple(recipients),
         deliveries=tuple(deliveries),
         descriptor=descriptor,
+        comment=fields.open_display("attachments", "draft_comment", attachment_id, _col(row, "draft_comment")),
         timeline=timeline,
     )
 

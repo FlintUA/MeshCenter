@@ -13357,6 +13357,7 @@ function switchMainTab(tab) {
 
     } else if (tab === 'settings') {
         if (settingsView) settingsView.style.display = 'flex';
+        if (window.MeshCenterFiles && typeof window.MeshCenterFiles.syncSettings === 'function') window.MeshCenterFiles.syncSettings();
 
         if (chatHeader) chatHeader.style.display = 'none';
         if (chatListContainer) chatListContainer.style.display = 'none';

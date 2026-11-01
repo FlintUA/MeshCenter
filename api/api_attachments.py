@@ -2014,32 +2014,17 @@ def register_attachments_routes(app, handle_errors):
             )
             return _internal_error_response()
 
-        # Finding 8: MIME is established from content, and only then does the
-        # rest of the validation run. Zero-byte policy first: an empty file has
-        # no content to establish a MIME from, so it is `mime_not_allowed`
-        # rather than defaulting to `text/plain`.
+        # FX1 Phase B: ANY file type can be sent. The MIME type is still established from the CONTENT (never the name or a
+        # browser header): a known type when the bytes prove it, `application/octet-stream` for everything else. An empty
+        # file has nothing to send.
         if size == 0:
             _discard_spool(temp_path)
-            return _json_error("mime_not_allowed", "empty file has no detectable content type"), 400
+            return _json_error("empty_file", "an empty file cannot be sent"), 400
 
-        mime_type = mime_allowlist.sniff_mime_type(head)
-        if mime_type is None:
-            _discard_spool(temp_path)
-            return _json_error("mime_not_allowed", "file content is not an allowed type"), 400
+        # a text type is claimed only when the WHOLE stream is clean UTF-8 without a NUL byte (the head alone is not enough)
+        mime_type = mime_allowlist.detect_mime_type(head, text_clean=text_clean)
 
-        # Finding 8: for text-family MIME the *whole* stream must be clean
-        # UTF-8 with no NUL byte - the head alone is not enough (binary/
-        # invalid content appearing after byte 512 must still be rejected).
-        # Binary formats are exempt: they are identified by magic bytes and
-        # legitimately contain NUL/non-UTF-8 bytes.
-        if mime_type in mime_allowlist.TEXT_FAMILY_MIME_TYPES and not text_clean:
-            _discard_spool(temp_path)
-            return _json_error(
-                "mime_not_allowed", "text content contains binary or invalid UTF-8 bytes"
-            ), 400
-
-        # Finding 8: a leading `{`/`[` is not enough to claim JSON - the whole
-        # document must parse (bounded by the 5 MiB cap, only for JSON).
+        # a leading `{`/`[` is not enough to claim JSON: the whole document must parse, else it is plain text
         if mime_type == "application/json":
             try:
                 if staged_plain is not None:
@@ -2047,8 +2032,7 @@ def register_attachments_routes(app, handle_errors):
                 else:
                     mime_allowlist.validate_json_document(temp_path)
             except ValueError:
-                _discard_spool(temp_path)
-                return _json_error("mime_not_allowed", "file content is not valid JSON"), 400
+                mime_type = "text/plain"
 
         # Finding 8: the filename's extension is normalized to be consistent
         # with the *sniffed* MIME (never the reverse), so the worker's later

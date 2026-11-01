@@ -17,13 +17,13 @@ from test_receiver import (  # noqa: F401 - the fixtures and helpers of the rece
 )
 
 
-def _transfer(remote_sender, principal, relay_client, provider_id, tmp_path, content, *, comment=None, name="incoming.txt"):
+def _transfer(remote_sender, principal, relay_client, provider_id, tmp_path, content, *, comment=None, name="incoming.txt", mime="text/plain"):
     """A real encrypted upload addressed to `principal` (like test_receiver._create_real_transfer, with a comment)."""
     conn2, wsm2, principal2 = remote_sender
     source = tmp_path / ("src-" + uuid.uuid4().hex)
     source.write_bytes(content)
     attachment_id = sender.create_draft(
-        conn2, wsm2, principal2, workspace_id="local", source_path=str(source), file_name=name, mime_type="text/plain",
+        conn2, wsm2, principal2, workspace_id="local", source_path=str(source), file_name=name, mime_type=mime,
         recipients=[sender.RecipientTarget(public_identity=principal.public_identity, key_id=principal.key_id)],
         adapter_id=ADAPTER_ID, connector_profile_id="default", route_type="DIRECT", route_id="receiver-under-test",
         provider_id=provider_id, comment=comment,
@@ -206,3 +206,30 @@ def test_received_comment_is_cleaned_and_capped():
     long = "ä" * 2000
     cleaned = receiver._clean_received_comment(long)
     assert len(cleaned.encode("utf-8")) <= receiver.MAX_RECEIVED_COMMENT_BYTES and cleaned.startswith("ä")
+
+
+def test_a_file_of_any_type_travels_end_to_end_and_is_stored_under_its_own_sanitized_name(
+    conn, wsm, principal, provider_registry, key_exchange, remote_sender, registered_provider, relay_client, tmp_path
+):
+    # FX1 Phase B: no allowlist. An executable-looking binary goes through the sender, the relay and the receiver untouched.
+    _, provider_id = _setup(conn, remote_sender, registered_provider)
+    content = b"MZ" + bytes([0x90, 0x00]) + os.urandom(2000)
+    raw = _transfer(remote_sender, principal, relay_client, provider_id, tmp_path, content, name="setup.exe", mime="application/octet-stream")
+    result = _offer(conn, wsm, principal, provider_registry, key_exchange, raw, auto_accept=True)
+    assert _step(conn, wsm, principal, provider_registry, key_exchange, relay_client, result.attachment_id).state == receiver.AVAILABLE
+    row = conn.execute("SELECT saved_path, mime_type, file_name FROM attachments WHERE id = ?", (result.attachment_id,)).fetchone()
+    assert Path(row[0]).name == "setup.exe" and Path(row[0]).read_bytes() == content
+    assert row[1] == "application/octet-stream"
+    # nothing was executed or unpacked: the file is just bytes at rest, and it is never an inline type
+    assert not os.access(row[0], os.X_OK) or os.name == "nt"
+
+
+def test_a_hostile_file_name_from_the_sender_never_escapes_files(
+    conn, wsm, principal, provider_registry, key_exchange, remote_sender, registered_provider, relay_client, tmp_path
+):
+    _, provider_id = _setup(conn, remote_sender, registered_provider)
+    raw = _transfer(remote_sender, principal, relay_client, provider_id, tmp_path, b"x", name="../../../etc/evil.sh")
+    result = _offer(conn, wsm, principal, provider_registry, key_exchange, raw, auto_accept=True)
+    assert _step(conn, wsm, principal, provider_registry, key_exchange, relay_client, result.attachment_id).state == receiver.AVAILABLE
+    saved = Path(conn.execute("SELECT saved_path FROM attachments WHERE id = ?", (result.attachment_id,)).fetchone()[0])
+    assert saved.parent == wsm.paths(principal.principal_id).files and ".." not in saved.name and "/" not in saved.name

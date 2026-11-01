@@ -1312,7 +1312,7 @@ def test_create_route_normalized_255_code_point_name_survives_worker(tmp_path, m
         monkeypatch.setattr(state.service, "_due_rows", lambda: [])
 
         source_name = normalize_file_name_for_mime("x" * 300, "text/plain", max_code_points=255)
-        assert source_name == "x" * 251 + ".txt"
+        assert source_name == "x" * 255
         assert len(source_name) == 255
 
         attachment_id = "3c" + "0" * 30

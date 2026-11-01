@@ -1049,22 +1049,31 @@ async function test_send_file_feedback_shows_mime() {
     dispatchChange(sandbox, 'filesSendFile');
     assert.match(feedback(), /image\/png/, 'an allowlisted MIME must allow an extensionless file');
 
-    // Unknown extension + unknown MIME -> hard local rejection (F1).
+    // FX1 Phase B: ANY type can be sent - an unknown extension and an unknown MIME are fine
     fileInput.files = [{ name: 'archive.bin', size: 128, type: 'application/octet-stream' }];
     dispatchChange(sandbox, 'filesSendFile');
-    assert.match(feedback(), /File type is not allowed/, 'an unallowlisted type must be rejected with feedback');
+    assert.doesNotMatch(feedback(), /not allowed|empty/, 'any file type can be sent');
+    assert.match(feedback(), /Size/, 'its size is shown');
+    for (const name of ['setup.exe', 'run.sh', 'photo.heic', 'bundle.zip', 'index.html']) {
+        fileInput.files = [{ name, size: 1000, type: '' }];
+        dispatchChange(sandbox, 'filesSendFile');
+        assert.doesNotMatch(feedback(), /not allowed|empty/, name + ' can be sent');
+    }
 
-    // Rejected -> allowed clears the stale error.
+    // only an empty file is refused, and the message clears when a real file is chosen
+    fileInput.files = [{ name: 'nothing.txt', size: 0, type: 'text/plain' }];
+    dispatchChange(sandbox, 'filesSendFile');
+    assert.match(feedback(), /This file is empty/, 'an empty file has nothing to send');
     fileInput.files = [{ name: 'report.pdf', size: 4096, type: 'application/pdf' }];
     dispatchChange(sandbox, 'filesSendFile');
-    assert.doesNotMatch(feedback(), /not allowed/, 'selecting an allowed file must clear a stale rejection');
+    assert.doesNotMatch(feedback(), /empty/, 'selecting a real file must clear a stale message');
 
     console.log('PASS: test_send_file_feedback_shows_mime');
 }
 
 async function test_send_rejects_disallowed_file_blocks_requests() {
-    // F1: a disallowed file is rejected locally before any readiness or create
-    // request is issued.
+    // FX1 Phase B: only an EMPTY file is refused locally, before any readiness or create request is issued; every other
+    // type goes through.
     let readinessCalls = 0;
     const sandbox = buildSandbox({
         fetchImpl: defaultRoutes(async (url) => {
@@ -1076,17 +1085,17 @@ async function test_send_rejects_disallowed_file_blocks_requests() {
         }),
     });
 
-    prepareSendForm(sandbox, { fileName: 'archive.bin', mime: 'application/octet-stream' });
+    prepareSendForm(sandbox, { fileName: 'nothing.txt', mime: 'text/plain', size: 0 });
     dispatch(sandbox, { 'data-files-action': 'send-submit' });
     await new Promise((r) => setTimeout(r, 30));
 
     assert.equal(
         sandbox._document.getElementById('filesSendFileFeedback').textContent,
-        'File type is not allowed',
-        'a disallowed file must be rejected with localized feedback',
+        'This file is empty',
+        'an empty file must be refused with localized feedback',
     );
-    assert.equal(createRequests(sandbox).length, 0, 'a disallowed file must block the create POST');
-    assert.equal(readinessCalls, 0, 'a disallowed file must block the readiness request');
+    assert.equal(createRequests(sandbox).length, 0, 'an empty file must block the create POST');
+    assert.equal(readinessCalls, 0, 'an empty file must block the readiness request');
 
     console.log('PASS: test_send_rejects_disallowed_file_blocks_requests');
 }

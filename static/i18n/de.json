@@ -303,7 +303,8 @@
       "invalid_backup_name": "Das ist kein Tresor-Sicherungsordner",
       "vault_not_available": "Der Tresor ist nicht verfügbar",
       "recovery_key_not_available": "Der Wiederherstellungsschlüssel wurde bereits angezeigt",
-      "vault_corrupt": "Ein gespeicherter Wert konnte nicht geprüft werden. Die Daten sind möglicherweise beschädigt"
+      "vault_corrupt": "Ein gespeicherter Wert konnte nicht geprüft werden. Die Daten sind möglicherweise beschädigt",
+      "empty_file": "Eine leere Datei kann nicht gesendet werden"
     },
     "accept_download": "Akzeptieren und herunterladen",
     "accepting_key_change": "Akzeptiere Schlüsselwechsel…",
@@ -327,7 +328,6 @@
     "download_to_device": "Auf Gerät herunterladen",
     "downloaded": "Heruntergeladen",
     "encrypted_file": "Verschlüsselte Datei",
-    "err_mime": "Dateityp ist nicht erlaubt",
     "err_no_provider": "Wähle einen bereiten Anbieter",
     "err_provider_not_ready": "Gewählter Anbieter ist nicht bereit",
     "expired": "Abgelaufen",
@@ -448,7 +448,7 @@
     "err_provider_ttl_min_max": "Die minimale TTL darf die maximale TTL nicht überschreiten.",
     "send_ttl_custom_placeholder": "Sekunden",
     "send_file_type": "Typ: {type}",
-    "send_file_type_unknown": "Typ: nicht erkannt - der Server prüft ihn",
+    "send_file_type_unknown": "Typ: andere Datei",
     "send_file_size": "Größe: {size}",
     "relay_state_label": "Relay-Status",
     "upload_ready": "Upload: bereit",
@@ -608,7 +608,8 @@
       "damaged": "die Datei war beschädigt oder nicht echt",
       "relay_refused": "das Relay hat die Datei abgelehnt",
       "unknown": "etwas ist schiefgelaufen",
-      "type_mismatch": "die Datei ist nicht vom angegebenen Typ"
+      "type_mismatch": "die Datei ist nicht vom angegebenen Typ",
+      "empty_file": "die Datei ist leer"
     },
     "send_ttl_value": "Anzahl",
     "send_ttl_unit": "Einheit",
@@ -694,7 +695,8 @@
       "many": "Empfangene Dateien, die älter als {count} Tage sind, werden etwa stündlich von diesem Knoten gelöscht. Die Einträge bleiben im Verlauf."
     },
     "cleanup_confirm": "Einschalten",
-    "settings_save_failed": "Die Einstellung konnte nicht gespeichert werden"
+    "settings_save_failed": "Die Einstellung konnte nicht gespeichert werden",
+    "err_empty_file": "Diese Datei ist leer"
   },
   "about": {
     "tab_overview": "Übersicht",

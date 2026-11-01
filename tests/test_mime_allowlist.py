@@ -15,6 +15,9 @@ from meshsrv.attachments.mime_allowlist import (
     is_allowed_extension,
     is_allowed_mime_type,
     normalize_file_name_for_mime,
+    normalize_known_extension,
+    detect_mime_type,
+    GENERIC_MIME_TYPE,
     validate_json_document,
 )
 
@@ -84,13 +87,13 @@ def test_disallowed_extensions(file_name):
     ],
 )
 def test_normalize_file_name_for_mime(file_name, mime_type, expected):
-    assert normalize_file_name_for_mime(file_name, mime_type) == expected
+    assert normalize_known_extension(file_name, mime_type) == expected
 
 
 def test_normalize_file_name_for_unknown_mime_is_identity():
     # An unknown MIME must never be rewritten (the caller should not reach
     # here, but fail-closed to identity rather than mutating the name).
-    assert normalize_file_name_for_mime("weird.bin", "application/x-unknown") == "weird.bin"
+    assert normalize_known_extension("weird.bin", "application/x-unknown") == "weird.bin"
 
 
 @pytest.mark.parametrize(
@@ -114,7 +117,7 @@ def test_normalize_file_name_for_unknown_mime_is_identity():
 )
 def test_normalize_file_name_for_mime_respects_max_code_points(file_name, mime_type, expected):
     assert (
-        normalize_file_name_for_mime(file_name, mime_type, max_code_points=255)
+        normalize_known_extension(file_name, mime_type, max_code_points=255)
         == expected
     )
     assert len(expected) <= 255
@@ -193,3 +196,30 @@ def test_validate_json_document_rejects_invalid(tmp_path, content):
     p.write_text(content, encoding="utf-8")
     with pytest.raises(ValueError):
         validate_json_document(p)
+
+
+
+# ---- FX1 Phase B: any file type; the name is kept, the type comes from the content ----------------------------------------------
+
+
+@pytest.mark.parametrize("name", ["report.exe", "photo.png", "notes.md", "data.json", "notes", "archive.tar.gz", "run.SH"])
+def test_the_name_is_kept_whatever_the_type(name):
+    assert normalize_file_name_for_mime(name, "text/plain") == name
+    assert normalize_file_name_for_mime(name, "application/octet-stream") == name
+
+
+def test_the_name_is_only_cut_to_the_cap():
+    assert normalize_file_name_for_mime("x" * 300 + ".txt", "text/plain", max_code_points=255) == ("x" * 300 + ".txt")[:255]
+    assert normalize_file_name_for_mime("\u00e9" * 300, "image/jpeg", max_code_points=255) == "\u00e9" * 255
+
+
+def test_detect_mime_type_knows_the_known_types_and_calls_the_rest_generic():
+    assert detect_mime_type(b"\xff\xd8\xff\xe0") == "image/jpeg"
+    assert detect_mime_type(b"\x89PNG\r\n\x1a\n") == "image/png"
+    assert detect_mime_type(b"RIFF\x00\x00\x00\x00WEBPVP8 ") == "image/webp"
+    assert detect_mime_type(b"%PDF-1.7") == "application/pdf"
+    assert detect_mime_type(b"hello") == "text/plain"
+    assert detect_mime_type(b"MZ\x90\x00") == GENERIC_MIME_TYPE
+    assert detect_mime_type(b"PK\x03\x04") == GENERIC_MIME_TYPE
+    assert detect_mime_type(b"abc", text_clean=False) == GENERIC_MIME_TYPE, "a text type needs the WHOLE stream to be clean"
+    assert detect_mime_type(b"\x89PNG\r\n\x1a\n", text_clean=False) == "image/png", "a binary type is proven by its bytes"

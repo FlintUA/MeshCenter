@@ -763,12 +763,14 @@
         recipient_not_trusted: 'key_not_trusted', no_recipients: 'no_recipient', source_file_missing: 'source_missing',
         disk_low_block: 'disk_low', recipient_provider_unknown: 'recipient_relay',
         mime_not_allowed: 'type_not_allowed', extension_not_allowed: 'type_not_allowed', type_mismatch: 'type_mismatch',
+        empty_file: 'empty_file',
         pending_offer_signature_invalid: 'sender_unverified', provider_missing: 'no_relay',
         chunk_fetch_failed: 'download_failed',
         descriptor_signature_invalid: 'damaged', manifest_invalid: 'damaged', header_size_mismatch: 'damaged',
         chunk_digest_mismatch: 'damaged', chunk_aead_failed: 'damaged', plaintext_digest_mismatch: 'damaged',
     };
     var REASON_LABELS = {
+        empty_file: 'the file is empty',
         type_mismatch: 'the file is not the type it claims to be',
         key_not_trusted: "the contact's key is not trusted", no_recipient: 'there is no recipient', source_missing: 'the file is no longer on this node',
         disk_low: 'not enough free space on this node', recipient_relay: 'the recipient does not use this relay',
@@ -2716,13 +2718,11 @@
         var input = getEl('filesSendFile');
         var f = input && input.files && input.files.length ? input.files[0] : null;
         if (!f) { el.innerHTML = ''; renderSendSubmit(); return; }
-        // F1: an allowlisted extension or MIME is allowed; anything else is
-        // rejected locally (immediate, localized feedback). A stale rejection
-        // clears the moment an allowed file is selected - the server's magic-byte
-        // sniffing stays the real authority.
+        // FX1 Phase B: any file type can be sent; only an empty file is refused here (immediate, localized feedback). The
+        // server derives the type from the content and stays the authority.
         if (!fileTypeAllowed(f)) {
             el.innerHTML = '<span class="files-status-error">' +
-                esc(t('files.err_mime', 'File type is not allowed')) + '</span>';
+                esc(t('files.err_empty_file', 'This file is empty')) + '</span>';
             renderSendSubmit();
             return;
         }
@@ -2731,7 +2731,7 @@
         var known = EXTENSION_MIME[ext] || (ALLOWED_MIME[f.type] ? f.type : '');
         var typeLine = known
             ? tparams('files.send_file_type', { type: known }, 'Type: ' + known)
-            : t('files.send_file_type_unknown', 'Type: unrecognized');
+            : t('files.send_file_type_unknown', 'Type: other file');
         el.innerHTML =
             '<span>' + esc(typeLine) + '</span>' +
             ' · <span>' + esc(tparams('files.send_file_size', { size: fmtBytes(f.size) }, 'Size: ' + fmtBytes(f.size))) + '</span>';
@@ -3060,7 +3060,7 @@
             return;
         }
         if (!fileTypeAllowed(file)) {
-            if (feedback) feedback.textContent = t('files.err_mime', 'File type is not allowed');
+            if (feedback) feedback.textContent = t('files.err_empty_file', 'This file is empty');
             return;
         }
 
@@ -3156,15 +3156,11 @@
         });
     }
 
+    // FX1 Phase B: every file type can be sent (the allowlist is gone); an empty file has nothing to send. The type shown and
+    // stored is derived from the CONTENT on the node, never from the name or the browser's claim.
     function fileTypeAllowed(file) {
         if (!file) return false;
-        var name = (file.name || '').toLowerCase();
-        var ext = name.indexOf('.') !== -1 ? name.split('.').pop() : '';
-        // F1: a recognized allowlisted extension OR a browser-supplied allowlisted
-        // MIME (even extensionless) is allowed. When both are absent/unrecognized
-        // the file is rejected locally - the server's magic-byte sniffing remains
-        // authoritative, so this is a client-side gate, never a guarantee.
-        return Boolean(EXTENSION_MIME[ext] || ALLOWED_MIME[file.type]);
+        return !(typeof file.size === 'number' && file.size === 0);
     }
 
     // ---- provider settings (C8) --------------------------------------------

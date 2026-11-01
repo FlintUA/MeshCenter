@@ -467,11 +467,10 @@ def _step_validating(conn: sqlite3.Connection, workspace_manager: MCAWorkspaceMa
     if not source_path or not _codec(conn).content_exists(source_path):
         _set_state(conn, attachment_id, FAILED_VALIDATION, now, error_code="source_file_missing")
         return FAILED_VALIDATION
-    if not mime_allowlist.is_allowed_mime_type(row["mime_type"] or ""):
-        _set_state(conn, attachment_id, FAILED_VALIDATION, now, error_code="mime_not_allowed")
-        return FAILED_VALIDATION
-    if not mime_allowlist.is_allowed_extension(_row_file_name(conn, row) or ""):
-        _set_state(conn, attachment_id, FAILED_VALIDATION, now, error_code="extension_not_allowed")
+    # FX1 Phase B: any file type can be sent - no MIME or extension allowlist here. The type was derived from the content
+    # when the file was staged (`mime_allowlist.detect_mime_type`), and what stays safe is how it is shown and stored.
+    if not (row["mime_type"] or "").strip():
+        _set_state(conn, attachment_id, FAILED_VALIDATION, now, error_code="invalid_payload")
         return FAILED_VALIDATION
     if workspace_manager.low_disk_level(row["principal_id"]) == LowDiskLevel.BLOCK:
         _set_state(conn, attachment_id, FAILED_VALIDATION, now, error_code="disk_low_block")

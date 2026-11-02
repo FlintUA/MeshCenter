@@ -65,7 +65,7 @@ See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full dependency bre
 
 ## 📸 Screenshots
 
-*Taken from MeshCenter v1.13 with invented demo data (no real nodes, positions or keys); the generator is in [scripts/demo_screenshots/](scripts/demo_screenshots/).*
+*Taken from MeshCenter v1.15 with invented demo data (no real nodes, positions or keys); the generator is in [scripts/demo_screenshots/](scripts/demo_screenshots/).*
 
 <details>
 <summary>💬 Chats - Light theme</summary>
@@ -85,6 +85,20 @@ See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full dependency bre
 <summary>📁 Files (MCAttach) - Light theme</summary>
 
 ![MeshCenter files light theme](docs/images/MeshCenter_files_light_theme.png)
+
+</details>
+
+<details>
+<summary>📁 Files (MCAttach) - on a phone</summary>
+
+![MeshCenter files on a phone](docs/images/MeshCenter_files_phone.png)
+
+</details>
+
+<details>
+<summary>🖼️ Media gallery - Light theme</summary>
+
+![MeshCenter media gallery light theme](docs/images/MeshCenter_media_light_theme.png)
 
 </details>
 
@@ -148,7 +162,9 @@ The install has been validated end-to-end on a clean Raspberry Pi Zero 2 W with 
 ## Features
 
 - **Messaging** - public channel and direct messages, native Meshtastic reply support, favorites/ignore list, full chat history
-- **Files (MCAttach)** - end-to-end encrypted node-to-node file transfer with a pluggable Relay, trusted-contact key exchange, and transfer lifecycle tracking; an optional **vault** encrypts what MCAttach keeps on the device at rest ([guide](docs/MCAttach_Vault.md))
+- **Files (MCAttach)** - end-to-end encrypted node-to-node file transfer of **any file type** with a pluggable Relay, trusted-contact key exchange and plain-language transfer status; one list of cards (incoming, sent, all; sorting, search, multi-select), files from trusted contacts are received automatically within a per-contact quota, and everything received is kept in one Files folder; an optional **vault** encrypts what MCAttach keeps on the device at rest ([guide](docs/MCAttach_Vault.md))
+- **Media gallery** - camera pictures with sort, three views, filter, lightbox and bulk actions; send up to 10 pictures to a contact (resized, location data removed) or send a network camera's picture on a schedule
+- **MeshCenter marking** - nodes seen running MeshCenter get an MC badge, a filter and a counter in the node list, purely passively (nothing is ever broadcast)
 - **Interactive Map** - embedded Leaflet map with live node positions, distance/bearing, waypoint management, synchronized selection with the node list
 - **Node Management** - automatic discovery, hardware/role info, favorites, custom icons, CSV/JSON export-import, remote Node Tools (telemetry/position request, traceroute)
 - **Telemetry** - device/environment/power history with selectable chart ranges, bounded and debounced storage (see [Data Storage](docs/architecture/Architecture.md#data-storage))
@@ -258,7 +274,7 @@ No. MeshCenter complements the official applications with a permanent browser-ba
 
 ### Does MeshCenter send photos over Meshtastic?
 
-Camera snapshots are stored locally on the Raspberry Pi and viewed through the web interface - they aren't sent automatically. You can, however, deliberately send a JPEG/PNG/WebP photo to another node as a direct file transfer via the **Files (MCAttach)** tab.
+Camera snapshots are stored locally on the Raspberry Pi and viewed through the web interface - they aren't sent automatically. You can, however, deliberately send pictures from the Media gallery (resized, with location data removed) or any file to another node as a direct file transfer via the **Files (MCAttach)** tab, and a schedule can send a network camera's picture to a contact (at most one every 15 minutes).
 
 ### Can multiple browsers connect simultaneously?
 
@@ -286,6 +302,11 @@ See **[docs/development/Roadmap.md](docs/development/Roadmap.md)** for current a
 
 | Version | Highlights |
 |----------|------------|
+| v1.15.0 | Files as one column of cards with plain statuses, sorting and a contact filter; any file type can be sent; files from trusted contacts are received automatically (per-contact quota) into one Files folder; comments both ways; the sender's copy is deleted when a transfer is over; optional auto-cleanup; relay limits follow the relay; passive MC marking of nodes that run MeshCenter. MCAttach database 18 to 19 (rollback to v1.14.0 works). |
+| v1.14.0 | The optional MCAttach vault (encrypts what MCAttach stores, locked after every start), searchable recipient picker, phone layout for Files, one way of writing file sizes, gallery filter. |
+| v1.13.x | Network (RTSP) cameras with Reolink control, Media gallery rebuild with thumbnails and lightbox, sending gallery pictures and a scheduled "send camera picture", CSRF protection, phone layouts, MCAttach delivery confirmations. |
+| v1.12.x | Delivery confirmations and radio-link stability, **Release radio** for a TCP radio, release notes in the repository. |
+| v1.11.0 | Docker (image built locally, not published), TCP radio reliability, MCAttach control channel setting. |
 | v1.10.0 | Messaging: message dates, jump to first unread, click a message to find its sender; node-list sort and filters; map and node list "click selects, actions via menu" model with a node context menu; serial hot-reconnect; CSRF auto-recovery, security headers, XSS CI ratchet. Applies from the Updates card - see [release notes](docs/releases/v1.10.0.md) |
 | v1.9.0 | Security and storage-reliability hardening, TCP transport with inbound receive, multi-connection radios, mandatory `/setup` password wizard, USB cameras without GPL imports. Needs a manual upgrade - see [release notes](docs/releases/v1.9.0.md) |
 | v1.8.4 | MCAttach control-channel index fix; production logging (`wsgi.py`); Relay server source published under `relay-server/` for optional self-hosting; a guided "Connect a Relay" setup wizard; transfer detail card with Normal/Advanced/Technical levels |

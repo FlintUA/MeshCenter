@@ -462,22 +462,43 @@ Favorites make important contacts easier to find. Ignored nodes are hidden from 
 
 ## 7. Files (MCAttach)
 
-Files is MeshCenter's end-to-end encrypted file-transfer feature over the mesh - MCAttach.
+Files is MeshCenter's end-to-end encrypted file-transfer feature over the mesh - MCAttach. Everything you sent and received is one list of cards, newest first.
+
+![MeshCenter files](images/MeshCenter_files_light_theme.png)
+
+### Reading the list
+
+- **Incoming, Sent, All.** Three tabs above the list with a count each; your choice is remembered on this device. Under it, one card per file: a picture or type icon, the file name, its size and time, the comment if there is one, **one status in plain words** and the actions that fit. The stripe at the left edge and the first line ("Received from Echo", "Sent to Echo") tell the direction, so you never rely on colour alone.
+- **Status words** are plain: Sending, Waiting for recipient, Delivered, Received, Waiting for your OK, and for a problem a reason such as "Not delivered: the link expired" or "Not delivered: the contact's key is not trusted". Never a raw technical code. While a file waits, the card shows "Link valid for 5 more days". Open `More details` on a card only if you want the technical rows (relay used, ID, expiry); most people never need them.
+- **Date groups** (Today, Yesterday, dates) separate the cards. **Sort** (newest first by default, oldest first, name, size) is remembered separately for a computer and for a phone; sorting by name or size removes the date groups.
+- **Search** the file name, contact, comment and status. **Select** (or a long press on a phone) lets you tick several cards and download or delete them together; one confirmation covers the whole selection.
+- **A contact selected in the sidebar** narrows the list to that contact: a chip "Only: Echo" appears above the list and the numbers on the three tabs are for that contact only. Press the **x** on the chip to see all files again. With a contact selected the cards follow the messenger style (incoming on the left, sent on the right).
+- **At the bottom:** "Files use 4.5 MB" and `Clean up...`, which deletes received files older than the number of days you choose (a confirmation names how many).
+- **On a phone** the toolbar is one row (the tabs, a search button and a `⋯` menu with Select, Refresh, Sort by and the storage line), `+` at the bottom right sends a file, and each card is three lines; tap a card to open its actions and details.
 
 ### Sending a file
 
-1. Open `Files`, press `Send`, choose a trusted recipient and a file (up to 5 MiB), and press `Send` again.
-2. The first time you send to a new contact, MeshCenter shows one plain-language screen explaining that a secure connection is being set up with them - confirm it once. Sending to the same contact again afterward needs no extra step.
+1. Open `Files`, press `Send file` (the round `+` on a phone), choose a trusted recipient and a file, and press `Send`. **Any type of file can be sent**, up to 5 MiB; an empty file cannot.
+2. The recipient list is searchable: type a name or part of a node ID. The **star** next to the search field shows only your favourites, **MC** shows only nodes that were seen running MeshCenter, and a node whose key is not known yet is not listed unless you ask (it shows "Request key").
+3. **Keep the link for** sets how long the file waits on the Relay: 1 hour, 6 hours, 1 day, 3 days, 7 days, **14 days (the default)** or 30 days, within what the Relay allows (a Relay that keeps files for less shows its own maximum as the default and says so). `Custom` takes a number of minutes, hours or days; the range is shown in plain units.
+4. A **comment for the recipient** is optional. It is sent encrypted together with the file, not as a chat message, and the recipient sees it on the card.
+5. The first time you send to a new contact, MeshCenter shows one plain-language screen explaining that a secure connection is being set up with them - confirm it once. Sending to the same contact again afterward needs no extra step.
 
 If a contact's key ever changes later (for example, they reset their device), MeshCenter shows a separate, explicit warning before trusting the new key. That warning is never skipped or automated away, for your protection.
 
+After a file is **Delivered, Expired, Cancelled, Revoked or Rejected**, MeshCenter deletes its own copy of it (the card stays in the list as history). A file that failed to send keeps its copy, so `Retry` still works.
+
 ### Receiving a file
 
-A file someone sends you appears under `Files` waiting for your decision. Open it and choose `Accept and download` or `Reject`. Once it's downloaded, use `Save to Files`, `Open preview` (for images), or `Download to device`.
+- **From a trusted contact the file arrives by itself.** When the sender's key is trusted (you confirmed it once), MeshCenter downloads their offer without a tap, up to **50 MB or 20 files per contact in 24 hours**. Above that, the offer waits and the card says "Not downloaded automatically: this contact sent a lot today. Press Download to accept it." (the button reads `Accept and download`; `Decline` refuses the file). You can switch automatic receiving off under `Settings > Files / MCAttach` ("Accept files from trusted contacts automatically"); then every offer waits for your `Accept and download` or `Decline`.
+- **From a contact whose key is not trusted yet** nothing is downloaded: the card waits ("Waiting for the sender's key") until you confirm the key.
+- **Every received file is stored in one place, the Files folder** of MeshCenter (there is no separate "Save to Files" step). A finished file offers `Open` (a picture is shown inline), `Download to device` and `Delete`. A file whose name is already taken is stored as `name (2).ext`. Only a verified JPEG, PNG or WebP is ever shown inline; every other file, including HTML, SVG and PDF, is offered as a download only, and MeshCenter never opens, runs or unpacks it. Downloading something that looks like a program (`.exe`, `.apk`, `.sh`, `.bat`, `.js` and similar) asks you to confirm first.
+- A file declared as a picture that is not one is refused and not stored.
+- **Cleaning up.** `Clean up...` deletes old received files by hand. Under `Settings > Files / MCAttach` you can also let MeshCenter delete received files older than 30, 60, 90 or 180 days by itself; **it is off by default**. Only the files go; the cards stay in the list as history.
 
 ### Checking on a transfer
 
-Tap any transfer to see its status in plain language - Preparing, Uploading, Waiting, Receiving, or Ready. If something needs attention (for example, no Relay configured, or a lost connection), MeshCenter says so plainly - never just a spinner and never a raw technical code. Open `Advanced details` or `Technical diagnostics` only if you want to dig further; most people never need to.
+Each card shows its status in plain language. If something needs attention (for example, no Relay configured, or a lost connection), MeshCenter says so plainly - never just a spinner and never a raw technical code. A transfer that is still trying again after a short problem keeps the status "Sending" with a quiet note. `Cancel` stops a transfer that is still being prepared or uploaded; `Revoke` (under `More details`) withdraws a file that is already on the Relay.
 
 ### The vault (optional)
 
@@ -485,7 +506,9 @@ Under `Settings`, the **MCAttach vault** card turns on encryption of everything 
 
 ### Relay providers
 
-A file transfer passes through a small server called a Relay, which temporarily stores the encrypted file until the recipient downloads it. **By default, MeshCenter uses the project's own Relay at `https://mcattach.elektroniker.help` - almost nobody needs to change this.** If you do want to add or switch a Relay, use `Workspace > Settings > Files / MCAttach > Set up a Relay`.
+A file transfer passes through a small server called a Relay, which temporarily stores the encrypted file until the recipient downloads it. **By default, MeshCenter uses the project's own Relay at `https://mcattach.elektroniker.help` - almost nobody needs to change this.** If you do want to add or switch a Relay, use `Workspace > Settings > Files / MCAttach > Set up a Relay`; `Relay providers` in the same card lists them.
+
+MeshCenter reads each Relay's own limits (largest file, longest and shortest time a file is kept) every time it checks the Relay, so a change on the Relay reaches the Send dialog by itself. If you set a limit of your own in a provider's Edit form, the **stricter of the two applies**, and a check never overwrites yours.
 
 ### For administrators: self-hosting a Relay
 
@@ -528,9 +551,15 @@ A single click on a node card only selects it (and, if the map is open, centers 
 The `⚙` button next to the node search opens the sort and filter menu; a badge on the button shows how many filters are active, and each active filter also appears as a chip under the search box (click a chip to remove it). Your choices are remembered in this browser.
 
 - **Sort** (one at a time): last heard (default), name A-Z, distance (nodes without a position come last), hops, favorites first.
-- **Filters** (all active filters must match): favorites only, ignored only, hide offline (not heard for more than 2 hours), heard directly only (0 hops), hide infrastructure (nodes with the ROUTER, ROUTER_LATE or REPEATER role), known key only (nodes whose file-transfer key is already known).
+- **Filters** (all active filters must match): favorites only, ignored only, hide offline (not heard for more than 2 hours), heard directly only (0 hops), hide infrastructure (nodes with the ROUTER, ROUTER_LATE or REPEATER role), known key only (nodes whose file-transfer key is already known), **MeshCenter only** (nodes that were seen running MeshCenter, see below).
 
 Ignored nodes are hidden by default; turn on `Ignored only` to see them. Channels are never filtered, and the search box works together with the filters.
+
+### Nodes that run MeshCenter (the MC mark)
+
+A node gets a small **MC** badge when this MeshCenter has **received a MeshCenter file-transfer message from it** (a file offer, a key request or announcement, or an acknowledgement), or already knows its file-transfer key. Hover the badge, or select the card, to see when the node was first and last seen that way. **Nothing is ever sent to find these nodes out:** no broadcast, no probe, no beacon; the mark appears only from messages that arrive anyway. The `MC n` counter in the Nodes header shows how many there are, and tapping it (or `MeshCenter only` in the sort and filter menu) shows only those nodes. In the file send dialog the same `MC` toggle narrows the recipient list.
+
+The mark is a hint, not a proof of trust: it says "this node has been seen speaking the file-transfer protocol", nothing more. Whether you can send a file to it is still decided only by its confirmed key.
 
 ### Working with multiple radios
 
@@ -605,6 +634,33 @@ The Camera workspace provides live view, video settings, photo settings, image c
 | Photo capture | 3280×2464 |
 
 Captured images are stored locally under `data/screenshots/` and appear in the Media gallery. They are not transmitted through Meshtastic. Media can be viewed, downloaded or deleted from the browser.
+
+### The Media gallery
+
+![MeshCenter media gallery](images/MeshCenter_media_light_theme.png)
+
+- **Views and sort.** Large pictures, small pictures or a list; sort by newest, oldest, name, size or camera. The sort is shared by all devices, the view is remembered separately for a computer and for a phone. Small preview images (about 480 px) are made on first use, so a gallery of hundreds of pictures opens quickly; they are kept in a hidden folder next to the pictures and are not counted as pictures.
+- **Filter.** The filter field above the pictures narrows them by name or camera and says "N of M"; `Select found` ticks everything that matches. On a phone the field opens from the search button.
+- **Lightbox.** Tap a picture to see it full size with previous and next, its details, `Download`, `Delete` and `Send`.
+- **Selecting several.** Press `Select` (or hold a picture for about half a second on a phone), tick pictures and download or delete them together, or send up to 10.
+- **Take picture** in the Camera tab says honestly what was saved: the camera's own full picture, a small one, or a frame of the running stream, and why.
+- Tapping the active **Media** tab again on a phone reloads the gallery.
+
+### Sending pictures to a contact
+
+`Send` in the selection bar (up to 10 pictures) or in the lightbox (one) opens the same Send dialog as in Files, in a pictures mode: recipient, Relay, how long to keep the link, comment.
+
+- **Resize before sending** is on by default: 1280 px on the long edge, JPEG about 82. Other choices are 1920 px and the original (the original works only up to 5 MiB, otherwise nothing is uploaded and you are told). The send copy has **its location and camera data removed**; your gallery original is not changed.
+- A contact whose key is not known yet can be chosen: the dialog shows **Connect securely** (the same key request as in Files); `Send` stays off until the contact is trusted.
+- Each picture becomes **one ordinary transfer** that you follow in Files. The message "3 of 3 queued" says how many were handed over.
+
+### Scheduled picture send
+
+In the **Schedule** card, the action **Send camera picture** takes a fresh picture of a chosen **network camera** on a schedule (daily at a time, every N minutes, or once) and sends it to a contact with a trusted key, as an ordinary transfer visible in Files.
+
+- **At most one picture every 15 minutes.** A shorter repeat is refused when you save the rule, and the rule also remembers its last run, so a restart or an edit cannot get around it. A failed attempt counts too.
+- **A run that cannot happen is skipped, not retried in a loop:** one System Log warning and one notification say why (radio unavailable, no key, camera off, camera error). Nothing is saved to the gallery when the radio or the key is missing, and the camera's power switch is respected.
+- **Network cameras only** for now; the picture is resized like in the Send dialog (1280 px by default). With the vault on and locked, a run is skipped.
 
 MeshCenter supports both a Raspberry Pi Camera (CSI ribbon connector) and a USB/UVC webcam, through the same interface - if more than one camera is detected at once, the Camera tab's source selector lets you switch which one is active without restarting MeshCenter. A USB camera's live stream stops its underlying process automatically once nobody is watching it, and starts again on the next viewer - you don't need to turn it off by hand to free resources. MJPEG-format USB cameras are supported; a camera that only offers YUYV is also supported but has not been verified end-to-end against MJPEG passthrough on real hardware as of this writing.
 
@@ -697,7 +753,7 @@ MeshCenter maintains one authoritative time source (NTP, hardware RTC, or the sy
 
 ### Schedule Engine
 
-Scheduled actions, configured under the Schedule card: trigger either at a specific time (with day-of-week selection) or every N minutes, and either log a System Log entry, send a static text message to a node or channel, or send an automatic data report built from current telemetry (with field selection and a stale-data policy). A short signal (up to 95 characters) can also go out over Meshtastic when a schedule fires, in addition to the notification/log entry. Schedules persist across restarts, but **do not fire at all if MeshCenter doesn't have a trusted, synchronized time** - this avoids firing on a wrong clock after a cold boot before NTP has synced.
+Scheduled actions, configured under the Schedule card: trigger either at a specific time (with day-of-week selection) or every N minutes, and either log a System Log entry, send a static text message to a node or channel, send an automatic data report built from current telemetry (with field selection and a stale-data policy), or send a camera picture to a contact (see [Scheduled picture send](#scheduled-picture-send)). A short signal (up to 95 characters) can also go out over Meshtastic when a schedule fires, in addition to the notification/log entry. Schedules persist across restarts, but **do not fire at all if MeshCenter doesn't have a trusted, synchronized time** - this avoids firing on a wrong clock after a cold boot before NTP has synced.
 
 ### Timers
 

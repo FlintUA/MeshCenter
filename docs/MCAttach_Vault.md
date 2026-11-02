@@ -11,7 +11,7 @@ This is the user guide. The design, the reasons and the threat model are in
 
 | Protected (inside the vault) | Not protected |
 |---|---|
-| Files you received (the cache, and the ones you saved with **Save to Files**) | The **Media gallery**: camera pictures, thumbnails and their sidecar files stay as they are |
+| Files you received (they are all kept in the Files folder; with the vault each is an encrypted `.mcv` file) | The **Media gallery**: camera pictures, thumbnails and their sidecar files stay as they are |
 | Files waiting to be sent (the spool) | Chats, nodes, telemetry, settings, the login hash, every other MeshCenter file |
 | File names and transfer comments | Anything that existed in plaintext on an SD card or eMMC before you enabled the vault (see "Flash storage") |
 | The MCAttach identity seed and the Relay upload tokens | A picture you sent from the gallery: only its MCAttach copy is inside the vault, the gallery original is not |
@@ -47,8 +47,8 @@ repeated safely.
 - **Lock now** (the chip, or the card) locks it again. The key is wiped from memory.
 - While locked, everything else in MeshCenter works. MCAttach itself:
   - shows transfers with a **Locked** placeholder instead of the name; the contact, time, size and type remain;
-  - records incoming file offers, but accepts, downloads and decrypts nothing until you unlock;
-  - cannot send, preview, download or save; the Send dialog offers **Unlock**;
+  - records incoming file offers, but accepts, downloads and decrypts nothing until you unlock (an offer from a trusted contact that would have been accepted automatically waits for the unlock and is then downloaded);
+  - cannot send, preview, download or delete files; the Send dialog offers **Unlock**;
   - postpones key requests and answers to the contact, and processes them after the unlock;
   - skips a scheduled "send camera picture" run with one System Log line and one notification (the schedule stays on).
 - Names and comments never appear in the System Log, notifications or toasts.

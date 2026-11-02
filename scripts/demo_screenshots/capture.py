@@ -4,7 +4,7 @@ docs/images/, recompressed losslessly.
     python scripts/demo_screenshots/demo_server.py &              # fake data only
     python scripts/demo_screenshots/capture.py [http://127.0.0.1:8795] [output dir] [files]
 
-A third argument `files` takes only the Files (MCAttach) image.
+A third argument `files` takes only the Files (MCAttach) images (desktop and phone) and the Media gallery image.
 
 Needs Playwright with Microsoft Edge or Chromium (`pip install playwright`), Pillow and zopflipy (lossless PNG
 recompression). Before every shot the page text is scrubbed of anything that belongs to the machine the demo runs on
@@ -88,6 +88,20 @@ def open_channel(page):
     page.wait_for_function("document.querySelectorAll('.message').length > 2", timeout=15000)
 
 
+def files_page(page):
+    """The Files tab with the demo cards (one column of cards, newest first)."""
+    page.evaluate("switchMainTab('files')")
+    page.wait_for_function("document.querySelectorAll('.files-card').length > 3", timeout=20000)
+    settle(page, 2000)
+
+
+def media_page(page):
+    """The Media gallery with the generated demo pictures."""
+    page.evaluate("switchMainTab('media')")
+    page.wait_for_function("document.querySelectorAll('#mediaView img, .media-grid img, .media-tile img').length > 3", timeout=20000)
+    settle(page, 2500)
+
+
 def capture_files_only():
     with sync_playwright() as p:
         try:
@@ -95,11 +109,14 @@ def capture_files_only():
         except Exception:
             browser = p.chromium.launch()
         page = fresh(browser, DESKTOP, "light")
-        page.evaluate("switchMainTab('files')")
-        page.wait_for_function("document.querySelectorAll('.files-transfer-item').length > 0", timeout=20000)
-        page.evaluate("document.querySelector('.files-transfer-item').click()")
-        settle(page, 2500)
+        files_page(page)
         save(page, "MeshCenter_files_light_theme.png")
+        media_page(page)
+        save(page, "MeshCenter_media_light_theme.png")
+        page.context.close()
+        page = fresh(browser, PHONE, "light", mobile=True)
+        files_page(page)
+        save(page, "MeshCenter_files_phone.png")
         browser.close()
 
 
@@ -119,11 +136,12 @@ def main():
         save(page, "MeshCenter_chats_light_theme.png")
 
         # 3. Files (MCAttach), light
-        page.evaluate("switchMainTab('files')")
-        page.wait_for_function("document.querySelectorAll('.files-transfer-item').length > 0", timeout=20000)
-        page.evaluate("document.querySelector('.files-transfer-item').click()")
-        settle(page, 2500)
+        files_page(page)
         save(page, "MeshCenter_files_light_theme.png")
+
+        # 3b. Media gallery, light
+        media_page(page)
+        save(page, "MeshCenter_media_light_theme.png")
 
         # 4. Camera, light (a generated scene, see demo_server.py)
         page.evaluate("switchMainTab('video')")

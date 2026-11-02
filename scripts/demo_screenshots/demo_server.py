@@ -24,6 +24,14 @@ sys.path.insert(0, str(REPO / "tests"))
 
 import conftest  # noqa: E402  (the test suite's sandbox helpers)
 
+if not hasattr(os, "statvfs"):
+    # Windows has no os.statvfs: the gallery storage check would log an error into the System Log of the demo. A roomy
+    # fake disk keeps the log clean (the demo never fills a disk).
+    import collections
+
+    _Statvfs = collections.namedtuple("_Statvfs", "f_bsize f_frsize f_blocks f_bfree f_bavail f_files f_ffree f_favail f_flag f_namemax")
+    os.statvfs = lambda path: _Statvfs(4096, 4096, 250_000_000, 200_000_000, 200_000_000, 0, 0, 0, 0, 255)
+
 PORT = int(os.environ.get("PORT", "8795"))
 LOCAL_ID = "!0000d000"
 LOCAL_NAME = "Demo Base"
@@ -190,8 +198,15 @@ try:
 except Exception as error:  # the Files tab then says "not ready"; every other view is unaffected
     print("DEMO: MCAttach service not started:", type(error).__name__, error, flush=True)
 
-# ---- three invented file transfers for the Files tab (rows written straight into the throwaway MCAttach database)
+# ---- invented file transfers for the Files tab (rows written straight into the throwaway MCAttach database; the received
+# files are small generated files in the Files folder, so Open, Download and the thumbnails work)
 import threading  # noqa: E402
+
+
+def demo_picture(shift):
+    buffer = io.BytesIO()
+    landscape(640, 360, shift).save(buffer, "JPEG", quality=84)
+    return buffer.getvalue()
 
 
 def seed_transfers():
@@ -215,24 +230,41 @@ def seed_transfers():
         print("DEMO: could not read the MCAttach principal, the Files tab stays empty", flush=True)
         return
     workspace_id, principal_id = principal
+    files_dir = None
+    while time.time() < deadline and files_dir is None:
+        found = [path for path in (data_dir / "mca").glob("*/files") if path.is_dir()]
+        files_dir = found[0] if found else None
+        time.sleep(0.3)
     stamp = int(time.time())
+    # direction, state, file name, mime, content (bytes, or None = no local file), minutes ago, comment, error code, days the link stays valid
     demo = [
-        # direction, state, file name, mime, size, minutes ago
-        ("received", "AVAILABLE", "trail-notes-demo.pdf", "application/pdf", 214_330, 12),
-        ("sent", "DOWNLOADED", "relay-site-photo.jpg", "image/jpeg", 1_204_880, 95),
-        ("received", "DOWNLOADED", "tower-route-demo.gpx", "application/gpx+xml", 48_120, 260),
+        ("received", "AVAILABLE", "trail-notes-demo.pdf", "application/pdf", b"%PDF-1.4\n%demo file\n" + b"x" * 214_000, 12, "Route notes for Saturday", None, 7),
+        ("received", "AVAILABLE", "ridge-view-demo.jpg", "image/jpeg", demo_picture(3), 38, "View from the ridge", None, 7),
+        ("received", "WAITING_CONSENT", "firmware-demo.zip", "application/zip", None, 55, None, "auto_accept_quota", 6),
+        ("sent", "SENT", "relay-plan-demo.pdf", "application/pdf", None, 130, "Plan for the new relay", None, 5),
+        ("sent", "DOWNLOADED", "relay-site-photo.jpg", "image/jpeg", None, 1500, None, None, 7),
+        ("received", "AVAILABLE", "tower-route-demo.gpx", "application/gpx+xml", b"<gpx version='1.1'><!-- demo --></gpx>" + b" " * 48_000, 1700, None, None, 7),
+        ("sent", "FAILED_UPLOAD", "backup-demo.zip", "application/zip", None, 3000, None, "recipient_not_trusted", 7),
+        ("received", "AVAILABLE", "logs-demo.txt", "text/plain", b"demo log line\n" * 3000, 4200, "Logs from the cabin node", None, 7),
     ]
     counterparty = "!0000d001"  # the node the app selects first: the Files list is filtered to the selected node
-    for direction, state, name, mime, size, minutes in demo:
+    for direction, state, name, mime, content, minutes, comment, error_code, valid_days in demo:
         attachment_id = uuid.uuid4().hex
+        saved_path = None
+        size = len(content) if content is not None else 1_204_880
+        if content is not None and files_dir is not None:
+            target = files_dir / name
+            target.write_bytes(content)
+            saved_path = str(target)
         connection.execute(
             "INSERT INTO attachments (id, workspace_id, transfer_id, direction, principal_id, sender_principal_id, provider_id, state, "
             "file_name, mime_type, plain_size, cipher_size, plain_sha256, created_at, hard_expires_at, download_grace_seconds, "
-            "reply_route_type, reply_route_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "reply_route_type, reply_route_id, saved_path, draft_comment, error_code) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (attachment_id, workspace_id, uuid.uuid4().hex, direction, principal_id, None, "demo-relay", state, name, mime,
-             size, size + 28, "0" * 64, stamp - minutes * 60, stamp + 7 * 86400, 3600,
-             "DIRECT" if direction == "received" else None, counterparty if direction == "received" else None),
+             size, size + 28, "0" * 64, stamp - minutes * 60, stamp + valid_days * 86400, 3600,
+             "DIRECT" if direction == "received" else None, counterparty if direction == "received" else None,
+             saved_path, comment, error_code),
         )
         if direction == "sent":
             connection.execute(
@@ -245,6 +277,26 @@ def seed_transfers():
     connection.close()
 
 
+# ---- invented pictures for the Media gallery: generated landscapes in the dated folders the camera uses
+def seed_gallery():
+    import datetime
+
+    root = pathlib.Path(srv.SCREENSHOTS_DIR)
+    now = datetime.datetime.now()
+    names = [("MC_Gate-Cam", 0), ("MC_Roof-Cam", 0), ("MC_Roof-Cam", 1), ("MC_Gate-Cam", 1), ("MC_Roof-Cam", 2), ("MC_Gate-Cam", 3),
+             ("MC_Roof-Cam", 3), ("MC_Gate-Cam", 5), ("MC_Roof-Cam", 6), ("MC_Gate-Cam", 8)]
+    for index, (prefix, days_ago) in enumerate(names):
+        moment = (now - datetime.timedelta(days=days_ago)).replace(hour=6 + index % 5, minute=(index * 7) % 60, second=index % 60)
+        day_dir = root / moment.strftime("%Y") / moment.strftime("%m") / moment.strftime("%d")
+        day_dir.mkdir(parents=True, exist_ok=True)
+        image = landscape(1280, 720, index * 2)
+        # a different tint per picture, so the gallery does not show ten copies of one scene
+        tint = ((255, 150, 90), (90, 150, 255), (120, 200, 140), (230, 120, 190), (250, 210, 90))[index % 5]
+        image = Image.blend(image, Image.new("RGB", image.size, tint), 0.22 + 0.04 * (index % 3))
+        image.save(day_dir / f"{prefix}_{moment.strftime('%Y-%m-%d_%H-%M-%S')}.jpg", "JPEG", quality=85)
+
+
+seed_gallery()
 threading.Thread(target=seed_transfers, daemon=True).start()
 
 # ---- a calm radio status: the sandbox has no listener, so keep the stored health at "OK" and never "busy"

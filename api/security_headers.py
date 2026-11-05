@@ -15,10 +15,15 @@ cross-origin subresource request. This still never leaks a path or query
 string off-site, and same-origin requests keep the full Referer.
 """
 
+# Permissions-Policy restricts sensitive browser device features.
+# MeshCenter does not use browser camera, microphone, geolocation, payment,
+# or WebUSB (the host camera is controlled on the Pi backend and streamed via
+# HTTP/MSE; client-side features like clipboard and vibrate remain unaffected).
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "SAMEORIGIN",
     "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
 }
 
 

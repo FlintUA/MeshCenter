@@ -58,6 +58,7 @@ def test_headers_added_to_every_response(header_client):
     assert h["X-Content-Type-Options"] == "nosniff"
     assert h["X-Frame-Options"] == "SAMEORIGIN"
     assert h["Referrer-Policy"] == "strict-origin-when-cross-origin"
+    assert h["Permissions-Policy"] == "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
     assert "Content-Security-Policy" not in h
 
 
@@ -66,6 +67,7 @@ def test_headers_do_not_overwrite_route_values(header_client):
     assert h["Content-Security-Policy"] == "sandbox"
     assert h["X-Content-Type-Options"] == "custom"
     assert h["X-Frame-Options"] == "SAMEORIGIN"
+    assert h["Permissions-Policy"] == "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
 
 
 def test_headers_leave_streaming_body_intact(header_client):

@@ -19,6 +19,9 @@ SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "SAMEORIGIN",
     "Referrer-Policy": "strict-origin-when-cross-origin",
+    # Defense-in-depth: disallow browser hardware APIs that the frontend
+    # never uses (cameras and USB devices are handled host-side on the Pi).
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
 }
 
 

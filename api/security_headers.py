@@ -15,10 +15,14 @@ cross-origin subresource request. This still never leaks a path or query
 string off-site, and same-origin requests keep the full Referer.
 """
 
+# Global security headers applied to every response. Permissions-Policy restricts
+# browser features (camera, mic, geolocation, payment, usb) that MeshCenter's
+# client-side web application does not use, adhering to least privilege.
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "SAMEORIGIN",
     "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
 }
 
 

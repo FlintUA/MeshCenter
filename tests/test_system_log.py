@@ -117,3 +117,32 @@ def test_get_system_events_survives_a_read_failure(system_log, monkeypatch):
     monkeypatch.setattr(system_log, "open", _broken_open, raising=False)
 
     assert system_log.get_system_events() == []
+
+
+def test_log_system_event_sanitizes_control_characters_and_types(system_log):
+    event = system_log.log_system_event(
+        title="Title\nWith\rNewlines\x00And\x07Control",
+        level="INFO",
+        details="Detail\tLine1\nLine2\rLine3",
+        source="Source\nName",
+    )
+    assert "\n" not in event["event"] and "\r" not in event["event"] and "\x00" not in event["event"]
+    assert "Title With Newlines And Control" == event["event"]
+    assert "Detail Line1 Line2 Line3" == event["details"]
+    assert "Source Name" == event["source"]
+
+    events = system_log.get_system_events()
+    assert len(events) == 1
+    assert events[0]["event"] == "Title With Newlines And Control"
+
+
+def test_log_system_event_handles_non_string_inputs(system_log):
+    event = system_log.log_system_event(
+        title={"key": "val"},
+        level="INFO",
+        details=12345,
+        source=["src"],
+    )
+    assert event["event"] == "{'key': 'val'}"
+    assert event["details"] == "12345"
+    assert event["source"] == "['src']"

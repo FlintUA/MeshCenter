@@ -27,6 +27,15 @@ def _normalize_level(level):
     return value if value in {"INFO", "WARNING", "ERROR", "ACTION", "OK"} else "INFO"
 
 
+def _sanitize_str(value, max_len, default=""):
+    if value is None or value == "":
+        text = str(default)
+    else:
+        text = str(value)
+    cleaned = "".join(" " if ord(c) < 32 or ord(c) == 127 else c for c in text)
+    return cleaned[:max_len]
+
+
 def log_system_event(title, level="INFO", details="", source="system"):
     global _log_write_failing
 
@@ -37,9 +46,9 @@ def log_system_event(title, level="INFO", details="", source="system"):
         "date": now.strftime("%d.%m.%Y"),
         "time": now.strftime("%H:%M:%S"),
         "level": _normalize_level(level),
-        "source": str(source or "system")[:40],
-        "event": str(title or "Event")[:160],
-        "details": str(details or "")[:1000],
+        "source": _sanitize_str(source, 40, "system"),
+        "event": _sanitize_str(title, 160, "Event"),
+        "details": _sanitize_str(details, 1000, ""),
     }
 
     with _log_lock:

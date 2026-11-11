@@ -1396,6 +1396,11 @@ html[data-theme="dark"] .identity-error { color: #fca5a5; }
     padding: 14px;
     overflow: auto;
     min-height: 0;
+    /* TAB1: lets the cards below respond to this panel's own rendered width
+       (squeezed by the Base/Nodes sidebars in the three-column layout) instead of
+       only the viewport's - see the @container rule on .device-detail-list > div. */
+    container-type: inline-size;
+    container-name: device-dashboard;
 }
 
 .device-dashboard-loading,
@@ -2011,6 +2016,35 @@ html[data-theme="dark"] .node-manager-contention-note {
         justify-content: center;
     }
 
+    .device-detail-list > div {
+        grid-template-columns: 1fr;
+        gap: 3px;
+    }
+
+    .device-detail-list dd {
+        text-align: left;
+    }
+}
+
+/* TAB1: on a tablet the sidebars squeeze this panel's own width down to roughly
+   300-400px (two device-info-card columns at ~150-200px each) well above the
+   520px viewport width the rule above is keyed on - every value then wrapped
+   across 2-3 lines ("Connected" -> "Conne" / "cted"). A container query responds
+   to the card's own rendered width instead; the @media twin below is the iOS 15
+   fallback (no @container support there) keyed on the closest viewport width this
+   squeeze is actually seen at. */
+@container device-dashboard (max-width: 460px) {
+    .device-detail-list > div {
+        grid-template-columns: 1fr;
+        gap: 3px;
+    }
+
+    .device-detail-list dd {
+        text-align: left;
+    }
+}
+
+@media (max-width: 1310px) {
     .device-detail-list > div {
         grid-template-columns: 1fr;
         gap: 3px;

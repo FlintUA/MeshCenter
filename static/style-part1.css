@@ -489,6 +489,12 @@ body {
    despite the smaller numeric distance. */
 .input-form input[type="text"] {
     flex: 1;
+    /* TAB1: without this the field's automatic flex-basis is its intrinsic content
+       width, so "flex: 1" never actually shrank it below roughly 170-200px - on a
+       tablet-width chat column (with the emoji button and the 80px-floor Send button
+       next to it) that pushed the whole row past its container, clipped at the edge
+       instead of shrinking. See TAB1_phase0_audit.md. */
+    min-width: 0;
     padding: 8px 12px;
     border: 1px solid var(--mc-chat-border);
     border-radius: 20px;

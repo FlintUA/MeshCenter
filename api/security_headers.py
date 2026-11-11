@@ -15,10 +15,13 @@ cross-origin subresource request. This still never leaks a path or query
 string off-site, and same-origin requests keep the full Referer.
 """
 
+# Permissions-Policy disables browser APIs that MeshCenter does not need
+# (e.g. client camera, microphone, geolocation, payment, webusb).
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "SAMEORIGIN",
     "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
 }
 
 

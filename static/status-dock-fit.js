@@ -2,50 +2,94 @@
 // STATUS-DOCK-FIT: the bottom dock is a 3-column CSS grid (static/style-
 // part2.css's .status-dock, 1fr / minmax(92px,max-content) / 1fr). Below a
 // certain width the two 1fr tracks (dock-left, dock-right) are allowed to
-// shrink below their content's natural size (grid tracks, unlike flex
-// items, are never forced to overflow their container - the CONTENT inside
-// them overflows the track instead, with nothing to stop it since dock-left/
-// dock-right use the default overflow: visible), which is what the TAB1
-// screenshots showed as the brand name / uptime / status / CPU text drawing
-// over each other at tablet widths.
+// shrink below their content's natural size, and several of the controls
+// inside them have their own min-width floor (the pointer:coarse 44px touch
+// target rules this same PR added) that is SMALLER than their own content's
+// natural width - so the controls themselves shrink, and their content
+// overflows past their own box into whatever sits next (confirmed live in
+// both directions: #dockContextText's CPU/RAM/TEMP cluster overflows
+// LEFTWARD past its own box into the brand name on the right-aligned dock-
+// right; #workspaceMenuBtn's own 44px-wide clamp overflows its "Workspace"
+// label RIGHTWARD into whatever sits next on the left-aligned dock-left -
+// which, with a long enough translated tab name and notification text, can
+// itself be the center column's content bleeding back into dock-left).
 //
-// This measures the real (natural) width each dock section's children need
-// against the width the grid track actually gave it, and - only when that
-// section does not fit - hides its lowest-priority pieces first, in a fixed
-// order, until it does. Nothing is ever truncated or overlapped; a hidden
-// item is simply gone until there is room again.
+// None of this shows up as scrollWidth > clientWidth on any element
+// involved (confirmed live - a known quirk for overflow: visible flex
+// children), so this does not rely on scrollWidth. It treats the whole dock
+// as one left-to-right chain (left section, then center, then right) and,
+// for each piece in the order it is meant to appear, measures the real
+// painted extent of that piece AND everything inside it, checking that the
+// extent does not start before the previous piece's extent ends.
 //
-// Right side, lowest priority first: uptime, then CPU/RAM/TEMP, then the
-// version number (brand name and the online/offline status always stay).
-// Left side, lowest priority first: the "Map"/"Workspace" button text
-// labels (the icons and the current tab name stay - that's the one piece of
-// context a drawer-mode dock still needs to show).
+// Only when the chain does not fit are the lowest-priority pieces hidden,
+// in a fixed order, until it does. Nothing is ever truncated or overlapped;
+// a hidden item is simply gone until there is room again. Lowest priority
+// first: uptime, then the left dock's "Map"/"Workspace" button text labels
+// (the icons and the current tab name stay), then CPU/RAM/TEMP, then the
+// version number, then - only if even that is not enough - the center
+// notification/status text. The brand name, the online/offline status and
+// the current tab name are never hidden.
 // ============================================================
 (function () {
     'use strict';
 
     var FIT_HIDE = 'dock-fit-hide';
+    var TOLERANCE = 1;
 
-    function isHiddenByDisplay(el) {
-        return getComputedStyle(el).display === 'none';
+    var FULL_ORDER = [
+        '.dock-layout-controls',
+        '.dock-map-wrap',
+        '#workspaceMenuBtn',
+        '#dockWorkspaceLabel',
+        '#dockVaultChip',
+        '#notificationCenterBtn',
+        '.dock-brand',
+        '#dockUptimeLeadSeparator',
+        '#baseUptimeBadge',
+        '#baseUptimeSeparator',
+        '#headerStatusText',
+        '#dockContextText'
+    ];
+
+    var TIERS = [
+        ['#dockUptimeLeadSeparator', '#baseUptimeBadge', '#baseUptimeSeparator'],
+        ['#mapMenuBtn .dock-btn-label', '#workspaceMenuBtn .dock-btn-label'],
+        ['#dockContextText'],
+        ['.dock-version-text'],
+        ['#dockStatusText']
+    ];
+
+    // The real painted left/right edges of an element AND everything inside
+    // it - not just the element's own (possibly shrunk-by-its-parent) box.
+    function extent(el) {
+        var rect = el.getBoundingClientRect();
+        var left = rect.left;
+        var right = rect.right;
+        var all = el.querySelectorAll('*');
+        for (var i = 0; i < all.length; i += 1) {
+            var r = all[i].getBoundingClientRect();
+            if (r.width === 0 && r.height === 0) continue; // not rendered
+            if (r.left < left) left = r.left;
+            if (r.right > right) right = r.right;
+        }
+        return { left: left, right: right };
     }
 
-    function neededWidth(container) {
-        var gapValue = parseFloat(getComputedStyle(container).columnGap) || 0;
-        var total = 0;
-        var count = 0;
-        Array.prototype.forEach.call(container.children, function (child) {
-            if (isHiddenByDisplay(child)) return;
-            total += child.getBoundingClientRect().width;
-            count += 1;
-        });
-        if (count > 1) total += gapValue * (count - 1);
-        return total;
-    }
-
-    function fits(container) {
-        if (!container) return true;
-        return neededWidth(container) <= container.getBoundingClientRect().width + 1;
+    function fits() {
+        var dock = document.getElementById('statusDock');
+        if (!dock) return true;
+        var prevRight = null;
+        for (var i = 0; i < FULL_ORDER.length; i += 1) {
+            var el = document.querySelector(FULL_ORDER[i]);
+            if (!el || getComputedStyle(el).display === 'none') continue;
+            var rect = el.getBoundingClientRect();
+            if (rect.width === 0 && rect.height === 0) continue;
+            var ext = extent(el);
+            if (prevRight !== null && ext.left < prevRight - TOLERANCE) return false;
+            prevRight = ext.right;
+        }
+        return true;
     }
 
     function setTierHidden(selectors, hide) {
@@ -55,29 +99,13 @@
         });
     }
 
-    var rightTiers = [
-        ['#dockUptimeLeadSeparator', '#baseUptimeBadge', '#baseUptimeSeparator'],
-        ['#dockContextText'],
-        ['.dock-version-text']
-    ];
-    var leftTiers = [
-        ['#mapMenuBtn .dock-btn-label'],
-        ['#workspaceMenuBtn .dock-btn-label']
-    ];
-
-    function applyTiers(container, tiers) {
-        if (!container) return;
-        tiers.forEach(function (tier) { setTierHidden(tier, false); });
-        if (fits(container)) return;
-        for (var i = 0; i < tiers.length; i += 1) {
-            setTierHidden(tiers[i], true);
-            if (fits(container)) return;
-        }
-    }
-
     function run() {
-        applyTiers(document.getElementById('dockRight'), rightTiers);
-        applyTiers(document.getElementById('dockLeft'), leftTiers);
+        TIERS.forEach(function (tier) { setTierHidden(tier, false); });
+        if (fits()) return;
+        for (var i = 0; i < TIERS.length; i += 1) {
+            setTierHidden(TIERS[i], true);
+            if (fits()) return;
+        }
     }
 
     var timer = null;
@@ -90,9 +118,10 @@
     window.addEventListener('orientationchange', function () { setTimeout(run, 150); });
 
     // Re-check whenever the dock's own content changes (tab switch rewrites
-    // dockWorkspaceLabel/dockContextText, CPU polling rewrites the metrics
-    // text) - childList/characterData only, so toggling our own fit-hide
-    // class (an attribute mutation) never re-triggers this observer.
+    // dockWorkspaceLabel/dockContextText/dockStatusText, CPU polling
+    // rewrites the metrics text) - childList/characterData only, so
+    // toggling our own fit-hide class (an attribute mutation) never
+    // re-triggers this observer.
     var observer = new MutationObserver(schedule);
     function start() {
         var dock = document.getElementById('statusDock');

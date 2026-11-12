@@ -5550,7 +5550,20 @@ body[data-sidebar-mode-right="drawer"] .sidebar.sidebar-drawer-open {
     .chat-actions-btn,
     .node-filters-btn,
     .clear-search-btn { min-width: 44px; min-height: 44px; }
-    .node-card-message-btn { min-width: 44px; min-height: 40px; }
+    /* A visible 44px box here widened the node-card topline past the card's
+       right edge (TAB1 landscape bug report) - keep the button's own box and
+       extend only the tap target, the same transparent-::after technique
+       already used for .node-card-key-btn/.node-map-badge below (MOB1). */
+    .node-card-message-btn { position: relative; }
+    .node-card-message-btn::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 50%;
+        height: 44px;
+        transform: translateY(-50%);
+    }
     .node-card-key-btn { min-height: 40px; padding: 0 14px; }
     .node-detail-toolbar-btn,
     .node-detail-tab { min-height: 44px; }
@@ -5564,6 +5577,7 @@ body[data-sidebar-mode-right="drawer"] .sidebar.sidebar-drawer-open {
     .node-card-select,
     .rescan-nodes-btn,
     .dock-notification-status { min-height: 44px; }
+    .map-split-divider { flex-basis: 44px !important; }
 }
 
 /* ============================================================

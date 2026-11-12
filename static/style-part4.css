@@ -982,6 +982,36 @@
 .chat-area.map-layout-full > .map-view { display:flex !important; flex:1 1 auto; order:1; }
 .chat-area.map-layout-full > .main-content-tabs { order:0; }
 
+/* TAB1 landscape fix: static/map-split.js sets #mapView's real flex-basis in
+   px (overriding the flex:0 0 50% above) and inserts this divider between
+   the map and the active tab content. Base size is for a mouse; the coarse
+   pointer override (static/ui-kit.css) grows it to a real 44px touch
+   target. */
+.chat-area.map-layout-split > .map-split-divider {
+    flex: 0 0 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: row-resize;
+    touch-action: none;
+    background: transparent;
+    position: relative;
+}
+.map-split-divider-handle {
+    width: 48px;
+    height: 4px;
+    border-radius: 3px;
+    background: var(--mc-border-hover, #9fb6d0);
+}
+.map-split-divider:hover .map-split-divider-handle,
+.map-split-divider:focus-visible .map-split-divider-handle {
+    background: var(--mc-accent, #2f7bb5);
+}
+.map-split-divider:focus-visible {
+    outline: 2px solid var(--mc-accent, #2f7bb5);
+    outline-offset: -2px;
+}
+
 .map-popup-actions { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:10px; }
 .map-popup-actions button { border:1px solid #3a5973; background:#203b53; color:white; border-radius:7px; padding:7px 8px; cursor:pointer; font-weight:700; font-size:11px; }
 .map-popup-actions button:hover { background:#285071; }

@@ -8641,7 +8641,7 @@ function renderNodeDetails(node) {
                         title="${escapeHtml(isFavorite ? window.I18N.t('nodes.remove_from_favorites') : window.I18N.t('nodes.add_to_favorites'))}"
                         aria-label="${escapeHtml(isFavorite ? window.I18N.t('nodes.remove_node_from_favorites') : window.I18N.t('nodes.add_node_to_favorites'))}"
                         aria-pressed="${isFavorite ? 'true' : 'false'}">
-                    <span aria-hidden="true">⚑</span> ${escapeHtml(window.I18N.t('nodes.favorite'))}
+                    <span aria-hidden="true">⚑</span> <span class="node-detail-toolbar-label">${escapeHtml(window.I18N.t('nodes.favorite'))}</span>
                 </button>
                 <button type="button"
                         class="node-detail-toolbar-btn node-detail-ignore-btn ${isIgnored ? 'active' : ''}"
@@ -8649,20 +8649,20 @@ function renderNodeDetails(node) {
                         title="${escapeHtml(isIgnored ? window.I18N.t('nodes.stop_ignoring_node') : window.I18N.t('nodes.ignore_node'))}"
                         aria-label="${escapeHtml(isIgnored ? window.I18N.t('nodes.stop_ignoring_node') : window.I18N.t('nodes.ignore_node'))}"
                         aria-pressed="${isIgnored ? 'true' : 'false'}">
-                    <span aria-hidden="true">🚫</span> ${escapeHtml(window.I18N.t('nodes.ignore'))}
+                    <span aria-hidden="true">🚫</span> <span class="node-detail-toolbar-label">${escapeHtml(window.I18N.t('nodes.ignore'))}</span>
                 </button>
                 <button type="button" class="node-detail-toolbar-btn node-detail-actions-btn"
                         onclick="toggleNodeActionsMenu(event)"
                         aria-label="${escapeHtml(window.I18N.t('nodes.more_node_actions'))}"
                         title="${escapeHtml(window.I18N.t('nodes.more_actions'))}">
-                    <span aria-hidden="true">⋮</span> ${escapeHtml(window.I18N.t('nodes.more'))}
+                    <span aria-hidden="true">⋮</span> <span class="node-detail-toolbar-label">${escapeHtml(window.I18N.t('nodes.more'))}</span>
                 </button>
                 <button type="button" class="node-detail-toolbar-btn node-detail-collapse-btn"
                         onclick="toggleNodeDetailCollapse('${escapeHtml(nodeId)}')"
                         aria-expanded="${isCollapsed ? 'false' : 'true'}"
                         title="${escapeHtml(isCollapsed ? window.I18N.t('nodes.expand_details') : window.I18N.t('nodes.collapse_details'))}"
                         aria-label="${escapeHtml(isCollapsed ? window.I18N.t('nodes.expand_details') : window.I18N.t('nodes.collapse_details'))}">
-                    <span class="node-detail-collapse-chevron" aria-hidden="true">⌄</span> ${escapeHtml(isCollapsed ? window.I18N.t('nodes.expand_details') : window.I18N.t('nodes.collapse_details'))}
+                    <span class="node-detail-collapse-chevron" aria-hidden="true">⌄</span> <span class="node-detail-toolbar-label">${escapeHtml(isCollapsed ? window.I18N.t('nodes.expand_details') : window.I18N.t('nodes.collapse_details'))}</span>
                 </button>
                 ${nodeActionsMenuHtml(nodeId, displayName)}
             </div>
@@ -8693,13 +8693,13 @@ function renderNodeDetails(node) {
 
             <div class="node-detail-bottom-actions">
                 <button type="button" class="node-detail-toolbar-btn" onclick="openChat('${escapeJsString(nodeId)}', '${escapeJsString(displayName)}', 'dm')">
-                    <span aria-hidden="true">💬</span> ${escapeHtml(window.I18N.t('nodes.message_button'))}
+                    <span aria-hidden="true">💬</span> <span class="node-detail-toolbar-label">${escapeHtml(window.I18N.t('nodes.message_button'))}</span>
                 </button>
                 <button type="button" class="node-detail-toolbar-btn" onclick="openExternalNodeMap(${hasPosition ? position.latitude : 0}, ${hasPosition ? position.longitude : 0})" ${hasPosition ? '' : 'disabled'} title="${escapeHtml(window.I18N.t('nodes.external_map'))}">
-                    <span aria-hidden="true">📍</span> ${escapeHtml(window.I18N.t('nodes.map'))}
+                    <span aria-hidden="true">📍</span> <span class="node-detail-toolbar-label">${escapeHtml(window.I18N.t('nodes.map'))}</span>
                 </button>
                 <button type="button" class="node-detail-toolbar-btn" onclick="toggleNodeActionsMenu(event)">
-                    <span aria-hidden="true">⋮</span> ${escapeHtml(window.I18N.t('nodes.more'))}
+                    <span aria-hidden="true">⋮</span> <span class="node-detail-toolbar-label">${escapeHtml(window.I18N.t('nodes.more'))}</span>
                 </button>
             </div>
             </div>

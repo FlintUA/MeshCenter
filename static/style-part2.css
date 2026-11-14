@@ -3483,6 +3483,17 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
 
 .node-card-status-row {
     gap: 7px;
+    /* The hop/signal/last-seen cluster can shrink, but the map badge and
+       the message button are both fixed-size (flex: 0 0 auto) - a long
+       badge label (the Russian "Опорная точка" reference-point text, or a
+       wide "25.5 km . 99 E" distance/bearing pair) can still need more
+       room than a narrow card has left, even with everything else
+       shrunk to nothing. Confirmed live: that combination pushed the
+       message button past the card's right edge. Wrapping the badge and
+       button onto their own row (still right-aligned via the badge's
+       margin-left: auto) beats letting them overflow. */
+    flex-wrap: wrap;
+    row-gap: 4px;
 }
 
 .node-card-signal-wrap {
@@ -3798,6 +3809,12 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
     border: none;
     border-top: 1px solid var(--mc-border-soft, #eef1f4);
     margin-bottom: 0;
+    /* The panel this card sits in can be narrow (resizable sidebar, split
+       view, tablet landscape) while the viewport itself stays wide, so a
+       viewport media query alone misses it (confirmed live: a 1164-1280 px
+       viewport with only a ~440 px panel). Query the card's own width
+       instead - see the @container block below. */
+    container-type: inline-size;
 }
 
 /* Step 3 redesign (Option C): the old detail-slot header/subheader/status-row
@@ -3816,6 +3833,7 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
 
 .node-detail-toolbar-btn {
     flex: 1 1 0;
+    min-width: 0;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -3829,6 +3847,11 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
     font-weight: 600;
     cursor: pointer;
     white-space: nowrap;
+}
+
+.node-detail-toolbar-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .node-detail-toolbar-btn:last-child {
@@ -3871,12 +3894,14 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
 /* Вкладки */
 .node-detail-tabs {
     display: flex;
+    flex-wrap: wrap;
     border-bottom: 1px solid #e5e8ec;
     margin-bottom: 12px;
     gap: 4px;
 }
 
 .node-detail-tab {
+    flex: 0 0 auto;
     padding: 6px 10px;
     border: none;
     background: none;
@@ -3943,6 +3968,7 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
     letter-spacing: 0.3px;
     text-transform: uppercase;
     color: var(--mc-text-muted, #8a9aa8);
+    min-width: 0;
 }
 
 .node-detail-metric-value {
@@ -3950,6 +3976,7 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
     font-weight: 700;
     color: var(--mc-text, #1a2a4a);
     text-align: right;
+    min-width: 0;
 }
 
 /* Node card follow-up: DISTANCE/BEARING's value is a button (internal map),
@@ -4332,20 +4359,64 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
     .node-detail-tiles {
         grid-template-columns: repeat(3, 1fr);
     }
+}
+
+/* Narrow expanded card (TAB1 follow-up): keyed to the card's own width via
+   container-type: inline-size on .node-detail-card above, not the viewport -
+   a tablet/desktop window can give the expanded card a panel as narrow as
+   320-480 px while the viewport itself is wide. Below that width: the
+   two-column label/value grids collapse to one column with the value under
+   the label instead of squeezed beside it (the .coord "distance / bearing"
+   value was breaking badly at half-column width); the toolbar/bottom-action
+   button rows show icon-only (the label text stays in the DOM, visually
+   hidden, so it's still read by assistive tech) instead of overflowing past
+   the card edge; the detail tabs already wrap to a second row via the base
+   .node-detail-tabs rule above, so nothing here needs to scroll or clip. */
+@container (max-width: 480px) {
     .radio-params,
     .position-coords,
     .data-grid,
     .log-summary {
         grid-template-columns: 1fr;
     }
-    .node-detail-tabs {
-        overflow-x: auto;
-        flex-wrap: nowrap;
+    .radio-param,
+    .coord,
+    .data-grid > div,
+    .log-summary-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 2px;
+        min-width: 0;
+    }
+    .radio-param .value,
+    .coord .value,
+    .data-grid .value,
+    .log-summary-item .value {
+        text-align: left;
+    }
+    /* The Overview pane's DISTANCE/BEARING row ("25.5 km · 99° E") is the
+       widest label+value pair in the card - at half the available width it
+       broke badly (confirmed live on a tablet). Same stacking as the grids
+       above. */
+    .node-detail-metric-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 2px;
+    }
+    .node-detail-metric-value {
+        text-align: left;
     }
     .node-detail-tab {
-        flex: 0 0 auto;
-        font-size: 12px;
-        padding: 6px 12px;
+        font-size: 11px;
+        padding: 6px 8px;
+    }
+    .node-detail-toolbar-label {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
     }
 }
 

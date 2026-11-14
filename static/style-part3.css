@@ -3398,6 +3398,13 @@ html[data-theme="dark"] .node-info-panel .node-metrics-grid .sensor-unit {
     min-width: 0;
 }
 
+/* static/status-dock-fit.js: the fixed-priority hide-on-overflow fallback
+   for the dock (TAB1 tablet-width overlap fix). Never truncates text -
+   a tier is either fully shown or fully gone. */
+.dock-fit-hide {
+    display: none !important;
+}
+
 #dockContextText .dock-system-metrics {
     gap: 8px;
 }

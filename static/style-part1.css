@@ -8,6 +8,18 @@
 /* ===== БАЗОВЫЕ СТИЛИ ===== */
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* Mobile Chrome's own "font boosting" heuristic can enlarge text inside a
+   narrow column beyond the CSS font-size we set, purely for readability -
+   it never shows up in a desktop browser or in devtools device emulation,
+   only on a real phone/tablet, which is why a layout that measures and
+   fits perfectly in every desktop check (the Nodes header pills, the
+   node card's status row) can still visibly collide on an actual device.
+   Opting out keeps every element at the size this CSS actually gives it. */
+html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+}
+
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     background: #f0f2f5;

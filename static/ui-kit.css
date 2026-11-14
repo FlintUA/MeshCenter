@@ -5578,6 +5578,17 @@ body[data-sidebar-mode-right="drawer"] .sidebar.sidebar-drawer-open {
     .rescan-nodes-btn,
     .dock-notification-status { min-height: 44px; }
     .map-split-divider { flex-basis: 44px !important; }
+    /* Measured live on a real tablet (adb + chrome://inspect, 1280px desktop-
+       site width): .node-filters-btn/.clear-search-btn get min-width: 44px
+       right above in this same block, but the search row's own grid still
+       reserves only 36px for each of them (style-part4.css's base rule) -
+       never caught on desktop/devtools, which don't apply pointer: coarse at
+       this width. The 8px-per-button mismatch overflowed each button past
+       its own grid track, overlapping the next one by ~2px and the gear
+       button past the sidebar edge by ~1px. */
+    .search-container.search-row {
+        grid-template-columns: minmax(0, 1fr) 44px 44px;
+    }
 }
 
 /* ============================================================

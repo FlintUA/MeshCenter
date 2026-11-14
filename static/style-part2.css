@@ -3483,6 +3483,17 @@ html[data-theme="light"] .node-card.favorite .node-favorite-slot {
 
 .node-card-status-row {
     gap: 7px;
+    /* The hop/signal/last-seen cluster can shrink, but the map badge and
+       the message button are both fixed-size (flex: 0 0 auto) - a long
+       badge label (the Russian "Опорная точка" reference-point text, or a
+       wide "25.5 km . 99 E" distance/bearing pair) can still need more
+       room than a narrow card has left, even with everything else
+       shrunk to nothing. Confirmed live: that combination pushed the
+       message button past the card's right edge. Wrapping the badge and
+       button onto their own row (still right-aligned via the badge's
+       margin-left: auto) beats letting them overflow. */
+    flex-wrap: wrap;
+    row-gap: 4px;
 }
 
 .node-card-signal-wrap {
